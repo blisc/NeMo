@@ -1,12 +1,17 @@
 # Taken straight from Patter https://github.com/ryanleary/patter
 # TODO: review, and copyright and fix/add comments
+import itertools
 import math
+
 import librosa
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.multiprocessing as mp
+from torch_stft import STFT
+
 from .perturb import AudioAugmentor
 from .segment import AudioSegment
-from torch_stft import STFT
 
 CONSTANT = 1e-5
 
@@ -196,7 +201,10 @@ class FilterbankFeatures(nn.Module):
                  preemph=0.97,
                  nfilt=64, lowfreq=0, highfreq=None, log=True, dither=CONSTANT,
                  pad_to=16, max_duration=16.7,
-                 frame_splicing=1, stft_conv=False, logger=None):
+                 frame_splicing=1, stft_conv=False,
+                 speed_perturb=False, speed_perturb_global=False,
+                 speed_perturb_segs=0, speed_perturb_min=0,
+                 speed_perturb_max=0, logger=None):
         super(FilterbankFeatures, self).__init__()
         if logger:
             logger.info(f"PADDING: {pad_to}")
@@ -220,7 +228,7 @@ class FilterbankFeatures(nn.Module):
                     super(STFTPatch, self).__init__(*params, **kw_params)
 
                 def forward(self, input_data):
-                    return super(STFTPatch, self).transform(input_data)[0]
+                    return super(STFTPatch, self).transform(input_data)
 
             self.stft = STFTPatch(self.n_fft, self.hop_length,
                                   self.win_length, window)
@@ -252,6 +260,14 @@ class FilterbankFeatures(nn.Module):
         self.nfilt = nfilt
         self.preemph = preemph
         self.pad_to = pad_to
+        self.speed_perturb = None
+        if speed_perturb:
+            self.speed_perturb = SpeedAugmentation(
+                segments=speed_perturb_segs,
+                min_segment_size=speed_perturb_min,
+                max_segment_size=speed_perturb_max,
+                global_=speed_perturb_global)
+
         highfreq = highfreq or sample_rate / 2
 
         filterbanks = torch.tensor(
@@ -288,6 +304,15 @@ class FilterbankFeatures(nn.Module):
                 dim=1)
 
         x = self.stft(x)
+
+        if self.speed_perturb and self.training:
+            mag = x[0].cpu().numpy()
+            phase = x[1].cpu().numpy()
+            x, seq_len = self.speed_perturb(mag*np.exp(phase*1j), seq_len)
+            x = x.cuda()
+            seq_len = seq_len.cuda()
+        else:
+            x = x[0]
 
         # get power spectrum
         x = x.pow(2)
@@ -328,7 +353,7 @@ class FilterbankFeatures(nn.Module):
             if pad_amt != 0:
                 x = nn.functional.pad(x, (0, pad_to - pad_amt))
 
-        return x
+        return x, seq_len
 
     @classmethod
     def from_config(cls, cfg, log=False):
@@ -363,3 +388,99 @@ class FeatureFactory(object):
         feat_type = cfg.get('feat_type', "logspect")
         featurizer = cls.featurizers[feat_type]
         return featurizer.from_config(cfg, log="log" in feat_type)
+
+
+class SpeedAugmentation(nn.Module):
+    def __init__(
+            self, *,
+            segments=0,
+            min_segment_size=10,
+            max_segment_size=None,
+            global_=False,
+            num_processes=8
+    ):
+        super().__init__()
+        self.global_ = global_
+        self.segments = segments
+        self.min_segment_size = min_segment_size
+        self.max_segment_size = max_segment_size
+        try:
+            self.pool = mp.Pool(processes=num_processes)
+            self.mp = True
+            print("WOW, multiprocessing")
+        except Exception as e:
+            print(e)
+            print(":(, multiprocessing failed")
+            self.mp = False
+
+    @staticmethod
+    def do_perturb(args):
+        spec, spec_len, args = args
+        global_, segments, min_segment_size, max_segment_size = args
+        if global_:
+            rate_min = max(spec_len / 1680, 0.85)
+            rate = np.random.uniform(rate_min, 1.15)
+            return librosa.core.phase_vocoder(spec[:, 0:spec_len], rate)
+        # else
+        for _ in range(segments):
+            min_seg_length = int(min_segment_size * spec_len)
+            max_seg_length = int(max_segment_size * spec_len)
+            slice_start = np.random.randint(
+                spec_len - min_seg_length - 1)
+            if slice_start + max_seg_length >= spec_len:
+                max_seg_length = spec_len - slice_start
+            slice_length = np.random.randint(
+                min_seg_length,
+                max_seg_length)
+            slice_end = slice_start + slice_length
+            rate_min = max(
+                slice_length / (1680 - spec_len + slice_length), 0.85)
+            slice_ = spec[:, slice_start:slice_end]
+            rate = np.random.uniform(rate_min, 1.1)
+            slice_perturbed = librosa.core.phase_vocoder(slice_, rate)
+            spec = np.concatenate(
+                (
+                    spec[:, :slice_start],
+                    slice_perturbed,
+                    spec[:, slice_end:spec_len]
+                ),
+                axis=1)
+            spec_len = spec.shape[1]
+        return spec
+
+    def forward(self, input_spec, input_spec_length):
+        input_spec_length = input_spec_length.cpu().numpy().astype(int)
+        if self.mp:
+            output_specs = self.pool.map(
+                SpeedAugmentation.do_perturb,
+                zip(
+                    input_spec, input_spec_length,
+                    itertools.repeat((
+                        self.global_, self.segments, self.min_segment_size,
+                        self.max_segment_size))
+                ))
+        else:
+            output_specs = []
+            for i in range(input_spec.shape[0]):
+                output_specs.append(SpeedAugmentation.do_perturb((
+                    input_spec[i], input_spec_length[i],
+                    (
+                        self.global_, self.segments, self.min_segment_size,
+                        self.max_segment_size
+                    )
+                )))
+
+        # Collate
+        max_len = -1
+        for i, spec in enumerate(output_specs):
+            input_spec_length[i] = spec.shape[1]
+            if input_spec_length[i] > max_len:
+                max_len = input_spec_length[i]
+        output_spec = torch.zeros(input_spec.shape[0], input_spec.shape[1],
+                                  max_len, dtype=torch.float)
+        input_spec_length = torch.from_numpy(input_spec_length)
+        for i in range(input_spec.shape[0]):
+            output_spec[i].narrow(1, 0, input_spec_length[i]).copy_(
+                torch.from_numpy(np.absolute(output_specs[i])))
+
+        return output_spec, input_spec_length

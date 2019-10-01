@@ -1,10 +1,12 @@
 from itertools import chain
 from pprint import pformat
 
+import numpy as np
 import torch
-from nemo.backends.pytorch.common.metrics import char_lm_metrics
 
+from nemo.backends.pytorch.common.metrics import char_lm_metrics
 from nemo_asr.metrics import word_error_rate
+from ..helpers import __gather_predictions, __gather_transcripts
 
 ENG_MWN = 5.3
 
@@ -81,6 +83,111 @@ def process_evaluation_epoch(global_vars,
 
     if logger:
         logger.info(pformat(return_dict))
+
+    return return_dict
+
+
+def process_evaluation_batch_xf(tensors, global_vars, tokenizer, labels):
+    transcript_texts = []
+    prediction_texts = []
+    global_vars.setdefault('seqloss', [])
+    global_vars.setdefault('transcript_texts', [])
+    global_vars.setdefault('prediction_texts', [])
+    tensor_list = list(tensors.values())[1:]  # Ignore IS_FROM_DIST_EVAL
+    global_vars['seqloss'].extend(tensor_list[0])
+
+    for t in tensor_list[1]:
+        t = t.cpu().numpy().tolist()
+        for sentence in t:
+            transcript_texts.append(tokenizer.ids_to_text(sentence))
+    for t in tensor_list[2]:
+        t = t.cpu().numpy().tolist()
+        for sentence in t:
+            prediction_texts.append(tokenizer.ids_to_text(sentence))
+    global_vars['transcript_texts'].extend(transcript_texts)
+    global_vars['prediction_texts'].extend(prediction_texts)
+
+    if len(tensor_list) > 3:
+        ctc_transcript_texts = []
+        ctc_prediction_texts = []
+        global_vars.setdefault('ctcloss', [])
+        global_vars.setdefault('ctc_transcript_texts', [])
+        global_vars.setdefault('ctc_prediction_texts', [])
+        global_vars['ctcloss'].extend(tensor_list[3])
+        global_vars['ctc_prediction_texts'] += __gather_predictions(
+            tensor_list[6], labels=labels)
+        global_vars['ctc_transcript_texts'] += __gather_transcripts(
+            tensor_list[4], tensor_list[5], labels=labels)
+
+
+def process_evaluation_epoch_xf(
+        global_vars,
+        calc_wer=True,
+        logger=None,
+        mode='eval',
+        tag='none'
+        ):
+    tag = '_'.join(tag.lower().strip().split())
+    return_dict = {}
+    ctc = False
+    metrics = ["seqloss"]
+    if "ctcloss" in global_vars:
+        ctc = True
+        metrics.append("ctcloss")
+
+    for metric in metrics:
+        value = torch.mean(torch.stack(global_vars[metric])).item()
+        return_dict[f'metric/{mode}_{metric}_{tag}'] = value
+
+    if ctc:
+        return_dict[f'metric/{mode}_loss_{tag}'] =\
+            return_dict[f'metric/{mode}_seqloss_{tag}'] +\
+            return_dict[f'metric/{mode}_ctcloss_{tag}']
+    else:
+        return_dict[f'metric/{mode}_loss_{tag}'] = return_dict[
+            f'metric/{mode}_seqloss_{tag}']
+
+    if calc_wer:
+        transcript_texts = global_vars['transcript_texts']
+        prediction_texts = global_vars['prediction_texts']
+
+        wer = word_error_rate(hypotheses=prediction_texts,
+                              references=transcript_texts)
+        return_dict[f'metric/{mode}_seq_wer_{tag}'] = wer
+
+        if logger:
+            choices = np.random.randint(len(transcript_texts), size=10)
+            pstring = "Ten examples (transcripts and predictions)\n"
+            # seq_transcripts = transcript_texts[choices]
+            # seq_predictions = prediction_texts[choices]
+            pexamples = [
+                f"{i}:\nt:{transcript_texts[c]}\np:{prediction_texts[c]}\n"
+                for i, c in enumerate(choices)]
+
+        if ctc:
+            transcript_texts = global_vars['ctc_transcript_texts']
+            prediction_texts = global_vars['ctc_prediction_texts']
+
+            wer = word_error_rate(hypotheses=prediction_texts,
+                                  references=transcript_texts)
+            return_dict[f'metric/{mode}_ctc_wer_{tag}'] = wer
+
+            if logger:
+                # ctc_transcripts = transcript_texts[choices]
+                # ctc_predictions = prediction_texts[choices]
+                pexamples = [
+                    pexamples[i] +
+                    f't:{transcript_texts[c]}\np:{prediction_texts[c]}\n'
+                    for i, c in enumerate(choices)]
+                # for i, (a, b) in enumerate(zip(
+                #         ctc_transcripts, ctc_predictions)):
+                #     pexamples[i] += f'{a}\n{b}\n'
+
+        if logger:
+            logger.info(pstring + "".join(pexamples).strip())
+
+    if logger:
+        logger.info("\n"+pformat(return_dict))
 
     return return_dict
 

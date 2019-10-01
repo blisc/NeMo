@@ -15,7 +15,8 @@
 from nemo.core import Backend
 
 from .data_layer import AudioToTextDataLayer, AudioPreprocessing, \
-    SpectrogramAugmentation, MultiplyBatch
+    SpectrogramAugmentation, MultiplyBatch, IntToSeq, IntToSeq2, \
+    TFAudioToTextDataLayer
 from .greedy_ctc_decoder import GreedyCTCDecoder
 from .beam_search_decoder import BeamSearchDecoderWithLM
 from .jasper import JasperEncoder, JasperDecoderForCTC

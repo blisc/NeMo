@@ -9,7 +9,8 @@ from apex import amp
 from nemo.backends.pytorch.nm import DataLayerNM, TrainableNM, NonTrainableNM
 from nemo.core import Optimization, DeviceType
 from nemo.core.neural_types import *
-from .parts.dataset import AudioDataset, seq_collate_fn
+from .parts.dataset import AudioDataset, seq_collate_fn, TFAudioDataset, \
+                           tfaudio_seq_collate_fn
 from .parts.features import FilterbankFeatures, WaveformFeaturizer
 from .parts.spectr_augment import SpecAugment, SpecCutout
 
@@ -100,6 +101,7 @@ transcript_n}
             drop_last=False,
             shuffle=True,
             num_workers=0,
+            tokenizer=None,
             # perturb_config=None,
             **kwargs
     ):
@@ -113,7 +115,8 @@ transcript_n}
             featurizer=self._featurizer, max_duration=max_duration,
             min_duration=min_duration, normalize=normalize_transcripts,
             trim=trim_silence, logger=self._logger,
-            eos_id=eos_id, load_audio=load_audio
+            eos_id=eos_id, load_audio=load_audio,
+            tokenizer=tokenizer
         )
 
         if self._placement == DeviceType.AllGpu:
@@ -127,6 +130,147 @@ transcript_n}
             dataset=self._dataset,
             batch_size=batch_size,
             collate_fn=seq_collate_fn,
+            drop_last=drop_last,
+            shuffle=shuffle if sampler is None else False,
+            sampler=sampler,
+            num_workers=num_workers
+        )
+
+    def __len__(self):
+        return len(self._dataset)
+
+    @property
+    def dataset(self):
+        return None
+
+    @property
+    def data_iterator(self):
+        return self._dataloader
+
+
+class TFAudioToTextDataLayer(DataLayerNM):
+    """Data Layer for general ASR tasks.
+
+    Module which reads ASR labeled data. It accepts comma-separated
+    JSON manifest files describing the correspondence between wav audio files
+    and their transcripts. JSON files should be of the following format::
+
+        {"audio_filepath": path_to_wav_0, "duration": time_in_sec_0, "text": \
+transcript_0}
+        ...
+        {"audio_filepath": path_to_wav_n, "duration": time_in_sec_n, "text": \
+transcript_n}
+
+
+    Args:
+        manifest_filepath (str): path to JSON containing data.
+        labels (list): list of characters that can be output by the ASR model.
+            For Jasper, this is the 28 character set {a-z '}. The CTC blank
+            symbol is automatically added later for models using ctc.
+        batch_size (int): batch size
+        sample_rate (int): Target sampling rate for data. Audio files will be
+            resampled to sample_rate if it is not already.
+            Defaults to 16000.
+        int_values (bool): Bool indicating whether the audio file is saved as
+            int data or float data.
+            Defaults to False.
+        eos_id (str): End of string symbol used for seq2seq models.
+            Defaults to None.
+        min_duration (float): All training files which have a duration less
+            than min_duration are dropped. Note: Duration is read from the
+            manifest JSON.
+            Defaults to 0.1.
+        max_duration (float): All training files which have a duration more
+            than max_duration are dropped. Note: Duration is read from the
+            manifest JSON.
+            Defaults to None.
+        normalize_transcripts (bool): Whether to use automatic text cleaning.
+            It is highly recommended to manually clean text ffor best results.
+            Defaults to True.
+        trim_silence (bool): Whether to use trim silence from beginning and end
+            of audio signal using librosa.effects.trim().
+            Defaults to False.
+        load_audio (bool): Controls whether the dataloader loads the audio
+            signal and transcript or just the transcript.
+            Defaults to True.
+        drop_last (bool): See PyTorch DataLoader.
+            Defaults to False.
+        shuffle (bool): See PyTorch DataLoader.
+            Defaults to True.
+        num_workers (int): See PyTorch DataLoader.
+            Defaults to 0.
+        perturb_config (dict): Currently disabled.
+    """
+
+    @staticmethod
+    def create_ports():
+        input_ports = {}
+        output_ports = {
+            "audio_signal": NeuralType({0: AxisType(BatchTag),
+                                        1: AxisType(TimeTag)}),
+
+            "a_sig_length": NeuralType({0: AxisType(BatchTag)}),
+
+            "decoder_inputs": NeuralType({0: AxisType(BatchTag),
+                                          1: AxisType(TimeTag)}),
+
+            "decoder_targets": NeuralType({0: AxisType(BatchTag),
+                                          1: AxisType(TimeTag)}),
+
+            "transcript_length": NeuralType({0: AxisType(BatchTag)}),
+
+            "ctc_targets": NeuralType({0: AxisType(BatchTag),
+                                       1: AxisType(TimeTag)}),
+
+            "ctc_transcript_length": NeuralType({0: AxisType(BatchTag)})
+        }
+        return input_ports, output_ports
+
+    def __init__(
+            self, *,
+            manifest_filepath,
+            labels,
+            batch_size,
+            sample_rate=16000,
+            int_values=False,
+            eos_id=None,
+            min_duration=0.1,
+            max_duration=None,
+            normalize_transcripts=True,
+            trim_silence=False,
+            load_audio=True,
+            drop_last=False,
+            shuffle=True,
+            num_workers=0,
+            tokenizer=None,
+            # perturb_config=None,
+            **kwargs
+    ):
+        DataLayerNM.__init__(self, **kwargs)
+
+        self._featurizer = WaveformFeaturizer(
+            sample_rate=sample_rate, int_values=int_values, augmentor=None)
+        self._dataset = TFAudioDataset(
+            manifest_filepath=manifest_filepath,
+            labels=labels,
+            featurizer=self._featurizer, max_duration=max_duration,
+            min_duration=min_duration, normalize=normalize_transcripts,
+            trim=trim_silence, logger=self._logger,
+            eos_id=eos_id, load_audio=load_audio,
+            tokenizer=tokenizer
+        )
+
+        if self._placement == DeviceType.AllGpu:
+            self._logger.info('Parallelizing DATALAYER')
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                self._dataset)
+        else:
+            sampler = None
+
+        self._dataloader = torch.utils.data.DataLoader(
+            dataset=self._dataset,
+            batch_size=batch_size,
+            collate_fn=tfaudio_seq_collate_fn,
             drop_last=drop_last,
             shuffle=shuffle if sampler is None else False,
             sampler=sampler,
@@ -225,6 +369,11 @@ class AudioPreprocessing(TrainableNM):
             pad_to=16,
             frame_splicing=1,
             stft_conv=False,
+            speed_perturb=False,
+            speed_perturb_global=False,
+            speed_perturb_segs=0,
+            speed_perturb_min=0,
+            speed_perturb_max=0,
             **kwargs
     ):
         if "fbank" not in feat_type:
@@ -248,6 +397,11 @@ class AudioPreprocessing(TrainableNM):
             pad_to=pad_to,
             frame_splicing=frame_splicing,
             stft_conv=stft_conv,
+            speed_perturb=speed_perturb,
+            speed_perturb_global=speed_perturb_global,
+            speed_perturb_segs=speed_perturb_segs,
+            speed_perturb_min=speed_perturb_min,
+            speed_perturb_max=speed_perturb_max,
             logger=self._logger
         )
         # _pre_procesing_config = self.local_parameters
@@ -261,13 +415,12 @@ class AudioPreprocessing(TrainableNM):
         if self.disable_casts:
             with amp.disable_casts():
                 if input_signal.dim() == 2:
-                    processed_signal = self.featurizer(
+                    processed_signal, processed_length = self.featurizer(
                         input_signal.to(torch.float), length)
-                    processed_length = self.featurizer.get_seq_len(length)
         else:
             if input_signal.dim() == 2:
-                processed_signal = self.featurizer(input_signal, length)
-                processed_length = self.featurizer.get_seq_len(length)
+                processed_signal, processed_length = self.featurizer(
+                    input_signal, length)
         return processed_signal, processed_length
 
 
@@ -373,7 +526,7 @@ class MultiplyBatch(NonTrainableNM):
     def create_ports():
         input_ports = {
             "in_x": NeuralType({0: AxisType(BatchTag),
-                                1: AxisType(SpectrogramSignalTag),
+                                1: AxisType(ChannelTag),
                                 2: AxisType(TimeTag)}),
 
             "in_x_len": NeuralType({0: AxisType(BatchTag)}),
@@ -410,3 +563,52 @@ class MultiplyBatch(NonTrainableNM):
         out_y_len = in_y_len.repeat(self.mult)
 
         return out_x, out_x_len, out_y, out_y_len
+
+
+class IntToSeq(NonTrainableNM):
+    @staticmethod
+    def create_ports():
+        input_ports = {
+            "x": NeuralType({0: AxisType(BatchTag),
+                             1: AxisType(EncodedRepresentationTag),
+                             2: AxisType(ProcessedTimeTag)}),
+            "length": NeuralType({0: AxisType(BatchTag)})
+        }
+
+        output_ports = {
+            "length": NeuralType({0: AxisType(BatchTag),
+                                  1: AxisType(TimeTag)})
+        }
+        return input_ports, output_ports
+
+    @torch.no_grad()
+    def forward(self, x, length):
+        length = length.to(dtype=torch.long)
+        max_len = x.size(2)
+        mask = torch.arange(max_len).to(length.device)\
+            .expand(len(length), max_len) < length.unsqueeze(1)
+        return mask
+
+
+class IntToSeq2(NonTrainableNM):
+    @staticmethod
+    def create_ports():
+        input_ports = {
+            "x": NeuralType({0: AxisType(BatchTag),
+                             1: AxisType(TimeTag)}),
+            "length": NeuralType({0: AxisType(BatchTag)})
+        }
+
+        output_ports = {
+            "length": NeuralType({0: AxisType(BatchTag),
+                                  1: AxisType(TimeTag)})
+        }
+        return input_ports, output_ports
+
+    @torch.no_grad()
+    def forward(self, x, length):
+        length = length.to(dtype=torch.long)
+        max_len = x.size(1)
+        mask = torch.arange(max_len).to(length.device)\
+            .expand(len(length), max_len) < length.unsqueeze(1)
+        return mask

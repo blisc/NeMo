@@ -3,7 +3,7 @@
 import torch
 from torch.utils.data import Dataset
 
-from .manifest import Manifest
+from .manifest import Manifest, TFManifest
 
 
 def seq_collate_fn(batch):
@@ -74,7 +74,8 @@ class AudioDataset(Dataset):
     def __init__(self, manifest_filepath, labels, featurizer,
                  max_duration=None,
                  min_duration=None, max_utts=0, normalize=True,
-                 trim=False, eos_id=None, logger=False, load_audio=True):
+                 trim=False, eos_id=None, logger=False, load_audio=True,
+                 tokenizer=None):
         """
         Dataset that loads tensors via a json file containing paths to audio
         files, transcripts, and durations
@@ -107,7 +108,8 @@ class AudioDataset(Dataset):
         self.manifest = Manifest(m_paths, labels,
                                  max_duration=max_duration,
                                  min_duration=min_duration, max_utts=max_utts,
-                                 normalize=normalize)
+                                 normalize=normalize,
+                                 tokenizer=tokenizer)
         self.featurizer = featurizer
         self.trim = trim
         self.eos_id = eos_id
@@ -144,3 +146,135 @@ class AudioDataset(Dataset):
 
     def __len__(self):
         return len(self.manifest)
+
+
+class TFAudioDataset(Dataset):
+    def __init__(self, manifest_filepath, labels, featurizer,
+                 max_duration=None,
+                 min_duration=None, max_utts=0, normalize=True,
+                 trim=False, eos_id=None, logger=False, load_audio=True,
+                 tokenizer=None):
+        """
+        Dataset that loads tensors via a json file containing paths to audio
+        files, transcripts, and durations
+        (in seconds). Each new line is a different sample. Example below:
+
+        {"audio_filepath": "/path/to/audio.wav", "text_filepath":
+        "/path/to/audio.txt", "duration": 23.147}
+        ...
+        {"audio_filepath": "/path/to/audio.wav", "text": "the
+        transcription", offset": 301.75, "duration": 0.82, "utt":
+        "utterance_id",
+        "ctm_utt": "en_4156", "side": "A"}
+
+        Args:
+            manifest_filepath: Path to manifest json as described above. Can
+            be coma-separated paths.
+            labels: String containing all the possible characters to map to
+            featurizer: Initialized featurizer class that converts paths of
+            audio to feature tensors
+            max_duration: If audio exceeds this length, do not include in
+            dataset
+            min_duration: If audio is less than this length, do not include
+            in dataset
+            max_utts: Limit number of utterances
+            normalize: whether to normalize transcript text (default): True
+            eos_id: Id of end of sequence symbol to append if not None
+            load_audio: Boolean flag indicate whether do or not load audio
+        """
+        m_paths = manifest_filepath.split(',')
+        self.manifest = TFManifest(m_paths, labels,
+                                   max_duration=max_duration,
+                                   min_duration=min_duration,
+                                   max_utts=max_utts,
+                                   normalize=normalize,
+                                   tokenizer=tokenizer,
+                                   logger=logger)
+        self.featurizer = featurizer
+        self.trim = trim
+        self.eos_id = eos_id
+        self.load_audio = load_audio
+        if logger:
+            logger.info(
+                "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
+                "hours.".format(
+                    self.manifest.duration / 3600,
+                    self.manifest.filtered_duration / 3600))
+
+    def __getitem__(self, index):
+        sample = self.manifest[index]
+        if self.load_audio:
+            duration = sample['duration'] if 'duration' in sample else 0
+            offset = sample['offset'] if 'offset' in sample else 0
+            features = self.featurizer.process(sample['audio_filepath'],
+                                               offset=offset,
+                                               duration=duration,
+                                               trim=self.trim)
+            f, fl = features, torch.tensor(features.shape[0]).long()
+            # f = f / (torch.max(torch.abs(f)) + 1e-5)
+        else:
+            f, fl = None, None
+
+        t = sample["tokenizer_transcript"]
+        tl = len(t) - 1
+        decoder_outputs = t[1:]
+        decoder_inputs = t[:-1]
+
+        char_transcript = sample["char_transcript"]
+        char_transcript_l = len(sample["char_transcript"])
+
+        return \
+            f, fl, \
+            torch.tensor(decoder_inputs).long(),\
+            torch.tensor(decoder_outputs).long(),\
+            torch.tensor(tl).long(),\
+            torch.tensor(char_transcript).long(),\
+            torch.tensor(char_transcript_l).long(),
+
+    def __len__(self):
+        return len(self.manifest)
+
+
+def tfaudio_seq_collate_fn(batch):
+    def find_max_len(seq, index):
+        max_len = -1
+        for item in seq:
+            if item[index].size(0) > max_len:
+                max_len = item[index].size(0)
+        return max_len
+
+    batch_size = len(batch)
+
+    audio_signal, audio_lengths = None, None
+    if batch[0][0] is not None:
+        max_audio_len = find_max_len(batch, 0)
+
+        audio_signal = torch.zeros(batch_size, max_audio_len,
+                                   dtype=torch.float)
+        audio_lengths = []
+        for i, s in enumerate(batch):
+            audio_signal[i].narrow(0, 0, s[0].size(0)).copy_(s[0])
+            audio_lengths.append(s[1])
+        audio_lengths = torch.tensor(audio_lengths, dtype=torch.long)
+
+    max_transcript_len = find_max_len(batch, 2)
+    max_char_transcript_len = find_max_len(batch, 5)
+
+    decoder_in = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
+    decoder_out = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
+    transcript_lengths = []
+    char_transcript = torch.zeros(
+        batch_size, max_char_transcript_len, dtype=torch.long)
+    char_transcript_lengths = []
+    for i, s in enumerate(batch):
+        decoder_in[i].narrow(0, 0, s[2].size(0)).copy_(s[2])
+        decoder_out[i].narrow(0, 0, s[3].size(0)).copy_(s[3])
+        transcript_lengths.append(s[4])
+        char_transcript[i].narrow(0, 0, s[5].size(0)).copy_(s[5])
+        char_transcript_lengths.append(s[6])
+    transcript_lengths = torch.tensor(transcript_lengths, dtype=torch.long)
+    char_transcript_lengths = torch.tensor(
+        char_transcript_lengths, dtype=torch.long)
+
+    return audio_signal, audio_lengths, decoder_in, decoder_out,\
+        transcript_lengths, char_transcript, char_transcript_lengths
