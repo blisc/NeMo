@@ -157,6 +157,8 @@ class Novograd(Optimizer):
             luc_trust=1e-3,
             luc_eps=1e-8,
     ):
+        if luc:
+            print("enabling luc")
         _check_valid_opt_params(lr, eps, betas)
         defaults = dict(lr=lr,
                         betas=betas,

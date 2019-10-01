@@ -7,11 +7,7 @@ import os
 import sys
 import time
 
-from ..utils.exp_logging import get_logger
 from ..utils import get_checkpoint_from_dir
-
-
-logger = get_logger('')
 
 
 class ActionCallback(ABC):
@@ -21,6 +17,10 @@ class ActionCallback(ABC):
     def __init__(self):
         self._registered_tensors = {}
         self._action = None
+
+    @property
+    def logger(self):
+        return self.action.logger
 
     @property
     def step(self):
@@ -70,11 +70,14 @@ class ModuleSaverCallback(ActionCallback):
     When step_freq = -1, don't save anything.
     """
 
-    def __init__(self, save_modules_list, step_freq=1000, folder=None):
+    def __init__(self, save_modules_list, step_freq=1000, folder=None,
+                 checkpoints_to_keep=4,):
         super().__init__()
         self._save_modules_list = save_modules_list
         self._folder = folder
         self._step_freq = step_freq
+        self._ckpt2keep = checkpoints_to_keep
+        self._saved_ckpts = []
 
     def on_iteration_end(self):
         step = self.step
@@ -93,9 +96,15 @@ class ModuleSaverCallback(ActionCallback):
                     file_name = fn
                 else:
                     file_name = os.path.join(self._folder, fn)
-                print(f"Saving module {class_name} in {file_name}")
+                self.logger.info(f"Saving module {class_name} in {file_name}")
                 m.save_to(file_name)
-                print("Saved.")
+                self.logger.info("Saved.")
+            self._saved_ckpts.append(f'-{self.step}.pt')
+            if len(self._saved_ckpts) > self._ckpt2keep:
+                for end in self._saved_ckpts[:-self._ckpt2keep]:
+                    for file in glob.glob(f'{self._folder}/*{end}'):
+                        os.remove(file)
+                self._saved_ckpts = self._saved_ckpts[-self._ckpt2keep:]
 
     def on_action_end(self):
         step = self.step
@@ -108,9 +117,9 @@ class ModuleSaverCallback(ActionCallback):
                     file_name = fn
                 else:
                     file_name = os.path.join(self._folder, fn)
-                print(f"Saving module {class_name} in {file_name}")
+                self.logger.info(f"Saving module {class_name} in {file_name}")
                 m.save_to(file_name)
-                print("Saved.")
+                self.logger.info("Saved.")
 
 
 class SimpleLossLoggerCallback(ActionCallback):
@@ -140,25 +149,25 @@ class SimpleLossLoggerCallback(ActionCallback):
 
     def on_action_start(self):
         if self.local_rank is None or self.local_rank == 0:
-            print("Starting .....")
+            self.logger.info("Starting .....")
             self._start_time = time.time()
 
     def on_action_end(self):
         if self.local_rank is None or self.local_rank == 0:
             if self._swriter is not None:
                 self._swriter.close()
-            print(f"Done in {time.time() - self._start_time}")
+            self.logger.info(f"Done in {time.time() - self._start_time}")
 
     def on_epoch_start(self):
         if self.local_rank is None or self.local_rank == 0:
-            print(f"Starting epoch {self.epoch_num}")
+            self.logger.info(f"Starting epoch {self.epoch_num}")
             self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
         if self.local_rank is None or self.local_rank == 0:
             step = self.step
             run_time = time.time() - self._last_epoch_start
-            print(f"Finished epoch {self.epoch_num} in {run_time}")
+            self.logger.info(f"Finished epoch {self.epoch_num} in {run_time}")
             if self._swriter is not None:
                 value = self.epoch_num
                 self._swriter.add_scalar('misc/epoch', value, step)
@@ -178,7 +187,7 @@ class SimpleLossLoggerCallback(ActionCallback):
                     for t in self.tensors
                 ]
 
-                print(f"Step: {step}")
+                self.logger.info(f"Step: {step}")
                 if self._print_func:
                     self._print_func(tensor_values)
                 sys.stdout.flush()
@@ -191,7 +200,7 @@ class SimpleLossLoggerCallback(ActionCallback):
                     run_time = time.time() - self._last_iter_start
                     self._swriter.add_scalar('misc/step_time', run_time, step)
                 run_time = time.time() - self._last_iter_start
-                print(f"Step time: {run_time} seconds")
+                self.logger.info(f"Step time: {run_time} seconds")
 
 
 class CheckpointCallback(ActionCallback):
@@ -199,14 +208,15 @@ class CheckpointCallback(ActionCallback):
     def __init__(self, folder, load_from_folder=None, step_freq=-1,
                  epoch_freq=-1, checkpoints_to_keep=4, force_load=False):
         super().__init__()
+        # TODO: self.logger is undefined here
         if step_freq == -1 and epoch_freq == -1:
-            logger.warning(
+            self.logger.warning(
                 "No checkpoints will be saved because step_freq and "
                 "epoch_freq are both -1."
             )
 
         if step_freq > -1 and epoch_freq > -1:
-            logger.warning(
+            self.logger.warning(
                 "You config the model to save by both steps and epochs. "
                 "Save by step_freq only"
             )
@@ -224,7 +234,7 @@ class CheckpointCallback(ActionCallback):
 
     def __save_to(self, path):
         if not os.path.isdir(path):
-            print("Creating {0} folder".format(path))
+            self.logger.info("Creating {0} folder".format(path))
             os.makedirs(path, exist_ok=True)
         unique_mod_names = set()
         for module in self.action.modules:
@@ -254,16 +264,16 @@ class CheckpointCallback(ActionCallback):
                 for file in glob.glob(f'{path}/*{end}'):
                     os.remove(file)
             self._saved_ckpts = self._saved_ckpts[-self._ckpt2keep:]
-        logger.info(f'Saved checkpoint: {path}/{filename}')
+        self.logger.info(f'Saved checkpoint: {path}/{filename}')
 
     def __restore_from(self, path):
         if not os.path.isdir(path):
             if self._force_load:
                 raise ValueError("force_load was set to True for checkpoint "
                                  "callback but a checkpoint was not found.")
-            logger.warning(f"Checkpoint folder {path} not found!")
+            self.logger.warning(f"Checkpoint folder {path} not found!")
         else:
-            logger.info(f"Restoring checkpoint from folder {path} ...")
+            self.logger.info(f"Restoring checkpoint from folder {path} ...")
             modules_to_restore = []
             modules_to_restore_name = []
             for module in self.action.modules:
@@ -283,8 +293,8 @@ class CheckpointCallback(ActionCallback):
                     raise ValueError(
                         "force_load was set to True for checkpoint callback"
                         "but a checkpoint was not found.")
-                print(e)
-                print(
+                self.logger.warning(e)
+                self.logger.warning(
                     "Checkpoint folder {0} present but did not restore".format(
                         path))
                 return
@@ -295,12 +305,26 @@ class CheckpointCallback(ActionCallback):
                 for tr, checkpoint in zip([self.action], trainer_checkpoints):
                     tr.restore_state_from(checkpoint)
             except (BaseException, ValueError) as e:
-                print(e)
-                print("Trainer state wasn't restored".format(
-                    path))
+                self.logger.warning(e)
+                self.logger.warning("Trainer state wasn't restored")
                 return
 
     def on_action_start(self):
+        num_parameters = 0
+        unique_mod_names = set()
+        for module in self.action.modules:
+            if module.num_weights > 0:
+                if str(module) in unique_mod_names:
+                    raise NotImplementedError(
+                        "There were two instances of the same module. Please "
+                        "overwrite __str__() of one of the modules.")
+                unique_mod_names.add(str(module))
+                num_parameters += module.num_weights
+        self.logger.info(f"Found {len(unique_mod_names)} modules with "
+                         f"weights:")
+        for name in unique_mod_names:
+            self.logger.info(f"{name}")
+        self.logger.info(f"Total model parameters: {num_parameters}")
         self.__restore_from(path=self._load_from_folder)
 
     def on_iteration_end(self):
@@ -325,7 +349,8 @@ class CheckpointCallback(ActionCallback):
         if self._epoch_freq > 0:
             if self.local_rank is None or self.local_rank == 0:
                 run_time = time.time() - self._last_epoch_start
-                logger.info(f'Finished epoch {self.epoch_num} in {run_time}')
+                self.logger.info(
+                    f'Finished epoch {self.epoch_num} in {run_time}')
                 if (self.epoch_num + 1) % self._epoch_freq == 0:
                     self.__save_to(path=self._folder)
 
@@ -376,17 +401,16 @@ class EvaluatorCallback(ActionCallback):
         step = self.step
         if step % self._eval_frequency == 0:
             if self.local_rank == 0 or self.local_rank is None:
-                print('Doing Evaluation ' + '.' * 30)
+                self.logger.info('Doing Evaluation ' + '.' * 30)
             start_time = time.time()
             self.action._eval(self._eval_tensors, self, step)
             elapsed_time = time.time() - start_time
             if self.local_rank == 0 or self.local_rank is None:
-                print(f'Evaluation time: {elapsed_time} seconds')
+                self.logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def on_action_end(self):
         step = self.step
-        if self.local_rank == 0 or self.local_rank is None:
-            print('Final Evaluation ' + '.' * 30)
+        self.logger.info('Final Evaluation ' + '.' * 30)
         start_time = time.time()
         self.action._eval(self._eval_tensors, self, step)
         elapsed_time = time.time() - start_time

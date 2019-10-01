@@ -2,6 +2,7 @@
 import random
 from abc import ABC, abstractmethod
 from typing import List, Optional
+import logging
 
 import numpy as np
 
@@ -46,11 +47,13 @@ class Actions(ABC):
     """Basic actions allowed on graphs of Neural Modules"""
 
     def __init__(self, local_rank,
-                 optimization_level=Optimization.mxprO0):
+                 optimization_level=Optimization.mxprO0,
+                 logger=logging.Logger):
         self._local_rank = local_rank
         self._optim_level = optimization_level
         self.step = None
         self.epoch_num = None
+        self.logger = logger
 
     @property
     def local_rank(self):
@@ -545,7 +548,8 @@ class NeuralModuleFactory(object):
             )
             instance = constructor(local_rank=self._local_rank,
                                    tb_writer=tb_writer,
-                                   optimization_level=self._optim_level)
+                                   optimization_level=self._optim_level,
+                                   logger=self.logger)
             return instance
         else:
             raise ValueError("Only PyTorch backend is currently supported.")

@@ -91,7 +91,7 @@ class ExpManager:
             if use_tb:
                 self.get_tb_writer(exist_ok=exist_ok)
             self.ckpt_dir = f'{self.work_dir}/checkpoints'
-            if files_to_copy:
+            if files_to_copy and (local_rank == 0 or local_rank is None):
                 for file in files_to_copy:
                     copy_wo_overwrite(self.work_dir, file)
 
