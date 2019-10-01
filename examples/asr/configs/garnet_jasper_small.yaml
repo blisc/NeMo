@@ -1,0 +1,113 @@
+model: "GarNet"
+labels: [" ", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+         "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "'"]
+
+optimization:
+    warmup_epochs: 5
+    min_lr: 1e-5
+    params:
+        num_epochs: 100
+        lr: 1e-3
+        weight_decay: 1e-5
+        larc: false
+        larc_eta: 1e-3
+        luc: false
+        luc_eta: 1e-3
+
+AudioToTextDataLayer:
+    train:
+        sample_rate: &sr 16000
+        trim_silence: &ts true
+        normalize_transcripts: &nt false
+        shuffle: true
+        max_duration: null
+        drop_last: true
+
+    eval:
+        sample_rate: *sr
+        trim_silence: *ts
+        normalize_transcripts: *nt
+        shuffle: false
+        max_duration: null
+        drop_last: false
+
+AudioPreprocessing:
+    sample_rate: *sr
+    window_size: 0.02
+    window_stride: 0.01
+    window: "hann"
+    normalize: "per_feature"
+    n_fft: 512
+    features: 64
+    feat_type: "logfbank"
+    dither: 0.00001
+    pad_to: 16
+    stft_conv: true
+
+SpectrogramAugmentation:
+    rect_masks: 0
+    rect_time: 120
+    rect_freq: 50
+
+JasperEncoder:
+    activation: "relu"
+    conv_mask: true
+    load: false
+    freeze: false
+
+    jasper:
+        - filters: 256
+          repeat: 1
+          kernel: [11]
+          stride: [2]
+          dilation: [1]
+          dropout: 0.0
+          residual: false
+
+        - filters: 256
+          repeat: 5
+          kernel: [11]
+          stride: [1]
+          dilation: [1]
+          dropout: 0.0
+          residual: true
+
+        - filters: 256
+          repeat: 5
+          kernel: [13]
+          stride: [1]
+          dilation: [1]
+          dropout: 0.0
+          residual: true
+
+        - filters: 256
+          repeat: 5
+          kernel: [17]
+          stride: [1]
+          dilation: [1]
+          dropout: 0.0
+          residual: true
+
+        - filters: 512
+          repeat: 5
+          kernel: [21]
+          stride: [1]
+          dilation: [1]
+          dropout: 0.0
+          residual: true
+
+        - filters: 512
+          repeat: 5
+          kernel: [25]
+          stride: [1]
+          dilation: [1]
+          dropout: 0.0
+          residual: true
+
+        - filters: 512
+          repeat: 1
+          kernel: [29]
+          stride: [1]
+          dilation: [2]
+          dropout: 0.0
+          residual: false
