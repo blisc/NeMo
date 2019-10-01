@@ -134,7 +134,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
 
     scale = False
     if args.scale:
-        scale = np.sqrt(args.decoder_layers)
+        scale = 1./np.sqrt(args.decoder_layers)
     connector = nemo_asr.JasperRNNConnector(
         in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
         out_channels=512,

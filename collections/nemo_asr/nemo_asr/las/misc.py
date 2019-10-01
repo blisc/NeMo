@@ -53,6 +53,7 @@ class JasperRNNConnector(TrainableNM):
         tensor = self.icnn(tensor)
         tensor = self.bn(tensor)
         if self.scale:
-            tensor.mul_(self.scale)
+            tensor = (1 - self.scale) * tensor.detach() + self.scale * tensor
+            # tensor.mul_(1./self.scale)
         tensor = tensor.transpose(1, 2)
         return tensor
