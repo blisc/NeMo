@@ -47,7 +47,7 @@ def parse_args():
                         help="training dataset path")
     parser.add_argument("--beta1", type=float,
                         help="Adam/AdamW/NovoGrad beta1")
-    parser.add_argument("--beta2", type=float,
+    parser.add_argument("--beta2", type=float, default=0.25,
                         help="Adam/AdamW/NovoGrad beta2")
 
     # Create new args
@@ -362,10 +362,13 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
 
 
 def construct_name(args, cfg):
+    world_size = 1
+    if torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
     name = '{}_{}_{}_{}_{}'.format(
         cfg['model'],
         args.exp_name,
-        'bs' + str(args.batch_size),
+        'bs' + str(args.batch_size * world_size * args.iter_per_step),
         'epochs' + str(args.num_epochs),
         'ctc' + str(args.enable_ctc_loss)
     )
