@@ -36,12 +36,13 @@ class JasperRNNConnector(TrainableNM):
         }
         return input_ports, output_ports
 
-    def __init__(self, in_channels, out_channels, **kwargs):
+    def __init__(self, in_channels, out_channels, scale=False, **kwargs):
         super().__init__(**kwargs)
 
         self.icnn = nn.Conv1d(in_channels, out_channels,
                               kernel_size=1, bias=True)
         self.bn = nn.BatchNorm1d(out_channels)
+        self.scale = scale
 
         self.apply(jasper_init_weights)
         self.to(self._device)
@@ -51,5 +52,7 @@ class JasperRNNConnector(TrainableNM):
         # tensor = F.dropout(tensor, 0.2)
         tensor = self.icnn(tensor)
         tensor = self.bn(tensor)
+        if self.scale:
+            tensor.mul_(self.scale)
         tensor = tensor.transpose(1, 2)
         return tensor

@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument('--add_time_dir', action="store_true")
     parser.add_argument('--debug', action="store_true")
     parser.add_argument('--decoder_layers', type=int, default=6)
+    parser.add_argument('--scale', action="store_true")
 
     args = parser.parse_args()
     if args.max_steps is not None:
@@ -131,9 +132,13 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
             logger.info(f'Freeze encoder weights')
     vocab_size = 8 * math.ceil(tokenizer.vocab_size / 8)
 
+    scale = False
+    if args.scale:
+        scale = np.sqrt(args.decoder_layers)
     connector = nemo_asr.JasperRNNConnector(
         in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
-        out_channels=512
+        out_channels=512,
+        scale=scale
     )
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=512,
