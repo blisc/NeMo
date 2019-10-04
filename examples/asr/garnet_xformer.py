@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument('--add_time_dir', action="store_true")
     parser.add_argument('--debug', action="store_true")
     parser.add_argument('--decoder_layers', type=int, default=6)
+    parser.add_argument('--decoder_d_inner', type=int, default=2048)
     parser.add_argument('--scale', action="store_true")
 
     args = parser.parse_args()
@@ -142,7 +143,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     )
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=512,
-        d_inner=1024,
+        d_inner=args.decoder_d_inner,
         num_layers=args.decoder_layers,
         num_attn_heads=8,
         ffn_dropout=0.1,
