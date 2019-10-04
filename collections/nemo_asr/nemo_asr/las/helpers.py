@@ -148,40 +148,33 @@ def process_evaluation_epoch_xf(
             f'metric/{mode}_seqloss_{tag}']
 
     if calc_wer:
-        transcript_texts = global_vars['transcript_texts']
-        prediction_texts = global_vars['prediction_texts']
+        transcripts = global_vars['transcript_texts']
+        predictions = global_vars['prediction_texts']
 
-        wer = word_error_rate(hypotheses=prediction_texts,
-                              references=transcript_texts)
+        wer = word_error_rate(hypotheses=predictions,
+                              references=transcripts)
         return_dict[f'metric/{mode}_seq_wer_{tag}'] = wer
 
         if logger:
-            choices = np.random.randint(len(transcript_texts), size=10)
+            choices = np.random.randint(len(transcripts), size=10)
             pstring = "Ten examples (transcripts and predictions)\n"
-            # seq_transcripts = transcript_texts[choices]
-            # seq_predictions = prediction_texts[choices]
             pexamples = [
-                f"{i}:\nt:{transcript_texts[c]}\np:{prediction_texts[c]}\n"
+                f"{i}:\nseq t:{transcripts[c]}\nseq p:{predictions[c]}\n"
                 for i, c in enumerate(choices)]
 
         if ctc:
-            transcript_texts = global_vars['ctc_transcript_texts']
-            prediction_texts = global_vars['ctc_prediction_texts']
+            transcripts = global_vars['ctc_transcript_texts']
+            predictions = global_vars['ctc_prediction_texts']
 
-            wer = word_error_rate(hypotheses=prediction_texts,
-                                  references=transcript_texts)
+            wer = word_error_rate(hypotheses=predictions,
+                                  references=transcripts)
             return_dict[f'metric/{mode}_ctc_wer_{tag}'] = wer
 
             if logger:
-                # ctc_transcripts = transcript_texts[choices]
-                # ctc_predictions = prediction_texts[choices]
                 pexamples = [
                     pexamples[i] +
-                    f't:{transcript_texts[c]}\np:{prediction_texts[c]}\n'
+                    f'ctc t:{transcripts[c]}\nctc p:{predictions[c]}\n'
                     for i, c in enumerate(choices)]
-                # for i, (a, b) in enumerate(zip(
-                #         ctc_transcripts, ctc_predictions)):
-                #     pexamples[i] += f'{a}\n{b}\n'
 
         if logger:
             logger.info(pstring + "".join(pexamples).strip())

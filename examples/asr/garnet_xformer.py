@@ -100,7 +100,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     tokenizer = nemo_nlp.YouTokenToMeTokenizer(
         model_path=args.tokenizer_file)
     # tokenizer = nemo_nlp.NemoBertTokenizer(
-        # pretrained_model="bert-base-uncased")  # + "-vocab.txt")
+    #     pretrained_model="bert-base-uncased")  # + "-vocab.txt")
     assert tokenizer.pad_id() == 0, f"{tokenizer.pad_id}"
     if args.debug:
         garnet_params['AudioToTextDataLayer']['train'][
