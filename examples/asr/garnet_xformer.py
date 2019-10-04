@@ -142,7 +142,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     )
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=512,
-        d_inner=2048,
+        d_inner=1024,
         num_layers=args.decoder_layers,
         num_attn_heads=8,
         ffn_dropout=0.1,
