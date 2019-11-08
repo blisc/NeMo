@@ -43,7 +43,7 @@ _float_2_half_req = {Optimization.mxprO1,
 
 class PtActions(Actions):
     def __init__(self, local_rank=None, tb_writer=None,
-                 optimization_level=Optimization.mxprO0):
+                 optimization_level=Optimization.mxprO0, logger=None):
         need_apex = local_rank is not None or \
                     optimization_level != Optimization.mxprO0
         if need_apex:
@@ -73,7 +73,8 @@ class PtActions(Actions):
 
         super(PtActions, self).__init__(
             local_rank=local_rank,
-            optimization_level=optimization_level)
+            optimization_level=optimization_level,
+            logger=logger)
 
         # will be [unique_instance_id -> (NMModule, PTModule)]
         self.module_reference_table = {}
@@ -346,7 +347,7 @@ class PtActions(Actions):
                     "Unknown optimizer class: {0}".format(optimizer_class))
 
             if optimization_params.get("larc", False):
-                print("Enabling larc")
+                # self.logger.info("Enabling larc")
                 optimizer = LARC(
                     optimizer,
                     trust_coefficient=optimization_params.get("larc_eta", 2e-2)
@@ -529,7 +530,7 @@ class PtActions(Actions):
                 assert dist.is_initialized()
                 is_distributed = True
                 world_size = torch.distributed.get_world_size()
-                # print(
+                # self.logger.info(
                 #     "Doing distributed evaluation. Rank {0} of {1}".format(
                 #         self.local_rank, world_size
                 #     )
@@ -581,7 +582,7 @@ class PtActions(Actions):
                         num_batches < 10 or (
                         epoch_i % int(num_batches / 10) == 0)
                 ):
-                    print(
+                    self.logger.info(
                         f"Evaluating batch {epoch_i} out of {num_batches}")
                 tensors = []
                 if isinstance(data, torch.Tensor):
@@ -609,7 +610,7 @@ class PtActions(Actions):
                 for t2e in tensors_2_evaluate:
                     key = t2e.unique_name
                     if key not in registered_e_tensors.keys():
-                        print(
+                        self.logger.info(
                             "WARNING: Tensor {} was not found during "
                             "eval".format(
                                 key)
@@ -723,13 +724,13 @@ class PtActions(Actions):
             is_distributed = False
             world_size = None
             if dl_nm.placement == DeviceType.AllGpu:
-                if self.cache or self.use_cache:
+                if self.cache or use_cache:
                     raise NotImplementedError(
                         "Caching is not available for distributed training.")
                 assert dist.is_initialized()
                 is_distributed = True
                 world_size = torch.distributed.get_world_size()
-                # print(
+                # self.logger.info(
                 #     "Doing distributed evaluation. Rank {0} of {1}".format(
                 #         self.local_rank, world_size
                 #     )
@@ -792,7 +793,7 @@ class PtActions(Actions):
                         num_batches < 10 or (
                         epoch_i % int(num_batches / 10) == 0)
                 ):
-                    print(
+                    self.logger.info(
                         f"Evaluating batch {epoch_i} out of {num_batches}")
                 tensors = []
                 if use_cache:
@@ -837,7 +838,7 @@ class PtActions(Actions):
                 for t2e in tensors_to_return:
                     key = t2e.unique_name
                     if key not in registered_e_tensors.keys():
-                        print(
+                        self.logger.info(
                             "WARNING: Tensor {} was not found during "
                             "eval".format(
                                 key)
@@ -1143,7 +1144,7 @@ class PtActions(Actions):
             #     raise NotImplementedError(
             #         "Distributed training does nor work with multiple "
             #         "optimizers")
-            print("Doing distributed training")
+            self.logger.info("Doing distributed training")
             if t_dataset is not None:
                 train_sampler = \
                     torch.utils.data.distributed.DistributedSampler(
@@ -1288,7 +1289,7 @@ class PtActions(Actions):
                             registered_tensors[tensor.unique_name]).any():
                         if stop_on_nan_loss:
                             raise ValueError('Loss is NaN exiting')
-                        print('WARNING: Loss is NaN')
+                        self.logger.info('WARNING: Loss is NaN')
                         curr_optimizer.zero_grad()
                         nan = True
                         break
@@ -1305,7 +1306,7 @@ class PtActions(Actions):
                         if torch.isnan(scaled_loss).any():
                             if stop_on_nan_loss:
                                 raise ValueError('Loss is NaN exiting')
-                            print('WARNING: Loss is NaN')
+                            self.logger.info('WARNING: Loss is NaN')
                             curr_optimizer.zero_grad()
                             continue
                         scaled_loss.backward(
