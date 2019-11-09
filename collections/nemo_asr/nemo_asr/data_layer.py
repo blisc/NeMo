@@ -119,13 +119,15 @@ transcript_n}
             shuffle=True,
             num_workers=0,
             tokenizer=None,
+            speed_perturb=False,
             # perturb_config=None,
             **kwargs
     ):
         super().__init__(**kwargs)
 
         self._featurizer = WaveformFeaturizer(
-            sample_rate=sample_rate, int_values=int_values, augmentor=None)
+            sample_rate=sample_rate, int_values=int_values, augmentor=None,
+            speed_perturb=speed_perturb)
 
         # Set up dataset
         dataset_params = {'manifest_filepath': manifest_filepath,

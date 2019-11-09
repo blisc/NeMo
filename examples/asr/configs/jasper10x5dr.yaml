@@ -5,6 +5,7 @@ AudioToTextDataLayer:
     max_duration: 16.7
     trim_silence: true
     normalize_transcripts: true
+    speed_perturb: true
 
     train:
         shuffle: true
@@ -24,6 +25,12 @@ AudioPreprocessing:
     dither: 0.00001
     pad_to: 16
     stft_conv: true
+
+SpectrogramAugmentation:
+    freq_masks: 2
+    time_masks: 2
+    freq_width: 16
+    time_width: 100
 
 JasperEncoder:
     activation: "relu"

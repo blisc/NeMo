@@ -55,19 +55,24 @@ def splice_frames(x, frame_splicing):
 
 
 class WaveformFeaturizer(object):
-    def __init__(self, sample_rate=16000, int_values=False, augmentor=None):
+    def __init__(self, sample_rate=16000, int_values=False, augmentor=None,
+                 speed_perturb=False):
         self.augmentor = augmentor if augmentor is not None else \
             AudioAugmentor()
         self.sample_rate = sample_rate
         self.int_values = int_values
+        self.speed_perturb = speed_perturb
 
     def max_augmentation_length(self, length):
         return self.augmentor.max_augmentation_length(length)
 
     def process(self, file_path, offset=0, duration=0, trim=False):
+        target_sr = self.sample_rate
+        if self.speed_perturb:
+            target_sr *= np.random.uniform(0.85, 1.15)
         audio = AudioSegment.from_file(
             file_path,
-            target_sr=self.sample_rate,
+            target_sr=target_sr,
             int_values=self.int_values,
             offset=offset, duration=duration, trim=trim)
         return self.process_segment(audio)
@@ -420,6 +425,7 @@ class FeatureFactory(object):
 
 
 class SpeedAugmentation(nn.Module):
+    """ This is not speed perturbation. This is time stretch. Not the same!"""
     def __init__(
             self, *,
             segments=0,
