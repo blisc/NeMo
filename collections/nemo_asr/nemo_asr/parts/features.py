@@ -465,7 +465,7 @@ class SpeedAugmentation(nn.Module):
             rate_min = max(
                 slice_length / (1680 - spec_len + slice_length), 0.85)
             slice_ = spec[:, slice_start:slice_end]
-            rate = np.random.uniform(rate_min, 1.1)
+            rate = np.random.uniform(rate_min, 1.15)
             slice_perturbed = librosa.core.phase_vocoder(slice_, rate)
             spec = np.concatenate(
                 (

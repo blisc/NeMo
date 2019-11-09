@@ -155,9 +155,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         attn_score_dropout=0.1,
         attn_layer_dropout=0.1,
     )
-    t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(
-        vocab_size=vocab_size,
-        d_model=512
+    t_log_softmax = nemo_nlp.TokenClassifier(
+        num_classes=vocab_size,
+        hidden_size=512,  # I think this is the new d_model?
+        num_layers=1,
+        log_softmax=True
     )
 
     # connector = nemo_asr.JasperRNNConnector(
@@ -183,7 +185,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     #     d_model=768
     # )
 
-    t_log_softmax.log_softmax.dense.weight = \
+    t_log_softmax.mlp.last_linear_layer.weight = \
         decoder.embedding_layer.token_embedding.weight
     if args.decoder_checkpoint is not None \
             and os.path.exists(args.decoder_checkpoint):
@@ -237,9 +239,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         input_mask_src=enc_length,
         input_mask_tgt=t_len,
     )
-    log_probs = t_log_softmax(hidden_states=logits)
+    logits = t_log_softmax(hidden_states=logits)
     train_loss = loss(
-        log_probs=log_probs,
+        logits=logits,
         target_ids=decoder_out
     )
     train_loss = [train_loss]
@@ -316,9 +318,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 input_mask_src=enc_length,
                 input_mask_tgt=t_len,
             )
-            log_probs = t_log_softmax(hidden_states=logits)
+            logits = t_log_softmax(hidden_states=logits)
             eval_loss = loss(
-                log_probs=log_probs,
+                logits=logits,
                 target_ids=decoder_out
             )
             beam_trans = beam_translator(
