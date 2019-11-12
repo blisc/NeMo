@@ -27,6 +27,7 @@ AudioToTextDataLayer:
         max_duration: 16.7
         drop_last: false
         labels: *labels
+        speed_perturb: true
 
     eval:
         sample_rate: *sr

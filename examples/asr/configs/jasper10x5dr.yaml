@@ -5,9 +5,9 @@ AudioToTextDataLayer:
     max_duration: 16.7
     trim_silence: true
     normalize_transcripts: true
-    speed_perturb: true
 
     train:
+        speed_perturb: true
         shuffle: true
 
     eval:
