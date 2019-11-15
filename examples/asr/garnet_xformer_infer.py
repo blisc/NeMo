@@ -122,11 +122,18 @@ def create_dag(args, garnet_params, neural_factory):
         attn_score_dropout=0.1,
         attn_layer_dropout=0.1,
     )
-    t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(
-        vocab_size=vocab_size,
-        d_model=512
+    # t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(
+    #     vocab_size=vocab_size,
+    #     d_model=512
+    # )
+    t_log_softmax = nemo_nlp.TokenClassifier(
+        num_classes=vocab_size,
+        hidden_size=512,  # I think this is the new d_model?
+        num_layers=1,
+        log_softmax=True
     )
-    decoder.restore_from("<update_me>")
+    t_log_softmax.__name__ = "TransformerLogSoftmaxNM"
+    # decoder.restore_from("<update_me>")
     t_log_softmax.log_softmax.dense.weight = \
         decoder.embedding_layer.token_embedding.weight
 
