@@ -75,7 +75,7 @@ def parse_cfg(args):
 
 
 def create_dag(args, garnet_params, neural_factory):
-    char_labels = garnet_params["labels"]
+    # char_labels = garnet_params["labels"]
 
     total_cpus = os.cpu_count()
     cpu_per_traindl = max(int(total_cpus / neural_factory.world_size), 1)
@@ -88,7 +88,7 @@ def create_dag(args, garnet_params, neural_factory):
     assert tokenizer.pad_id() == 0, f"{tokenizer.pad_id}"
     data = nemo_asr.TFAudioToTextDataLayer(
         manifest_filepath=args.eval_datasets[0],
-        labels=char_labels,
+        # labels=char_labels,
         batch_size=args.batch_size,
         num_workers=cpu_per_traindl,
         tokenizer=tokenizer,
@@ -98,7 +98,7 @@ def create_dag(args, garnet_params, neural_factory):
         **garnet_params['AudioPreprocessing']
     )
     encoder = nemo_asr.JasperEncoder(
-        feat_in=garnet_params["AudioPreprocessing"]["features"],
+        # feat_in=garnet_params["AudioPreprocessing"]["features"],
         **garnet_params['JasperEncoder']
     )
     connector = nemo_asr.JasperRNNConnector(
@@ -202,9 +202,9 @@ def main():
         local_rank=args.local_rank,
         optimization_level=args.amp_opt_level,
         cudnn_benchmark=args.cudnn_benchmark,
-        log_dir=name,
-        create_tb_writer=True,
-        files_to_copy=[args.model_config, __file__]
+        log_dir=None,
+        create_tb_writer=False,
+        # files_to_copy=[args.model_config, __file__]
     )
     logger = neural_factory.logger
     tb_writer = neural_factory.tb_writer
