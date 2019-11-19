@@ -54,6 +54,8 @@ def parse_args():
     parser.add_argument('--enable_ctc_loss', action="store_true")
     parser.add_argument('--log_freq', default=250, type=int)
     parser.add_argument('--load_dir', required=True, type=str)
+    parser.add_argument('--decoder_layers', required=True, type=int)
+    parser.add_argument('--debug', action="store_true")
 
     args = parser.parse_args()
     if args.max_steps is not None:
@@ -111,11 +113,11 @@ def create_dag(args, garnet_params, neural_factory):
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=512,
         d_inner=2048,
-        num_layers=6,
+        num_layers=args.decoder_layers,
         num_attn_heads=8,
         fully_connected_dropout=0.1,
         vocab_size=vocab_size,
-        max_seq_length=512,
+        max_seq_length=196,
         embedding_dropout=0.1,
         learn_positional_encodings=True,
         first_sub_layer="self_attention",
@@ -132,9 +134,9 @@ def create_dag(args, garnet_params, neural_factory):
         num_layers=1,
         log_softmax=True
     )
-    t_log_softmax.__name__ = "TransformerLogSoftmaxNM"
+    # t_log_softmax.__name__ = "TransformerLogSoftmaxNM"
     # decoder.restore_from("<update_me>")
-    t_log_softmax.log_softmax.dense.weight = \
+    t_log_softmax.mlp.last_linear_layer.weight = \
         decoder.embedding_layer.token_embedding.weight
 
     loss = nemo_nlp.PaddedSmoothedCrossEntropyLossNM(
@@ -144,7 +146,7 @@ def create_dag(args, garnet_params, neural_factory):
     beam_translator = nemo_nlp.BeamSearchTranslatorNM(
         decoder=decoder,
         log_softmax=t_log_softmax,
-        max_seq_length=512,
+        max_seq_length=196,
         beam_size=args.beam_size,
         length_penalty=0.0,
         bos_token=tokenizer.bos_id(),
@@ -155,7 +157,7 @@ def create_dag(args, garnet_params, neural_factory):
     int_to_seq2 = nemo_asr.IntToSeq2()
 
     # Creating DAG
-    audios, audio_lens, decoder_in, decoder_out, t_len = data()
+    audios, audio_lens, decoder_in, decoder_out, t_len, _, _ = data()
     processed_audios, processed_audio_lens = data_preprocessor(
         input_signal=audios,
         length=audio_lens
@@ -182,7 +184,9 @@ def create_dag(args, garnet_params, neural_factory):
         hidden_states_src=encoded, input_mask_src=enc_length
     )
 
-    return [beam_trans, decoder_out], tokenizer
+    return ([beam_trans, decoder_out],
+            tokenizer,
+            [encoder, connector, decoder, t_log_softmax])
 
 
 def construct_name(args, cfg):
@@ -227,20 +231,22 @@ def main():
         logger.info(f'Using seed {args.random_seed}')
 
     # Defining computational graph
-    tensors, tokenizer = create_dag(args, garnet_params, neural_factory)
+    tensors, tokenizer, mods = create_dag(args, garnet_params, neural_factory)
 
     start = time.time()
     evaluated_tensors = neural_factory.infer(
         tensors=tensors,
         checkpoint_dir=args.load_dir,
+        modules_to_restore=mods
     )
 
     predictions = []
     for t in evaluated_tensors[0]:
         t = t.cpu().numpy().tolist()
+        import ipdb; ipdb.set_trace()
         for k in t:
             # import ipdb; ipdb.set_trace()
-            predictions.append(tokenizer.ids_to_text(k))
+            predictions.append(tokenizer.ids_to_text(k[-1]))
 
     references = []
     for t in evaluated_tensors[1]:
@@ -250,6 +256,13 @@ def main():
 
     wer = word_error_rate(hypotheses=predictions, references=references)
     logger.info("Greedy WER {:.2f}%".format(wer*100))
+
+    if args.debug:
+        import pickle
+        with open(f"pred_beam_{args.beam_size}", "wb") as f:
+            pickle.dump(predictions, f)
+        with open(f"ref_beam_{args.beam_size}", "wb") as f:
+            pickle.dump(references, f)
 
     end = time.time()
     print(f"Total time: {end-start}s")
