@@ -43,6 +43,8 @@ def parse_args():
                         help="model configuration file: model.yaml")
     parser.add_argument("--grad_norm_clip", type=float, default=1.0,
                         help="gradient clipping")
+    parser.add_argument("--min_lr", type=float, default=1e-5,
+                        help="minimum learning rate to decay to")
 
     # Create new args
     parser.add_argument("--exp_name", default="Tacotron2", type=str)
@@ -70,9 +72,11 @@ def parse_args():
 
 
 def create_NMs(tacotron2_params, logger=None, decoder_infer=False):
-    data_preprocessor = nemo_asr.AudioPreprocessing(
-        **tacotron2_params["AudioPreprocessing"])
-    text_embedding = nemo_tts.TextEmbedding(80, 512)
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
+        **tacotron2_params["AudioToMelSpectrogramPreprocessor"])
+    text_embedding = nemo_tts.TextEmbedding(
+        len(tacotron2_params["labels"]) + 3,  # + 3 special chars
+        **tacotron2_params["TextEmbedding"])
     t2_enc = nemo_tts.Tacotron2Encoder(**tacotron2_params["Tacotron2Encoder"])
     if decoder_infer:
         t2_dec = nemo_tts.Tacotron2DecoderInfer(
@@ -115,6 +119,9 @@ def create_train_dag(neural_factory,
     data_layer = nemo_asr.AudioToTextDataLayer(
         manifest_filepath=train_dataset,
         labels=tacotron2_params['labels'],
+        bos_id=len(tacotron2_params['labels']),
+        eos_id=len(tacotron2_params['labels']) + 1,
+        pad_id=len(tacotron2_params['labels']) + 2,
         batch_size=batch_size,
         num_workers=cpu_per_dl,
         **train_dl_params,
@@ -139,7 +146,8 @@ def create_train_dag(neural_factory,
         encoded_length=transcript_len,
         mel_target=spec_target)
     mel_postnet = t2_postnet(mel_input=mel_decoder)
-    gate_target = makegatetarget(target_len=spec_target_len)
+    gate_target = makegatetarget(
+        mel_target=spec_target, target_len=spec_target_len)
     loss_t = t2_loss(
         mel_out=mel_decoder,
         mel_out_postnet=mel_postnet,
@@ -189,6 +197,9 @@ def create_eval_dags(neural_factory,
         data_layer_eval = nemo_asr.AudioToTextDataLayer(
             manifest_filepath=eval_dataset,
             labels=tacotron2_params['labels'],
+            bos_id=len(tacotron2_params['labels']),
+            eos_id=len(tacotron2_params['labels']) + 1,
+            pad_id=len(tacotron2_params['labels']) + 2,
             batch_size=eval_batch_size,
             num_workers=cpu_per_dl,
             **eval_dl_params,
@@ -203,23 +214,14 @@ def create_eval_dags(neural_factory,
         transcript_encoded = t2_enc(
             char_phone_embeddings=transcript_embedded,
             embedding_length=transcript_len)
-        if isinstance(t2_dec, nemo_tts.Tacotron2DecoderInfer):
-            mel_decoder, gate, alignments, mel_len = t2_dec(
-                char_phone_encoded=transcript_encoded,
-                encoded_length=transcript_len,
-                mel_target=spec_target)
-            decoder_infer = True
-        elif isinstance(t2_dec, nemo_tts.Tacotron2Decoder):
-            mel_decoder, gate, alignments = t2_dec(
-                char_phone_encoded=transcript_encoded,
-                encoded_length=transcript_len,
-                mel_target=spec_target)
-            decoder_infer = False
-        else:
-            raise ValueError(
-                "The Neural Module for tacotron2 decoder was not understood")
+        mel_decoder, gate, alignments = t2_dec(
+            char_phone_encoded=transcript_encoded,
+            encoded_length=transcript_len,
+            mel_target=spec_target)
         mel_postnet = t2_postnet(mel_input=mel_decoder)
-        gate_target = makegatetarget(target_len=spec_target_len)
+        gate_target = makegatetarget(
+            mel_target=spec_target,
+            target_len=spec_target_len)
         loss = t2_loss(
             mel_out=mel_decoder,
             mel_out_postnet=mel_postnet,
@@ -233,8 +235,6 @@ def create_eval_dags(neural_factory,
         tagname = os.path.basename(eval_dataset).split(".")[0]
         eval_tensors = [loss, spec_target, mel_postnet, gate, gate_target,
                         alignments]
-        if decoder_infer:
-            eval_tensors.append(mel_len)
         eval_callback = nemo.core.EvaluatorCallback(
             eval_tensors=eval_tensors,
             user_iter_callback=tacotron2_process_eval_batch,
@@ -294,7 +294,7 @@ def create_all_dags(neural_factory,
 def main():
     args, name = parse_args()
 
-    log_dir = None
+    log_dir = name
     if args.work_dir:
         log_dir = os.path.join(args.work_dir, name)
 
@@ -332,12 +332,12 @@ def main():
         eval_batch_size=args.eval_batch_size)
 
     # train model
+    total_steps = (args.max_steps if args.max_steps is not None else
+                   args.num_epochs * steps_per_epoch)
     neural_factory.train(
         tensors_to_optimize=[train_loss],
         callbacks=callbacks,
-        lr_policy=CosineAnnealing(
-            args.max_steps if args.max_steps is not None else
-            args.num_epochs * steps_per_epoch),
+        lr_policy=CosineAnnealing(total_steps, min_lr=args.min_lr),
         optimizer=args.optimizer,
         optimization_params={
             "num_epochs": args.num_epochs,

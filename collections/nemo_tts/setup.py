@@ -5,10 +5,10 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="nemo_tts",
-    version="0.8",
+    version="0.9",
     author="NVIDIA",
     author_email="nemo-toolkit@nvidia.com",
-    description="Collection of Neural Modules for Speech Recognition",
+    description="Collection of Neural Modules for Speech Synthesis",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/nvidia/nemo",
@@ -24,6 +24,7 @@ setuptools.setup(
         'librosa',
         'matplotlib',
         'scipy',
-        'ruamel.yaml'
+        'ruamel.yaml',
+        'pypinyin'
     ]
 )

@@ -38,6 +38,10 @@ class ActionCallback(ABC):
         return self.action.local_rank
 
     @property
+    def global_rank(self):
+        return self.action.global_rank
+
+    @property
     def action(self):
         return self._action
 
@@ -86,7 +90,7 @@ class ModuleSaverCallback(ActionCallback):
                 and
                 step % self._step_freq == 0
                 and step > 0
-                and (self.local_rank is None or self.local_rank == 0)
+                and (self.global_rank is None or self.global_rank == 0)
         ):
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
@@ -108,7 +112,7 @@ class ModuleSaverCallback(ActionCallback):
 
     def on_action_end(self):
         step = self.step
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
                 uid = m.unique_instance_id
@@ -154,23 +158,23 @@ class SimpleLossLoggerCallback(ActionCallback):
         return self._tensors
 
     def on_action_start(self):
-        if self.local_rank is None or self.local_rank == 0:
-            self.logger.info("Starting .....")
+        if self.global_rank is None or self.global_rank == 0:
+            logger.info("Starting .....")
             self._start_time = time.time()
 
     def on_action_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             if self._swriter is not None:
                 self._swriter.close()
             self.logger.info(f"Done in {time.time() - self._start_time}")
 
     def on_epoch_start(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             self.logger.info(f"Starting epoch {self.epoch_num}")
             self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             step = self.step
             run_time = time.time() - self._last_epoch_start
             self.logger.info(f"Finished epoch {self.epoch_num} in {run_time}")
@@ -181,11 +185,11 @@ class SimpleLossLoggerCallback(ActionCallback):
                 self._swriter.add_scalar('misc/epoch_time', value, step)
 
     def on_iteration_start(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             self._last_iter_start = time.time()
 
     def on_iteration_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             step = self.step
             if step % self._step_freq == 0:
                 tensor_values = [
@@ -246,6 +250,8 @@ class CheckpointCallback(ActionCallback):
         self._force_load = force_load
 
     def __save_to(self, path):
+        if self.global_rank is not None and self.global_rank != 0:
+            return
         if not os.path.isdir(path):
             self.logger.info("Creating {0} folder".format(path))
             os.makedirs(path, exist_ok=True)
@@ -342,25 +348,19 @@ class CheckpointCallback(ActionCallback):
 
     def on_iteration_end(self):
         step = self.step
-        if (
-                self._step_freq > 0
-                and step % self._step_freq == 0
-                and step > 0
-                and (self.local_rank is None or self.local_rank == 0)
-        ):
+        if self._step_freq > 0 and step % self._step_freq == 0 and step > 0:
             self.__save_to(path=self._folder)
 
     def on_action_end(self):
         if self._step_freq > 0 or self._epoch_freq > 0:
-            if self.local_rank is None or self.local_rank == 0:
-                self.__save_to(path=self._folder)
+            self.__save_to(path=self._folder)
 
     def on_epoch_start(self):
         self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
         if self._epoch_freq > 0:
-            if self.local_rank is None or self.local_rank == 0:
+            if self.global_rank is None or self.global_rank == 0:
                 run_time = time.time() - self._last_epoch_start
                 self.logger.info(
                     f'Finished epoch {self.epoch_num} in {run_time}')
@@ -425,22 +425,23 @@ class EvaluatorCallback(ActionCallback):
     def on_iteration_end(self):
         step = self.step
         if step % self._eval_frequency == 0:
-            if self.local_rank == 0 or self.local_rank is None:
+            if self.global_rank == 0 or self.global_rank is None:
                 self.logger.info('Doing Evaluation ' + '.' * 30)
             start_time = time.time()
             self.action._eval(self._eval_tensors, self, step)
             elapsed_time = time.time() - start_time
-            if self.local_rank == 0 or self.local_rank is None:
+            if self.global_rank == 0 or self.global_rank is None:
                 self.logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def on_action_end(self):
         step = self.step
-        self.logger.info('Final Evaluation ' + '.' * 30)
+        if self.global_rank == 0 or self.global_rank is None:
+            self.logger.info('Final Evaluation ' + '.' * 30)
         start_time = time.time()
         self.action._eval(self._eval_tensors, self, step)
         elapsed_time = time.time() - start_time
-        if self.local_rank == 0 or self.local_rank is None:
-            print(f'Evaluation time: {elapsed_time} seconds')
+        if self.global_rank == 0 or self.global_rank is None:
+            logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def clear_global_var_dict(self):
         self._global_var_dict = {}

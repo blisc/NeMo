@@ -12,7 +12,6 @@ import nemo_asr
 import nemo_tts
 from nemo_tts import (waveglow_log_to_tb_func,
                       waveglow_process_eval_batch,
-                      # waveglow_process_final_eval,
                       waveglow_eval_log_to_tb_func)
 
 
@@ -67,8 +66,8 @@ def parse_args():
 
 
 def create_NMs(waveglow_params, logger=None):
-    data_preprocessor = nemo_asr.AudioPreprocessing(
-        **waveglow_params["AudioPreprocessing"])
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
+        **waveglow_params["AudioToMelSpectrogramPreprocessor"])
     waveglow = nemo_tts.WaveGlowNM(**waveglow_params["WaveGlowNM"])
     waveglow_loss = nemo_tts.WaveGlowLoss()
 
@@ -110,16 +109,16 @@ def create_train_dag(neural_factory,
         input_signal=audio,
         length=audio_len)
 
-    audio_pred, log_s_list, log_det_W_list = waveglow(
+    z, log_s_list, log_det_W_list = waveglow(
         mel_spectrogram=spec_target, audio=audio)
     loss_t = waveglow_loss(
-        audio_pred=audio_pred,
+        z=z,
         log_s_list=log_s_list,
         log_det_W_list=log_det_W_list)
 
     # Callbacks needed to print info to console and Tensorboard
     train_callback = nemo.core.SimpleLossLoggerCallback(
-        tensors=[loss_t, audio_pred, spec_target, spec_target_len],
+        tensors=[loss_t, z, spec_target, spec_target_len],
         print_func=lambda x: print(f"Loss: {x[0].data}"),
         log_to_tb_func=partial(
             waveglow_log_to_tb_func,
@@ -225,7 +224,7 @@ def create_all_dags(neural_factory,
 def main():
     args, name = parse_args()
 
-    log_dir = None
+    log_dir = name
     if args.work_dir:
         log_dir = os.path.join(args.work_dir, name)
 

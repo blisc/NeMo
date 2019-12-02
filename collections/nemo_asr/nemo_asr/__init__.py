@@ -14,21 +14,25 @@
 # ==============================================================================
 from nemo.core import Backend
 
-from .data_layer import (AudioToTextDataLayer, AudioPreprocessing,
-                         SpectrogramAugmentation, MultiplyBatch,
-                         TranscriptDataLayer, IntToSeq, IntToSeq2,
-                         TFAudioToTextDataLayer, KaldiFeatureDataLayer)
-from .greedy_ctc_decoder import GreedyCTCDecoder
+from .audio_preprocessing import *
 from .beam_search_decoder import BeamSearchDecoderWithLM
+from .data_layer import (AudioToTextDataLayer,
+                         KaldiFeatureDataLayer,
+                         TranscriptDataLayer,
+                         IntToSeq, IntToSeq2, TFAudioToTextDataLayer)
+from .greedy_ctc_decoder import GreedyCTCDecoder
 from .jasper import JasperEncoder, JasperDecoderForCTC
 from .las.misc import JasperRNNConnector
 from .losses import CTCLossNM
 
 __all__ = ['Backend',
            'AudioToTextDataLayer',
-           'AudioPreprocessing',
-           'SpectrogramAugmentation',
+           'AudioPreprocessor',
+           'AudioToMFCCPreprocessor',
+           'AudioToMelSpectrogramPreprocessor',
+           'AudioToSpectrogramPreprocessor',
            'MultiplyBatch',
+           'SpectrogramAugmentation',
            'KaldiFeatureDataLayer',
            'TranscriptDataLayer',
            'GreedyCTCDecoder',

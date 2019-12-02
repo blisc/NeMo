@@ -28,8 +28,8 @@ def waveglow_log_to_tb_func(swriter,
             step, dataformats="HWC")
         if mel_fb is not None:
             mag, _ = librosa.core.magphase(librosa.core.stft(
-                audio_pred[0].cpu().detach().numpy(), n_fft=n_fft,
-                hop_length=hop_length, window=window))
+                np.nan_to_num(audio_pred[0].cpu().detach().numpy()),
+                n_fft=n_fft, hop_length=hop_length, window=window))
             mel_pred = np.matmul(mel_fb.cpu().numpy(), mag).squeeze()
             log_mel_pred = np.log(np.clip(mel_pred, a_min=1e-5, a_max=None))
             swriter.add_image(
@@ -48,10 +48,6 @@ def waveglow_process_eval_batch(tensors: dict, global_vars: dict):
                 global_vars['tensorboard']['audio_pred'] = v[0]
             if k.startswith("processed_length"):
                 global_vars['tensorboard']['mel_length'] = v[0]
-
-
-# def waveglow_process_final_eval(global_vars: dict, tag=None, logger=None):
-#     return global_vars
 
 
 def waveglow_eval_log_to_tb_func(
