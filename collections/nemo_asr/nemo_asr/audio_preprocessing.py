@@ -14,12 +14,15 @@
 """
 This file contains neural modules responsible for preprocessing audio data.
 """
-__all__ = ['AudioPreprocessor',
+__all__ = ['AudioPreprocessing',
+           'AudioPreprocessor',
            'AudioToMFCCPreprocessor',
            'AudioToMelSpectrogramPreprocessor',
            'AudioToSpectrogramPreprocessor',
            'MultiplyBatch',
-           'SpectrogramAugmentation']
+           'SpectrogramAugmentation',
+           'IntToSeq',
+           'IntToSeq2']
 
 from abc import abstractmethod
 import math
@@ -590,3 +593,61 @@ class MultiplyBatch(NonTrainableNM):
         out_y_len = in_y_len.repeat(self.mult)
 
         return out_x, out_x_len, out_y, out_y_len
+
+
+class IntToSeq(NonTrainableNM):
+    @staticmethod
+    def create_ports():
+        input_ports = {
+            "x": NeuralType({0: AxisType(BatchTag),
+                             1: AxisType(EncodedRepresentationTag),
+                             2: AxisType(ProcessedTimeTag)}),
+            "length": NeuralType({0: AxisType(BatchTag)})
+        }
+
+        output_ports = {
+            "length": NeuralType({0: AxisType(BatchTag),
+                                  1: AxisType(TimeTag)})
+        }
+        return input_ports, output_ports
+
+    @torch.no_grad()
+    def forward(self, x, length):
+        length = length.to(dtype=torch.long)
+        max_len = x.size(2)
+        mask = torch.arange(max_len).to(length.device)\
+            .expand(len(length), max_len) < length.unsqueeze(1)
+        return mask
+
+
+class IntToSeq2(NonTrainableNM):
+    @staticmethod
+    def create_ports():
+        input_ports = {
+            "x": NeuralType({0: AxisType(BatchTag),
+                             1: AxisType(TimeTag)}),
+            "length": NeuralType({0: AxisType(BatchTag)})
+        }
+
+        output_ports = {
+            "length": NeuralType({0: AxisType(BatchTag),
+                                  1: AxisType(TimeTag)})
+        }
+        return input_ports, output_ports
+
+    @torch.no_grad()
+    def forward(self, x, length):
+        length = length.to(dtype=torch.long)
+        max_len = x.size(1)
+        mask = torch.arange(max_len).to(length.device)\
+            .expand(len(length), max_len) < length.unsqueeze(1)
+        return mask
+
+
+def AudioPreprocessing(*args, **kwargs):
+    raise NotImplementedError(
+        "AudioPreprocessing has been deprecated and replaced by: "
+        "AudioToMFCCPreprocessor, AudioToMelSpectrogramPreprocessor, and "
+        "AudioToSpectrogramPreprocessor. For most ASR purposes "
+        "AudioToMelSpectrogramPreprocessor does the same as the old "
+        "AudioPreprocessing.")

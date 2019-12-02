@@ -113,7 +113,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         tokenizer=tokenizer,
         **garnet_params['AudioToTextDataLayer']['train']
     )
-    data_preprocessor = nemo_asr.AudioPreprocessing(
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
         **garnet_params['AudioPreprocessing']
     )
     data_augmentation = nemo_asr.SpectrogramAugmentation(

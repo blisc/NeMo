@@ -51,7 +51,8 @@ class PtActions(Actions):
             local_rank=None,
             global_rank=None,
             tb_writer=None,
-            optimization_level=Optimization.mxprO0):
+            optimization_level=Optimization.mxprO0,
+            logger=None):
         need_apex = local_rank is not None or \
                     optimization_level != Optimization.mxprO0
         if need_apex:
@@ -82,7 +83,8 @@ class PtActions(Actions):
         super(PtActions, self).__init__(
             local_rank=local_rank,
             global_rank=global_rank,
-            optimization_level=optimization_level)
+            optimization_level=optimization_level,
+            logger=logger)
 
         # will be [unique_instance_id -> (NMModule, PTModule)]
         self.module_reference_table = {}

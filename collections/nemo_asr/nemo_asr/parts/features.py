@@ -194,13 +194,13 @@ class FilterbankFeatures(nn.Module):
         self.nfilt = nfilt
         self.preemph = preemph
         self.pad_to = pad_to
-        self.speed_perturb = None
-        if speed_perturb:
-            self.speed_perturb = SpeedAugmentation(
-                segments=speed_perturb_segs,
-                min_segment_size=speed_perturb_min,
-                max_segment_size=speed_perturb_max,
-                global_=speed_perturb_global)
+        # self.speed_perturb = None
+        # if speed_perturb:
+        #     self.speed_perturb = SpeedAugmentation(
+        #         segments=speed_perturb_segs,
+        #         min_segment_size=speed_perturb_min,
+        #         max_segment_size=speed_perturb_max,
+        #         global_=speed_perturb_global)
 
         highfreq = highfreq or sample_rate / 2
 
@@ -243,14 +243,15 @@ class FilterbankFeatures(nn.Module):
 
         x = self.stft(x)
 
-        if self.speed_perturb and self.training:
-            mag = x[0].cpu().numpy()
-            phase = x[1].cpu().numpy()
-            x, seq_len = self.speed_perturb(mag*np.exp(phase*1j), seq_len)
-            x = x.cuda()
-            seq_len = seq_len.cuda()
-        else:
-            x = x[0]
+        # if self.speed_perturb and self.training:
+        #     mag = x[0].cpu().numpy()
+        #     phase = x[1].cpu().numpy()
+        #     x, seq_len = self.speed_perturb(mag*np.exp(phase*1j), seq_len)
+        #     x = x.cuda()
+        #     seq_len = seq_len.cuda()
+        # else:
+        #     x = x[0]
+        x = x[0]
 
         # get power spectrum
         if self.mag_power != 1.:

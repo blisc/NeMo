@@ -159,7 +159,7 @@ class SimpleLossLoggerCallback(ActionCallback):
 
     def on_action_start(self):
         if self.global_rank is None or self.global_rank == 0:
-            logger.info("Starting .....")
+            self.logger.info("Starting .....")
             self._start_time = time.time()
 
     def on_action_end(self):
@@ -441,7 +441,7 @@ class EvaluatorCallback(ActionCallback):
         self.action._eval(self._eval_tensors, self, step)
         elapsed_time = time.time() - start_time
         if self.global_rank == 0 or self.global_rank is None:
-            logger.info(f'Evaluation time: {elapsed_time} seconds')
+            self.logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def clear_global_var_dict(self):
         self._global_var_dict = {}
