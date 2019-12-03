@@ -45,6 +45,10 @@ class ActionCallback(ABC):
     def action(self):
         return self._action
 
+    @property
+    def logger(self):
+        return self.action.logger
+
     @action.setter
     def action(self, action_obj):
         self._action = action_obj
@@ -74,8 +78,11 @@ class ModuleSaverCallback(ActionCallback):
     https://nvidia.github.io/NeMo/tutorials/callbacks.html
     """
 
-    def __init__(self, save_modules_list, step_freq=1000, folder=None,
-                 checkpoints_to_keep=4,):
+    def __init__(self,
+                 save_modules_list,
+                 step_freq=1000,
+                 folder=None,
+                 checkpoints_to_keep=4):
         super().__init__()
         self._save_modules_list = save_modules_list
         self._folder = folder
@@ -95,7 +102,7 @@ class ModuleSaverCallback(ActionCallback):
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
                 uid = m.unique_instance_id
-                fn = "{0}_{1}-STEP-{2}.pt".format(class_name, uid, step)
+                fn = f"{class_name}_{uid}-STEP-{step}.pt"
                 if self._folder is None:
                     file_name = fn
                 else:
@@ -116,7 +123,7 @@ class ModuleSaverCallback(ActionCallback):
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
                 uid = m.unique_instance_id
-                fn = "{0}_{1}-STEP-{2}.pt".format(class_name, uid, step)
+                fn = f"{class_name}_{uid}-STEP-{step}.pt"
                 if self._folder is None:
                     file_name = fn
                 else:
@@ -253,7 +260,7 @@ class CheckpointCallback(ActionCallback):
         if self.global_rank is not None and self.global_rank != 0:
             return
         if not os.path.isdir(path):
-            self.logger.info("Creating {0} folder".format(path))
+            self.logger.info(f"Creating {path} folder")
             os.makedirs(path, exist_ok=True)
         unique_mod_names = set()
         for module in self.action.modules:
@@ -314,8 +321,7 @@ class CheckpointCallback(ActionCallback):
                         "but a checkpoint was not found.")
                 self.logger.warning(e)
                 self.logger.warning(
-                    "Checkpoint folder {0} present but did not restore".format(
-                        path))
+                    f"Checkpoint folder {path} present but did not restore")
                 return
 
             try:
@@ -392,8 +398,8 @@ class EvaluatorCallback(ActionCallback):
                 eval_epoch is not None and eval_epoch <= 0
         ):
             raise ValueError(
-                "Eval_step and eval_epoch must be > 0."
-                "But got: {0} and {1}".format(eval_step, eval_epoch)
+                f"Eval_step and eval_epoch must be > 0."
+                f"But got: {eval_step} and {eval_epoch}"
             )
         super().__init__()
         self._eval_tensors = eval_tensors
@@ -556,7 +562,7 @@ class ValueSetterCallback(ActionCallback):
             if self.tb_writer is not None:
                 class_name = self.module.__class__.__name__
                 # name = f'param/{class_name}.{self.arg_name}'
-                name = "param/{0}.{1}".format(class_name, self.arg_name)
+                name = f"param/{class_name}.{self.arg_name}"
                 self.tb_writer.add_scalar(name, value, self.step)
         else:
             self.cur_i += 1
