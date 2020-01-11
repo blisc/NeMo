@@ -2,12 +2,11 @@
 from abc import ABC, abstractmethod
 from collections import namedtuple
 import glob
-import math
 import os
 import sys
 import time
 
-from ..utils import get_checkpoint_from_dir
+from ..utils import get_logger, get_checkpoint_from_dir
 
 
 class ActionCallback(ABC):
@@ -39,12 +38,23 @@ class ActionCallback(ABC):
         return self.action.local_rank
 
     @property
+    def global_rank(self):
+        return self.action.global_rank
+
+    @property
     def action(self):
         return self._action
 
     @action.setter
     def action(self, action_obj):
         self._action = action_obj
+
+    @property
+    def logger(self):
+        if self.action is None or self.action.logger is None:
+            return get_logger('')
+        else:
+            return self.action.logger
 
     def on_action_start(self):
         pass
@@ -67,11 +77,15 @@ class ActionCallback(ABC):
 
 class ModuleSaverCallback(ActionCallback):
     """
-    When step_freq = -1, don't save anything.
+    For callback documentation: please see
+    https://nvidia.github.io/NeMo/tutorials/callbacks.html
     """
 
-    def __init__(self, save_modules_list, step_freq=1000, folder=None,
-                 checkpoints_to_keep=4,):
+    def __init__(self,
+                 save_modules_list,
+                 step_freq=1000,
+                 folder=None,
+                 checkpoints_to_keep=4):
         super().__init__()
         self._save_modules_list = save_modules_list
         self._folder = folder
@@ -86,12 +100,12 @@ class ModuleSaverCallback(ActionCallback):
                 and
                 step % self._step_freq == 0
                 and step > 0
-                and (self.local_rank is None or self.local_rank == 0)
+                and (self.global_rank is None or self.global_rank == 0)
         ):
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
                 uid = m.unique_instance_id
-                fn = "{0}_{1}-STEP-{2}.pt".format(class_name, uid, step)
+                fn = f"{class_name}_{uid}-STEP-{step}.pt"
                 if self._folder is None:
                     file_name = fn
                 else:
@@ -108,11 +122,11 @@ class ModuleSaverCallback(ActionCallback):
 
     def on_action_end(self):
         step = self.step
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             for m in self._save_modules_list:
                 class_name = m.__class__.__name__
                 uid = m.unique_instance_id
-                fn = "{0}_{1}-STEP-{2}.pt".format(class_name, uid, step)
+                fn = f"{class_name}_{uid}-STEP-{step}.pt"
                 if self._folder is None:
                     file_name = fn
                 else:
@@ -123,11 +137,16 @@ class ModuleSaverCallback(ActionCallback):
 
 
 class SimpleLossLoggerCallback(ActionCallback):
+    """
+    For callback documentation: please see
+    https://nvidia.github.io/NeMo/tutorials/callbacks.html
+    """
 
     def __init__(self,
                  tensors,
                  print_func=None,
                  get_tb_values=None,
+                 log_to_tb_func=None,
                  step_freq=25,
                  tb_writer=None):
 
@@ -137,6 +156,7 @@ class SimpleLossLoggerCallback(ActionCallback):
         self._tensors = tensors
         self._print_func = print_func
         self._get_tb_values = get_tb_values
+        self._log_to_tb_func = log_to_tb_func
         self._step_freq = step_freq
         self._swriter = tb_writer
         self._start_time = None
@@ -148,23 +168,23 @@ class SimpleLossLoggerCallback(ActionCallback):
         return self._tensors
 
     def on_action_start(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             self.logger.info("Starting .....")
             self._start_time = time.time()
 
     def on_action_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             if self._swriter is not None:
                 self._swriter.close()
             self.logger.info(f"Done in {time.time() - self._start_time}")
 
     def on_epoch_start(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             self.logger.info(f"Starting epoch {self.epoch_num}")
             self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             step = self.step
             run_time = time.time() - self._last_epoch_start
             self.logger.info(f"Finished epoch {self.epoch_num} in {run_time}")
@@ -175,11 +195,11 @@ class SimpleLossLoggerCallback(ActionCallback):
                 self._swriter.add_scalar('misc/epoch_time', value, step)
 
     def on_iteration_start(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             self._last_iter_start = time.time()
 
     def on_iteration_end(self):
-        if self.local_rank is None or self.local_rank == 0:
+        if self.global_rank is None or self.global_rank == 0:
             step = self.step
             if step % self._step_freq == 0:
                 tensor_values = [
@@ -197,6 +217,9 @@ class SimpleLossLoggerCallback(ActionCallback):
                         for name, value in tb_objects:
                             value = value.item()
                             self._swriter.add_scalar(name, value, step)
+                    if self._log_to_tb_func:
+                        self._log_to_tb_func(
+                            self._swriter, tensor_values, step)
                     run_time = time.time() - self._last_iter_start
                     self._swriter.add_scalar('misc/step_time', run_time, step)
                 run_time = time.time() - self._last_iter_start
@@ -204,6 +227,10 @@ class SimpleLossLoggerCallback(ActionCallback):
 
 
 class CheckpointCallback(ActionCallback):
+    """
+    For callback documentation: please see
+    https://nvidia.github.io/NeMo/tutorials/callbacks.html
+    """
 
     def __init__(self, folder, load_from_folder=None, step_freq=-1,
                  epoch_freq=-1, checkpoints_to_keep=4, force_load=False):
@@ -233,8 +260,10 @@ class CheckpointCallback(ActionCallback):
         self._force_load = force_load
 
     def __save_to(self, path):
+        if self.global_rank is not None and self.global_rank != 0:
+            return
         if not os.path.isdir(path):
-            self.logger.info("Creating {0} folder".format(path))
+            self.logger.info(f"Creating {path} folder")
             os.makedirs(path, exist_ok=True)
         unique_mod_names = set()
         for module in self.action.modules:
@@ -295,8 +324,7 @@ class CheckpointCallback(ActionCallback):
                         "but a checkpoint was not found.")
                 self.logger.warning(e)
                 self.logger.warning(
-                    "Checkpoint folder {0} present but did not restore".format(
-                        path))
+                    f"Checkpoint folder {path} present but did not restore")
                 return
 
             try:
@@ -329,25 +357,19 @@ class CheckpointCallback(ActionCallback):
 
     def on_iteration_end(self):
         step = self.step
-        if (
-                self._step_freq > 0
-                and step % self._step_freq == 0
-                and step > 0
-                and (self.local_rank is None or self.local_rank == 0)
-        ):
+        if self._step_freq > 0 and step % self._step_freq == 0 and step > 0:
             self.__save_to(path=self._folder)
 
     def on_action_end(self):
         if self._step_freq > 0 or self._epoch_freq > 0:
-            if self.local_rank is None or self.local_rank == 0:
-                self.__save_to(path=self._folder)
+            self.__save_to(path=self._folder)
 
     def on_epoch_start(self):
         self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
         if self._epoch_freq > 0:
-            if self.local_rank is None or self.local_rank == 0:
+            if self.global_rank is None or self.global_rank == 0:
                 run_time = time.time() - self._last_epoch_start
                 self.logger.info(
                     f'Finished epoch {self.epoch_num} in {run_time}')
@@ -356,6 +378,10 @@ class CheckpointCallback(ActionCallback):
 
 
 class EvaluatorCallback(ActionCallback):
+    """
+    For callback documentation: please see
+    https://nvidia.github.io/NeMo/tutorials/callbacks.html
+    """
 
     def __init__(
             self,
@@ -363,25 +389,25 @@ class EvaluatorCallback(ActionCallback):
             user_iter_callback,
             user_epochs_done_callback,
             tb_writer=None,
+            tb_writer_func=None,
             eval_step=1,
             eval_epoch=None,
     ):
         # TODO: Eval_epoch currently does nothing
         if eval_step is None and eval_epoch is None:
-            raise ValueError(
-                "Either eval_step or eval_epoch must be set. "
-                "But got: {0} and {1}".format(eval_step, eval_epoch)
-            )
+            raise ValueError("Either eval_step or eval_epoch must be set. "
+                             f"But got: {eval_step} and {eval_epoch}")
         if (eval_step is not None and eval_step <= 0) or (
                 eval_epoch is not None and eval_epoch <= 0
         ):
             raise ValueError(
-                "Eval_step and eval_epoch must be > 0."
-                "But got: {0} and {1}".format(eval_step, eval_epoch)
+                f"Eval_step and eval_epoch must be > 0."
+                f"But got: {eval_step} and {eval_epoch}"
             )
         super().__init__()
         self._eval_tensors = eval_tensors
         self._swriter = tb_writer
+        self._tb_writer_func = tb_writer_func
         self._eval_frequency = eval_step
         # will be passed to callbacks below
         self._global_var_dict = {}
@@ -394,28 +420,37 @@ class EvaluatorCallback(ActionCallback):
     def eval_tensors(self):
         return self._eval_tensors
 
+    @property
+    def tb_writer_func(self):
+        return self._tb_writer_func
+
+    @property
+    def swriter(self):
+        return self._swriter
+
     def on_epoch_end(self):
         pass
 
     def on_iteration_end(self):
         step = self.step
         if step % self._eval_frequency == 0:
-            if self.local_rank == 0 or self.local_rank is None:
+            if self.global_rank == 0 or self.global_rank is None:
                 self.logger.info('Doing Evaluation ' + '.' * 30)
             start_time = time.time()
             self.action._eval(self._eval_tensors, self, step)
             elapsed_time = time.time() - start_time
-            if self.local_rank == 0 or self.local_rank is None:
+            if self.global_rank == 0 or self.global_rank is None:
                 self.logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def on_action_end(self):
         step = self.step
-        self.logger.info('Final Evaluation ' + '.' * 30)
+        if self.global_rank == 0 or self.global_rank is None:
+            self.logger.info('Final Evaluation ' + '.' * 30)
         start_time = time.time()
         self.action._eval(self._eval_tensors, self, step)
         elapsed_time = time.time() - start_time
-        if self.local_rank == 0 or self.local_rank is None:
-            print(f'Evaluation time: {elapsed_time} seconds')
+        if self.global_rank == 0 or self.global_rank is None:
+            self.logger.info(f'Evaluation time: {elapsed_time} seconds')
 
     def clear_global_var_dict(self):
         self._global_var_dict = {}
@@ -530,7 +565,7 @@ class ValueSetterCallback(ActionCallback):
             if self.tb_writer is not None:
                 class_name = self.module.__class__.__name__
                 # name = f'param/{class_name}.{self.arg_name}'
-                name = "param/{0}.{1}".format(class_name, self.arg_name)
+                name = f"param/{class_name}.{self.arg_name}"
                 self.tb_writer.add_scalar(name, value, self.step)
         else:
             self.cur_i += 1

@@ -22,10 +22,11 @@ def parse_args():
     parser.set_defaults(
         checkpoint_dir=None,
         optimizer="novograd",
-        batch_size=64,
+        batch_size=32,
         eval_batch_size=64,
-        lr=0.02,
-        amp_opt_level="O1",
+        lr=0.01,
+        weight_decay=0.001,
+        amp_opt_level="O0",
         create_tb_writer=True
     )
 
@@ -39,9 +40,12 @@ def parse_args():
     # Create new args
     parser.add_argument("--exp_name", default="QuartzNet", type=str)
     parser.add_argument("--beta1", default=0.95, type=float)
-    parser.add_argument("--beta2", default=0.25, type=float)
-    parser.add_argument("--warmup_steps", default=0, type=int)
+    parser.add_argument("--beta2", default=0.5, type=float)
+    parser.add_argument("--warmup_steps", default=1000, type=int)
     parser.add_argument("--load_dir", default=None, type=str)
+    parser.add_argument("--synced_bn", action='store_true',
+                        help="Use synchronized batch norm")
+    parser.add_argument("--synced_bn_groupsize", default=0, type=int)
 
     args = parser.parse_args()
     if args.max_steps is not None:
@@ -93,7 +97,8 @@ def create_all_dags(args, neural_factory):
     )
 
     N = len(data_layer_train)
-    steps_per_epoch = int(N / (args.batch_size * args.num_gpus))
+    steps_per_epoch = int(
+        N / (args.batch_size * args.iter_per_step * args.num_gpus))
 
     # create separate data layers for eval
     # we need separate eval dags for separate eval datasets
@@ -122,13 +127,13 @@ def create_all_dags(args, neural_factory):
 
     # create shared modules
 
-    data_preprocessor = nemo_asr.AudioPreprocessing(
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
         sample_rate=sample_rate,
-        **quartz_params["AudioPreprocessing"])
+        **quartz_params["AudioToMelSpectrogramPreprocessor"])
 
     # (QuartzNet uses the Jasper baseline encoder and decoder)
     encoder = nemo_asr.JasperEncoder(
-        feat_in=quartz_params["AudioPreprocessing"]["features"],
+        feat_in=quartz_params["AudioToMelSpectrogramPreprocessor"]["features"],
         **quartz_params["JasperEncoder"])
 
     decoder = nemo_asr.JasperDecoderForCTC(
@@ -297,7 +302,9 @@ def main():
                 args.beta2),
             "weight_decay": args.weight_decay,
             "grad_norm_clip": None},
-        batches_per_step=args.iter_per_step)
+        batches_per_step=args.iter_per_step,
+        synced_batchnorm=args.synced_bn,
+        synced_batchnorm_groupsize=args.synced_bn_groupsize)
 
 
 if __name__ == '__main__':

@@ -26,6 +26,12 @@ def rsetattr(obj, attr, val):
 
 
 def get_checkpoint_from_dir(module_names, cpkt_dir, ckpt_pattern=''):
+    """ Grab all the modules with match a certain pattern in cpkt_dir
+    If multiple checkpoints found, by default, use the one last created.
+    """
+    if not os.path.isdir(cpkt_dir):
+        raise ValueError(f"{cpkt_dir} isn't a directory")
+
     if not isinstance(module_names, Iterable):
         module_names = [module_names]
 
@@ -39,11 +45,19 @@ def get_checkpoint_from_dir(module_names, cpkt_dir, ckpt_pattern=''):
 
         module_ckpts = glob.glob(f'{cpkt_dir}/{module}*{ckpt_pattern}*')
         if not module_ckpts:
-            raise ValueError(f'No file matches {ckpt_pattern} in {cpkt_dir}')
+            raise ValueError(f'For module {module}, '
+                             f'no file matches {ckpt_pattern} in {cpkt_dir}')
 
         # if multiple checkpoints match a pattern, take the latest one
-        module_ckpts = sorted(module_ckpts, key=os.path.getmtime)
-        ckpts.append(module_ckpts[-1])
+        def step_from_checkpoint(checkpoint_name):
+            # return step number given a checkpoint filename
+            step_str = checkpoint_name.split('-')[-1].split('.')[0]
+            return int(step_str)
+
+        module_ckpt = module_ckpts[0]
+        if len(module_ckpts) > 1:
+            module_ckpt = max(module_ckpts, key=step_from_checkpoint)
+        ckpts.append(module_ckpt)
 
     return ckpts
 
@@ -88,24 +102,24 @@ def get_cuda_device(placement):
     return torch.device("cuda" if placement in gpu_devices else "cpu")
 
 
-def get_neural_factory(local_rank,
-                       precision,
-                       backend):
-    """
-    Helper function to create NeuralModuleFactory
-    Args:
-        local_rank:
-        precision: (nemo.core.Optimization) AMP mixed precision level
-        backend: (nemo.core.Backend) NeMo backend (defaults to Pytorch)
+# def get_neural_factory(local_rank,
+#                        precision,
+#                        backend):
+#     """
+#     Helper function to create NeuralModuleFactory
+#     Args:
+#         local_rank:
+#         precision: (nemo.core.Optimization) AMP mixed precision level
+#         backend: (nemo.core.Backend) NeMo backend (defaults to Pytorch)
 
-    Returns:
-        An instance of the NeuralModuleFactory
-    """
-    device = nemo.utils.get_device(local_rank)
-    return nemo.core.NeuralModuleFactory(backend=backend,
-                                         local_rank=local_rank,
-                                         optimization_level=precision,
-                                         placement=device)
+#     Returns:
+#         An instance of the NeuralModuleFactory
+#     """
+#     device = nemo.utils.get_device(local_rank)
+#     return nemo.core.NeuralModuleFactory(backend=backend,
+#                                          local_rank=local_rank,
+#                                          optimization_level=precision,
+#                                          placement=device)
 
 
 def maybe_download_from_cloud(url, filename, logger=None) -> str:

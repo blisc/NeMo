@@ -1,18 +1,24 @@
 # Copyright (c) 2019 NVIDIA Corporation
-
-from pytorch_transformers import BertConfig, BertModel, \
-    BERT_PRETRAINED_MODEL_ARCHIVE_MAP, BERT_PRETRAINED_CONFIG_ARCHIVE_MAP
 from typing import Optional, List
+
+from transformers import (BertConfig,
+                          BertModel,
+                          BERT_PRETRAINED_MODEL_ARCHIVE_MAP,
+                          BERT_PRETRAINED_CONFIG_ARCHIVE_MAP)
+
 from nemo.backends.pytorch.nm import TrainableNM
-from nemo.core.neural_types import AxisType, BatchTag, ChannelTag, \
-        NeuralType, TimeTag
 from nemo.core.neural_modules import PretrainedModelInfo
+from nemo.core.neural_types import (AxisType,
+                                    BatchTag,
+                                    ChannelTag,
+                                    NeuralType,
+                                    TimeTag)
 
 
 class BERT(TrainableNM):
     """
     BERT wraps around the Huggingface implementation of BERT from their
-    pytorch-transformers repository for easy use within NeMo.
+    transformers repository for easy use within NeMo.
 
     Args:
         pretrained_model_name (str): If using a pretrained model, this should
@@ -29,9 +35,26 @@ class BERT(TrainableNM):
         sequence.
     """
 
-    @staticmethod
-    def create_ports():
-        input_ports = {
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        input_ids:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+        token_type_ids:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+        attention_mask:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+        """
+        return {
             "input_ids": NeuralType({
                 0: AxisType(BatchTag),
                 1: AxisType(TimeTag)
@@ -46,15 +69,24 @@ class BERT(TrainableNM):
             })
         }
 
-        output_ports = {
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        hidden_states:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+            2: AxisType(ChannelTag)
+        """
+        return {
             "hidden_states": NeuralType({
                 0: AxisType(BatchTag),
                 1: AxisType(TimeTag),
                 2: AxisType(ChannelTag)
             })
         }
-
-        return input_ports, output_ports
 
     def __init__(self, *,
                  pretrained_model_name=None,
@@ -72,7 +104,6 @@ class BERT(TrainableNM):
         # Check that only one of pretrained_model_name, config_filename, and
         # vocab_size was passed in
         total = 0
-
         if pretrained_model_name is not None:
             total += 1
         if config_filename is not None:
@@ -88,6 +119,7 @@ class BERT(TrainableNM):
         if vocab_size is not None:
             config = BertConfig(
                 vocab_size_or_config_json_file=vocab_size,
+                vocab_size=vocab_size,
                 hidden_size=hidden_size,
                 num_hidden_layers=num_hidden_layers,
                 num_attention_heads=num_attention_heads,
@@ -102,12 +134,14 @@ class BERT(TrainableNM):
             model = BertModel(config)
         else:
             raise ValueError("Either pretrained_model_name or vocab_size must"
-                             + "be passed into the BERT constructor")
+                             + " be passed into the BERT constructor")
 
         model.to(self._device)
 
         self.add_module("bert", model)
         self.config = model.config
+        for key, value in self.config.to_dict().items():
+            self._local_parameters[key] = value
 
     @staticmethod
     def list_pretrained_models() -> Optional[List[PretrainedModelInfo]]:
@@ -122,4 +156,5 @@ class BERT(TrainableNM):
         return pretrained_models
 
     def forward(self, input_ids, token_type_ids, attention_mask):
-        return self.bert(input_ids, token_type_ids, attention_mask)[0]
+        return self.bert(input_ids, token_type_ids=token_type_ids,
+                         attention_mask=attention_mask)[0]

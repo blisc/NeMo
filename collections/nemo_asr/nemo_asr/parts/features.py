@@ -101,118 +101,49 @@ class FeaturizerFactory(object):
             perturbation_configs=perturbation_configs)
 
 
-class SpectrogramFeatures(nn.Module):
-    def __init__(self, sample_rate=8000, window_size=0.02, window_stride=0.01,
-                 n_fft=None,
-                 window="hamming", normalize=True, log=True, center=True,
-                 dither=CONSTANT, pad_to=8, max_duration=16.7,
-                 frame_splicing=1):
-        super(SpectrogramFeatures, self).__init__()
-        torch_windows = {
-            'hann': torch.hann_window,
-            'hamming': torch.hamming_window,
-            'blackman': torch.blackman_window,
-            'bartlett': torch.bartlett_window,
-            'none': None,
-        }
-        self.win_length = int(sample_rate * window_size)
-        self.hop_length = int(sample_rate * window_stride)
-        self.n_fft = n_fft or 2 ** math.ceil(math.log2(self.win_length))
-
-        window_fn = torch_windows.get(window, None)
-        window_tensor = window_fn(self.win_length,
-                                  periodic=False) if window_fn else None
-        self.window = window_tensor
-
-        self.normalize = normalize
-        self.log = log
-        self.center = center
-        self.dither = dither
-        self.pad_to = pad_to
-        self.frame_splicing = frame_splicing
-
-    def get_seq_len(self, seq_len):
-        return torch.ceil(seq_len.to(dtype=torch.float) / self.hop_length).to(
-            dtype=torch.long)
-
-    @torch.no_grad()
-    def forward(self, x, seq_len):
-        dtype = x.dtype
-        x = x.to(torch.float)
-
-        seq_len = self.get_seq_len(seq_len)
-
-        # dither
-        if self.dither > 0:
-            x += self.dither * torch.randn_like(x)
-
-        # do preemphasis
-        if hasattr(self, 'preemph') and self.preemph is not None:
-            x = torch.cat(
-                (x[:, 0].unsqueeze(1), x[:, 1:] - self.preemph * x[:, :-1]),
-                dim=1)
-
-        # get spectrogram
-        x = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop_length,
-                       win_length=self.win_length, center=self.center,
-                       window=self.window.to(torch.float))
-        x = torch.sqrt(x.pow(2).sum(-1))
-
-        # log features if required
-        if self.log:
-            x = torch.log(x + 1e-20)
-
-        # frame splicing if required
-        if self.frame_splicing > 1:
-            x = splice_frames(x, self.frame_splicing)
-
-        # normalize if required
-        if self.normalize:
-            x = normalize_batch(x, seq_len, normalize_type=self.normalize)
-
-        # mask to zero any values beyond seq_len in batch, pad to multiple of
-        # `pad_to` (for efficiency)
-        max_len = x.size(-1)
-        mask = torch.arange(max_len).to(seq_len.device)
-        mask = mask.expand(x.size(0), max_len) >= seq_len.unsqueeze(1)
-        x = x.masked_fill(mask.unsqueeze(1).to(device=x.device), 0)
-        del mask
-        if self.pad_to > 0:
-            pad_amt = x.size(-1) % self.pad_to
-            if pad_amt != 0:
-                x = nn.functional.pad(x, (0, self.pad_to - pad_amt))
-
-        return x.to(dtype)
-
-    @classmethod
-    def from_config(cls, cfg, log=False):
-        return cls(sample_rate=cfg['sample_rate'],
-                   window_size=cfg['window_size'],
-                   window_stride=cfg['window_stride'],
-                   n_fft=cfg['n_fft'], window=cfg['window'],
-                   normalize=cfg['normalize'],
-                   dither=cfg.get('dither', 1e-5), pad_to=cfg.get("pad_to", 0),
-                   frame_splicing=cfg.get("frame_splicing", 1), log=log)
-
-
 class FilterbankFeatures(nn.Module):
-    def __init__(self, sample_rate=8000, window_size=0.02, window_stride=0.01,
-                 window="hann", normalize="per_feature", n_fft=None,
-                 preemph=0.97,
-                 nfilt=64, lowfreq=0, highfreq=None, log=True, dither=CONSTANT,
-                 pad_to=16, max_duration=16.7,
-                 frame_splicing=1, stft_conv=False,
-                 speed_perturb=False, speed_perturb_global=False,
-                 speed_perturb_segs=0, speed_perturb_min=0,
-                 speed_perturb_max=0, logger=None):
+    """Featurizer that converts wavs to Mel Spectrograms.
+    See AudioToMelSpectrogramPreprocessor for args.
+    """
+    def __init__(
+            self, *,
+            sample_rate=16000,
+            n_window_size=320,
+            n_window_stride=160,
+            window="hann",
+            normalize="per_feature",
+            n_fft=None,
+            preemph=0.97,
+            nfilt=64,
+            lowfreq=0,
+            highfreq=None,
+            log=True,
+            log_zero_guard_type="add",
+            log_zero_guard_value=2**-24,
+            dither=CONSTANT,
+            pad_to=16,
+            max_duration=16.7,
+            frame_splicing=1,
+            stft_conv=False,
+            pad_value=0,
+            mag_power=2.,
+            logger=None
+    ):
         super(FilterbankFeatures, self).__init__()
+        if (n_window_size is None or n_window_stride is None
+                or not isinstance(n_window_size, int)
+                or not isinstance(n_window_stride, int)
+                or n_window_size <= 0 or n_window_stride <= 0):
+            raise ValueError(
+                f"{self} got an invalid value for either n_window_size or "
+                f"n_window_stride. Both must be positive ints.")
         if logger:
             logger.info(f"PADDING: {pad_to}")
         else:
             print(f"PADDING: {pad_to}")
 
-        self.win_length = int(sample_rate * window_size)
-        self.hop_length = int(sample_rate * window_stride)
+        self.win_length = n_window_size
+        self.hop_length = n_window_stride
         self.n_fft = n_fft or 2 ** math.ceil(math.log2(self.win_length))
         self.stft_conv = stft_conv
 
@@ -260,13 +191,6 @@ class FilterbankFeatures(nn.Module):
         self.nfilt = nfilt
         self.preemph = preemph
         self.pad_to = pad_to
-        self.speed_perturb = None
-        if speed_perturb:
-            self.speed_perturb = SpeedAugmentation(
-                segments=speed_perturb_segs,
-                min_segment_size=speed_perturb_min,
-                max_segment_size=speed_perturb_max,
-                global_=speed_perturb_global)
 
         highfreq = highfreq or sample_rate / 2
 
@@ -279,19 +203,45 @@ class FilterbankFeatures(nn.Module):
         self.register_buffer("fb", filterbanks)
 
         # Calculate maximum sequence length
-        max_length = 1 + math.ceil(
-            (max_duration * sample_rate - self.win_length) / self.hop_length
-        )
-        max_pad = 16 - (max_length % 16)
+        max_length = self.get_seq_len(
+            torch.tensor(max_duration * sample_rate, dtype=torch.float))
+        max_pad = pad_to - (max_length % pad_to)
         self.max_length = max_length + max_pad
+        self.pad_value = pad_value
+        self.mag_power = mag_power
+
+        # We want to avoid taking the log of zero
+        # There are two options: either adding or clamping to a small value
+        if log_zero_guard_type not in ["add", "clamp"]:
+            raise ValueError(
+                f"{self} received {log_zero_guard_type} for the "
+                f"log_zero_guard_type parameter. It must be either 'add' or "
+                f"'clamp'.")
+        # log_zero_guard_value is the the small we want to use, we support
+        # an actual number, or "tiny", or "eps"
+        self.log_zero_guard_value = lambda _: log_zero_guard_value
+        if isinstance(log_zero_guard_value, str):
+            if log_zero_guard_value == "tiny":
+                self.log_zero_guard_value = lambda x: torch.finfo(x.dtype).tiny
+            elif log_zero_guard_value == "eps":
+                self.log_zero_guard_value = lambda x: torch.finfo(x.dtype).eps
+            else:
+                raise ValueError(
+                    f"{self} received {log_zero_guard_value} for the "
+                    f"log_zero_guard_type parameter. It must be either a "
+                    f"number, 'tiny', or 'eps'")
+        self.log_zero_guard_type = log_zero_guard_type
 
     def get_seq_len(self, seq_len):
-        return torch.ceil(seq_len.to(dtype=torch.float) / self.hop_length).to(
-            dtype=torch.long)
+        return torch.ceil(seq_len / self.hop_length).to(dtype=torch.long)
+
+    @property
+    def filter_banks(self):
+        return self.fb
 
     @torch.no_grad()
     def forward(self, x, seq_len):
-        seq_len = self.get_seq_len(seq_len)
+        seq_len = self.get_seq_len(seq_len.float())
 
         # dither
         if self.dither > 0:
@@ -315,7 +265,8 @@ class FilterbankFeatures(nn.Module):
             x = x[0]
 
         # get power spectrum
-        x = x.pow(2)
+        if self.mag_power != 1.:
+            x = x.pow(self.mag_power)
         if not self.stft_conv:
             x = x.sum(-1)
 
@@ -324,7 +275,12 @@ class FilterbankFeatures(nn.Module):
 
         # log features if required
         if self.log:
-            x = torch.log(x + 2**-24)
+            if self.log_zero_guard_type == "add":
+                x = torch.log(x + self.log_zero_guard_value(x))
+            elif self.log_zero_guard_type == "clamp":
+                x = torch.log(torch.clamp(x, min=self.log_zero_guard_value(x)))
+            else:
+                raise ValueError("log_zero_guard_type was not understood")
 
         # frame splicing if required
         if self.frame_splicing > 1:
@@ -340,147 +296,18 @@ class FilterbankFeatures(nn.Module):
         mask = torch.arange(max_len).to(x.device)
         mask = mask.expand(x.size(0), max_len) >= seq_len.unsqueeze(1)
         x = x.masked_fill(
-            mask.unsqueeze(1).type(torch.bool).to(device=x.device), 0
-        )
+            mask.unsqueeze(1).type(torch.bool).to(device=x.device),
+            self.pad_value)
         del mask
         pad_to = self.pad_to
         if not self.training:
             pad_to = 16
         if pad_to == "max":
-            x = nn.functional.pad(x, (0, self.max_length - x.size(-1)))
+            x = nn.functional.pad(x, (0, self.max_length - x.size(-1)),
+                                  value=self.pad_value)
         elif pad_to > 0:
             pad_amt = x.size(-1) % pad_to
             if pad_amt != 0:
-                x = nn.functional.pad(x, (0, pad_to - pad_amt))
-
-        return x, seq_len
-
-    @classmethod
-    def from_config(cls, cfg, log=False):
-        return cls(sample_rate=cfg.get('sample_rate', 8000),
-                   window_size=cfg.get('window_size', 0.02),
-                   window_stride=cfg.get('window_stride', 0.01),
-                   n_fft=cfg.get('n_fft', None),
-                   nfilt=cfg.get('features', 64),
-                   window=cfg.get('window', "hann"),
-                   normalize=cfg.get('normalize', "per_feature"),
-                   dither=cfg.get('dither', CONSTANT),
-                   pad_to=cfg.get("pad_to", 16),
-                   frame_splicing=cfg.get("frame_splicing", 1),
-                   log=log,
-                   stft_conv=cfg.get("stft_conv", False))
-
-
-class FeatureFactory(object):
-    featurizers = {
-        "logfbank": FilterbankFeatures,
-        "fbank": FilterbankFeatures,
-        "stft": SpectrogramFeatures,
-        "logspect": SpectrogramFeatures,
-        "logstft": SpectrogramFeatures
-    }
-
-    def __init__(self):
-        pass
-
-    @classmethod
-    def from_config(cls, cfg):
-        feat_type = cfg.get('feat_type', "logspect")
-        featurizer = cls.featurizers[feat_type]
-        return featurizer.from_config(cfg, log="log" in feat_type)
-
-
-class SpeedAugmentation(nn.Module):
-    def __init__(
-            self, *,
-            segments=0,
-            min_segment_size=10,
-            max_segment_size=None,
-            global_=False,
-            num_processes=8
-    ):
-        super().__init__()
-        self.global_ = global_
-        self.segments = segments
-        self.min_segment_size = min_segment_size
-        self.max_segment_size = max_segment_size
-        try:
-            self.pool = mp.Pool(processes=num_processes)
-            self.mp = True
-            print("WOW, multiprocessing")
-        except Exception as e:
-            print(e)
-            print(":(, multiprocessing failed")
-            self.mp = False
-
-    @staticmethod
-    def do_perturb(args):
-        spec, spec_len, args = args
-        global_, segments, min_segment_size, max_segment_size = args
-        if global_:
-            rate_min = max(spec_len / 1680, 0.85)
-            rate = np.random.uniform(rate_min, 1.15)
-            return librosa.core.phase_vocoder(spec[:, 0:spec_len], rate)
-        # else
-        for _ in range(segments):
-            min_seg_length = int(min_segment_size * spec_len)
-            max_seg_length = int(max_segment_size * spec_len)
-            slice_start = np.random.randint(
-                spec_len - min_seg_length - 1)
-            if slice_start + max_seg_length >= spec_len:
-                max_seg_length = spec_len - slice_start
-            slice_length = np.random.randint(
-                min_seg_length,
-                max_seg_length)
-            slice_end = slice_start + slice_length
-            rate_min = max(
-                slice_length / (1680 - spec_len + slice_length), 0.85)
-            slice_ = spec[:, slice_start:slice_end]
-            rate = np.random.uniform(rate_min, 1.1)
-            slice_perturbed = librosa.core.phase_vocoder(slice_, rate)
-            spec = np.concatenate(
-                (
-                    spec[:, :slice_start],
-                    slice_perturbed,
-                    spec[:, slice_end:spec_len]
-                ),
-                axis=1)
-            spec_len = spec.shape[1]
-        return spec
-
-    def forward(self, input_spec, input_spec_length):
-        input_spec_length = input_spec_length.cpu().numpy().astype(int)
-        if self.mp:
-            output_specs = self.pool.map(
-                SpeedAugmentation.do_perturb,
-                zip(
-                    input_spec, input_spec_length,
-                    itertools.repeat((
-                        self.global_, self.segments, self.min_segment_size,
-                        self.max_segment_size))
-                ))
-        else:
-            output_specs = []
-            for i in range(input_spec.shape[0]):
-                output_specs.append(SpeedAugmentation.do_perturb((
-                    input_spec[i], input_spec_length[i],
-                    (
-                        self.global_, self.segments, self.min_segment_size,
-                        self.max_segment_size
-                    )
-                )))
-
-        # Collate
-        max_len = -1
-        for i, spec in enumerate(output_specs):
-            input_spec_length[i] = spec.shape[1]
-            if input_spec_length[i] > max_len:
-                max_len = input_spec_length[i]
-        output_spec = torch.zeros(input_spec.shape[0], input_spec.shape[1],
-                                  max_len, dtype=torch.float)
-        input_spec_length = torch.from_numpy(input_spec_length)
-        for i in range(input_spec.shape[0]):
-            output_spec[i].narrow(1, 0, input_spec_length[i]).copy_(
-                torch.from_numpy(np.absolute(output_specs[i])))
-
-        return output_spec, input_spec_length
+                x = nn.functional.pad(x, (0, pad_to - pad_amt),
+                                      value=self.pad_value)
+        return x

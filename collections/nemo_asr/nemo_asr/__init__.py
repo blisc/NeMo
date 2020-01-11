@@ -1,4 +1,4 @@
-# Copyright 2019 AI Applications Design Team at NVIDIA. All Rights Reserved.
+# Copyright 2019 NVIDIA. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,18 +11,38 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+# =============================================================================
 from nemo.core import Backend
 
-from .data_layer import AudioToTextDataLayer, AudioPreprocessing, \
-    SpectrogramAugmentation, MultiplyBatch, IntToSeq, IntToSeq2, \
-    TFAudioToTextDataLayer
-from .greedy_ctc_decoder import GreedyCTCDecoder
+from .audio_preprocessing import *
 from .beam_search_decoder import BeamSearchDecoderWithLM
+from .data_layer import (
+        AudioToTextDataLayer, KaldiFeatureDataLayer, TranscriptDataLayer,
+        IntToSeq, IntToSeq2, TFAudioToTextDataLayer)
+from .greedy_ctc_decoder import GreedyCTCDecoder
 from .jasper import JasperEncoder, JasperDecoderForCTC
 from .las.misc import JasperRNNConnector
 from .losses import CTCLossNM
 
+__all__ = ['Backend',
+           'AudioToTextDataLayer',
+           'AudioPreprocessing',
+           'AudioPreprocessor',
+           'AudioToMFCCPreprocessor',
+           'AudioToMelSpectrogramPreprocessor',
+           'AudioToSpectrogramPreprocessor',
+           'MultiplyBatch',
+           'SpectrogramAugmentation',
+           'KaldiFeatureDataLayer',
+           'TranscriptDataLayer',
+           'GreedyCTCDecoder',
+           'BeamSearchDecoderWithLM',
+           'JasperEncoder',
+           'JasperDecoderForCTC',
+           'JasperRNNConnector',
+           'CTCLossNM']
+
+
 name = "nemo_asr"
 backend = Backend.PyTorch
-__version__ = "0.8"
+__version__ = "0.9.0"

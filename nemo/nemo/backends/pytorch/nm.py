@@ -23,8 +23,6 @@ class TrainableNM(NeuralModule, nn.Module):
 
       def __init__(self, **kwargs):
         TrainableNM.__init__(self, **kwargs)
-        self._input_ports = {..}
-        self._output_ports = {..}
         .... # you code
 
     Then make sure that your forward(..) method accepts arguments named like
@@ -36,19 +34,21 @@ class TrainableNM(NeuralModule, nn.Module):
         nn.Module.__init__(self)  # For PyTorch API
         self._device = get_cuda_device(self.placement)
 
-    def __call__(self, force_pt=False, *input, **kwargs):
+    def __call__(self, *input, force_pt=False, **kwargs):
         pt_call = len(input) > 0 or force_pt
         if pt_call:
             return nn.Module.__call__(self, *input, **kwargs)
         else:
             return NeuralModule.__call__(self, **kwargs)
 
+    @t.jit.ignore()
     def get_weights(self):
         result = dict()
         for name, parameter in self.named_parameters():
             result[name] = (parameter, parameter.requires_grad)
         return result
 
+    @t.jit.ignore()
     def set_weights(self, name2weight, name2name_and_transform=None):
         if name2weight is not None and len(name2weight) > 0:
             if name2name_and_transform is None:
@@ -60,6 +60,7 @@ class TrainableNM(NeuralModule, nn.Module):
                     {key: name2weight[key][0] for key in name2weight.keys()}
                 )
 
+    @t.jit.ignore()
     def tie_weights_with(self, module, weight_names,
                          name2name_and_transform=None):
         if module is None:
@@ -93,10 +94,12 @@ class TrainableNM(NeuralModule, nn.Module):
                 else:
                     rsetattr(self, self_w_name, rgetattr(module, self_w_name))
 
+    @t.jit.ignore()
     def save_to(self, path):
         # t.save(self._pt_module.state_dict(), path)
         t.save(self.state_dict(), path)
 
+    @t.jit.ignore()
     def restore_from(self, path, local_rank=0):
         # self._pt_module.load_state_dict(t.load(path))
         if self.placement == DeviceType.AllGpu:
@@ -105,6 +108,7 @@ class TrainableNM(NeuralModule, nn.Module):
             load_device = self._device
         self.load_state_dict(t.load(path, map_location=load_device))
 
+    @t.jit.ignore()
     def freeze(self, weights=None):
         if hasattr(self, "_pt_module"):
             for name, param in self._pt_module.named_parameters():
@@ -115,6 +119,7 @@ class TrainableNM(NeuralModule, nn.Module):
                 if weights is None or name in weights:
                     param.requires_grad = False
 
+    @t.jit.ignore()
     def unfreeze(self, weights=None):
         if hasattr(self, "_pt_module"):
             for name, param in self._pt_module.named_parameters():
@@ -193,6 +198,15 @@ class DataLayerNM(NeuralModule):
         #    kwargs['batch_size'] = 1
         NeuralModule.__init__(self, **kwargs)  # For NeuralModule API
         self._device = get_cuda_device(self.placement)
+
+    @property
+    def input_ports(self):
+        """DataLayer by definition does not have any input ports.
+
+            Returns:
+                An empty dictionary.
+        """
+        return {}
 
     def get_weights(self):
         logging.warning(

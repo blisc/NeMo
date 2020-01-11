@@ -1,9 +1,14 @@
 # Copyright (c) 2019 NVIDIA Corporation
+import importlib
 import itertools
+import json
 import logging
 import os
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Dict
 
+# import onnx
+from collections import defaultdict
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -12,24 +17,24 @@ from nemo.backends.pytorch.nm import TrainableNM
 
 from .module_wrapper import TrainableNeuralModuleWrapper
 from .nm import DataLayerNM
-from .optimizers import Novograd, AdamW, Lamb
-from ...core import NmTensor, DeviceType, NeuralModule
-from ...core.callbacks import (
-    ActionCallback,
-    EvaluatorCallback,
-    SimpleLossLoggerCallback,
-)
+from .optimizers import Novograd, AdamW, Lamb, master_params
+from ...core import NmTensor, DeviceType, NeuralModule, DeploymentFormat
+from ...core.neural_types import *
+from ...core.callbacks import (ActionCallback,
+                               EvaluatorCallback,
+                               SimpleLossLoggerCallback)
 from ...core.neural_factory import Actions, ModelMode, Optimization
 from ...utils.helpers import get_checkpoint_from_dir
 
-try:
-    import apex
-    from apex.parallel import DistributedDataParallel as DDP
-    from apex.parallel.LARC import LARC
-    from apex import amp
-except ImportError:
-    raise ImportError(
-        "Please install apex from https://www.github.com/nvidia/apex")
+# these imports will happen on as-needed basis
+amp = None
+convert_syncbn = None
+create_syncbn_process_group = None
+DDP = None
+LARC = None
+FusedLAMB = None
+FusedAdam = None
+FusedNovoGrad = None
 
 AmpOptimizations = {
     Optimization.mxprO0: "O0",
@@ -44,10 +49,50 @@ _float_2_half_req = {Optimization.mxprO1,
 
 
 class PtActions(Actions):
-    def __init__(self, local_rank=None, tb_writer=None,
-                 optimization_level=Optimization.mxprO0, logger=None):
+    def __init__(
+            self,
+            local_rank=None,
+            global_rank=None,
+            tb_writer=None,
+            optimization_level=Optimization.mxprO0,
+            logger=None):
+        need_apex = local_rank is not None or \
+            optimization_level != Optimization.mxprO0
+        if need_apex:
+            try:
+                apex = importlib.import_module('apex')
+                if optimization_level != Optimization.mxprO0:
+                    global amp
+                    amp = importlib.import_module('apex.amp')
+                if local_rank is not None:
+                    global convert_syncbn
+                    global create_syncbn_process_group
+                    global DDP
+                    global LARC
+                    global FusedLAMB
+                    global FusedAdam
+                    global FusedNovoGrad
+                    parallel = importlib.import_module('apex.parallel')
+                    apex_optimizer = importlib.import_module('apex.optimizers')
+                    convert_syncbn = parallel.convert_syncbn_model
+                    create_syncbn_process_group = (
+                        parallel.create_syncbn_process_group)
+                    DDP = parallel.DistributedDataParallel
+                    LARC = parallel.LARC
+                    FusedLAMB = apex_optimizer.FusedLAMB
+                    FusedAdam = apex_optimizer.FusedAdam
+                    FusedNovoGrad = apex_optimizer.FusedNovoGrad
+
+            except ImportError:
+                raise ImportError(
+                    "NVIDIA Apex is necessary for distributed training and"
+                    "mixed precision training. It only works on GPUs."
+                    "Please install Apex from "
+                    "https://www.github.com/nvidia/apex")
+
         super(PtActions, self).__init__(
             local_rank=local_rank,
+            global_rank=global_rank,
             optimization_level=optimization_level,
             logger=logger)
 
@@ -58,6 +103,8 @@ class PtActions(Actions):
         self.optimizers = []
         self.tb_writer = tb_writer
         self._modules = set()
+        self.cache = None
+        self.amp_initialized = False
 
     @property
     def modules(self):
@@ -65,7 +112,7 @@ class PtActions(Actions):
 
     def __get_top_sorted_modules_and_dataloader(self, hook):
         """
-        Constracts DAG leading to hook and creates its topological order.
+        Constructs DAG leading to hook and creates its topological order.
         It also populates self.module_reference_table.
         Args:
           hook: an NmTensor or a list of NmTensors representing leaf nodes
@@ -80,9 +127,8 @@ class PtActions(Actions):
                 return tuple((producer, ()))
             else:
                 return tuple(
-                    (
-                        producer,
-                        tuple([(k, v) for k, v in producer_args.items()]))
+                    (producer,
+                     tuple([(k, v) for k, v in producer_args.items()]))
                 )
 
         def is_in_degree_zero(node, processed_nodes):
@@ -95,10 +141,7 @@ class PtActions(Actions):
                     return False
             return True
 
-        if not isinstance(hook, list):
-            hooks = [hook]
-        else:
-            hooks = hook
+        hooks = hook if isinstance(hook, list) else [hook]
 
         # ensures that no tensors are processed twice
         processed_nmtensors = set()
@@ -128,7 +171,8 @@ class PtActions(Actions):
             # and nm is inside all_nodes
             if node not in all_nodes:
                 all_nodes[node] = {
-                    k: None for k in nmtensor.producer._output_ports}
+                    k: None for k in
+                    nmtensor.producer.output_ports}
             # second, populate output port with current nmtensor
             # where applicable
             all_nodes[node][nmtensor.name] = nmtensor
@@ -187,7 +231,7 @@ class PtActions(Actions):
                                  "NeuralModuleFactory first and pass its "
                                  "instance as `factory` parameter to all your"
                                  "Neural Module objects."
-                                 "".format(m[0].__class__.__name__))
+                                 "".format(str(m[0])))
             key = m[0].unique_instance_id
             if key not in self.module_reference_table:
                 if isinstance(m[0], TrainableNeuralModuleWrapper):
@@ -197,12 +241,10 @@ class PtActions(Actions):
 
         return top_sorted_modules, tdataset
 
-    def create_optimizer(
-            self,
-            optimizer,
-            things_to_optimize,
-            optimizer_params=None,
-    ):
+    def create_optimizer(self,
+                         optimizer,
+                         things_to_optimize,
+                         optimizer_params=None):
         """
         Wrapper function around __setup_optimizer()
 
@@ -269,12 +311,11 @@ class PtActions(Actions):
         return optimizer
 
     @staticmethod
-    def __setup_optimizer(
-            optimizer_instance,
-            optimizer_class,
-            optimization_params,
-            params_to_optimize,
-    ):
+    def __setup_optimizer(optimizer_instance,
+                          optimizer_class,
+                          optimization_params,
+                          params_to_optimize):
+
         if optimizer_instance is None:
             # Setup optimizer instance, by default it is SGD
             lr = optimization_params["lr"]
@@ -290,7 +331,7 @@ class PtActions(Actions):
                     params=params_to_optimize, lr=lr,
                     betas=optimization_params.get("betas", (0.9, 0.999)))
             elif optimizer_class.lower() == "fused_adam":
-                optimizer = apex.optimizers.FusedAdam(
+                optimizer = FusedAdam(
                     params=params_to_optimize,
                     lr=lr)
             elif optimizer_class.lower() == "adam_w":
@@ -298,6 +339,7 @@ class PtActions(Actions):
                     params=params_to_optimize,
                     lr=lr,
                     weight_decay=optimization_params.get("weight_decay", 0.0),
+                    betas=optimization_params.get("betas", (0.9, 0.999))
                 )
             elif optimizer_class.lower() == "novograd":
                 optimizer = Novograd(
@@ -306,10 +348,10 @@ class PtActions(Actions):
                     weight_decay=optimization_params.get("weight_decay", 0.0),
                     luc=optimization_params.get("luc", False),
                     luc_trust=optimization_params.get("luc_eta", 1e-3),
-                    betas=optimization_params.get("betas", (0.95, 0.98)),
+                    betas=optimization_params.get("betas", (0.95, 0.25)),
                 )
             elif optimizer_class.lower() == "fused_novograd":
-                optimizer = apex.optimizers.FusedNovoGrad(
+                optimizer = FusedNovoGrad(
                     params_to_optimize,
                     lr=lr,
                     weight_decay=optimization_params.get("weight_decay", 0.0),
@@ -323,12 +365,17 @@ class PtActions(Actions):
                     lr=lr,
                     weight_decay=optimization_params.get("weight_decay", 0.0),
                 )
+            elif optimizer_class.lower() == "fused_lamb":
+                optimizer = FusedLAMB(
+                    params_to_optimize,
+                    lr=lr,
+                )
             else:
                 raise ValueError(
                     "Unknown optimizer class: {0}".format(optimizer_class))
 
             if optimization_params.get("larc", False):
-                # self.logger.info("Enabling larc")
+                self.logger.info("Enabling larc")
                 optimizer = LARC(
                     optimizer,
                     trust_coefficient=optimization_params.get("larc_eta", 2e-2)
@@ -346,11 +393,16 @@ class PtActions(Actions):
         return optimizer
 
     def __initialize_amp(
-            self, optimizer, optim_level, amp_min_loss_scale=1.0
+            self, optimizer, optim_level,
+            amp_max_loss_scale=2.**24, amp_min_loss_scale=1.0
     ):
         if optim_level not in AmpOptimizations:
-            raise ValueError("__initialize_amp() was called but optim_level "
-                             "was set to float32.")
+            raise ValueError(f"__initialize_amp() was called with unknown "
+                             "optim_level={optim_level}")
+        # in this case, nothing to do here
+        if optim_level == Optimization.mxprO0:
+            return optimizer
+
         if len(self.modules) < 1:
             raise ValueError("There were no modules to initialize")
         pt_modules = []
@@ -362,31 +414,45 @@ class PtActions(Actions):
                 pt_modules.append(module._pt_module)
 
         _, optimizer = amp.initialize(
+            max_loss_scale=amp_max_loss_scale,
             min_loss_scale=amp_min_loss_scale,
             models=pt_modules,
             optimizers=optimizer,
             opt_level=AmpOptimizations[optim_level],
         )
+        self.amp_initialized = True
         return optimizer
 
-    def __nm_graph_forward_pass(
-            self,
-            call_chain,
-            registered_tensors,
-            mode=ModelMode.train,
-            disable_allreduce=False
-    ):
+    def __nm_graph_forward_pass(self,
+                                call_chain,
+                                registered_tensors,
+                                mode=ModelMode.train,
+                                disable_allreduce=False,
+                                use_cache=False):
         for ind in range(1, len(call_chain)):
+            if use_cache:
+                in_cache = True
+                for tensor in call_chain[ind][2].values():
+                    if tensor is None:
+                        # NM has an output tensor that is not used in the
+                        # current call chain, so we don't care if it's not in
+                        # cache
+                        continue
+                    if tensor.unique_name not in registered_tensors:
+                        in_cache = False
+                if in_cache:
+                    continue
             call_args = call_chain[ind][1]
             # module = call_chain[ind][0]
             m_id = call_chain[ind][0].unique_instance_id
             pmodule = self.module_reference_table[m_id][1]
 
-            if isinstance(pmodule, DDP):
-                if disable_allreduce:
-                    pmodule.disable_allreduce()
-                else:
-                    pmodule.enable_allreduce()
+            if self._local_rank is not None:
+                if isinstance(pmodule, DDP):
+                    if disable_allreduce:
+                        pmodule.disable_allreduce()
+                    else:
+                        pmodule.enable_allreduce()
 
             if mode == ModelMode.train:
                 # if module.is_trainable():
@@ -426,9 +492,8 @@ class PtActions(Actions):
                 if t_name not in registered_tensors:
                     registered_tensors[t_name] = t_tensor
                 else:
-                    raise ValueError(
-                        "A NMTensor was produced twice in the same DAG. "
-                        "{}".format(t_name))
+                    raise ValueError("A NMTensor was produced twice in "
+                                     f"the same DAG. {t_name}")
 
     @staticmethod
     def pad_tensor(t: torch.Tensor, target_size: torch.Size):
@@ -516,7 +581,8 @@ class PtActions(Actions):
                     )
                 else:
                     eval_dataloader = dl_nm.data_iterator
-                eval_dataloader.sampler.set_epoch(0)
+                if hasattr(eval_dataloader, 'sampler'):
+                    eval_dataloader.sampler.set_epoch(0)
             else:  # Not distributed
                 if dl_nm.dataset is not None:
                     # Todo: remove local_parameters
@@ -569,7 +635,7 @@ class PtActions(Actions):
                     mode=ModelMode.eval,
                 )
 
-                if not is_distributed or self.local_rank == 0:
+                if not is_distributed or self.global_rank == 0:
                     values_dict = {}
                 # If distributed. For the outer loop, we need to ensure that
                 # all processes loop through the elements in the same order
@@ -626,14 +692,14 @@ class PtActions(Actions):
                             self.depad_tensor(t, size)
                             for t, size in zip(tensors_list, sizes)
                         ]
-                        if self.local_rank == 0:
+                        if self.global_rank == 0:
                             values_dict["IS_FROM_DIST_EVAL"] = True
                             values_dict[key] = tensors_list
                     else:  # NON-DISTRIBUTED TRAINING
                         values_dict["IS_FROM_DIST_EVAL"] = False
                         values_dict[key] = [registered_e_tensors[key]]
                 if callback.user_iter_callback and (
-                        self.local_rank is None or self.local_rank == 0
+                        self.global_rank is None or self.global_rank == 0
                 ):
                     # values_dict will contain results from all workers
                     callback.user_iter_callback(values_dict,
@@ -642,19 +708,40 @@ class PtActions(Actions):
             # final aggregation (over minibatches) and logging of results
             # should happend only on one worker
             if callback.user_done_callback and (
-                    self.local_rank is None or self.local_rank == 0
+                    self.global_rank is None or self.global_rank == 0
             ):
                 vals_to_log = callback.user_done_callback(
                     callback._global_var_dict)
                 # log results to Tensorboard
-                if vals_to_log is not None and callback._swriter is not None:
-                    for key, val in vals_to_log.items():
-                        callback._swriter.add_scalar(key, val, step)
+                if vals_to_log is not None and callback.swriter is not None:
+                    if callback.tb_writer_func is not None:
+                        callback.tb_writer_func(
+                            callback.swriter, vals_to_log, step)
+                    else:
+                        for key, val in vals_to_log.items():
+                            callback.swriter.add_scalar(key, val, step)
 
-    def _infer(self, tensors_to_return, step, verbose=False):
+    def _infer(self,
+               tensors_to_return,
+               verbose=False,
+               cache=False,
+               use_cache=False,
+               offload_to_cpu=True):
         """
         Does the same as _eval() just with tensors instead of eval callback.
         """
+        # Checking that cache is used properly
+        if cache and use_cache:
+            raise ValueError("cache and use_cache were both set. However cache"
+                             " must first be created prior to using it.")
+        if cache:
+            if self.cache is not None:
+                raise ValueError("cache was set but was not empty")
+            self.cache = []
+        if use_cache:
+            if not self.cache:
+                raise ValueError("use_cache was set, but cache was empty")
+
         with torch.no_grad():
             # each call chain corresponds to a tensor in tensors_2_evaluate
             dl_nm = None
@@ -669,6 +756,9 @@ class PtActions(Actions):
             is_distributed = False
             world_size = None
             if dl_nm.placement == DeviceType.AllGpu:
+                if self.cache or use_cache:
+                    raise NotImplementedError(
+                        "Caching is not available for distributed training.")
                 assert dist.is_initialized()
                 is_distributed = True
                 world_size = torch.distributed.get_world_size()
@@ -693,7 +783,9 @@ class PtActions(Actions):
                 else:
                     eval_dataloader = dl_nm.data_iterator
                 eval_dataloader.sampler.set_epoch(0)
-            else:  # Not distributed
+            elif not use_cache:  # Not distributed and not using cache
+                # Dataloaders are only used if use_cache is False
+                # When caching, the DAG must cache all outputs from dataloader
                 if dl_nm.dataset is not None:
                     # Todo: remove local_parameters
                     eval_dataloader = torch.utils.data.DataLoader(
@@ -714,15 +806,21 @@ class PtActions(Actions):
             # reset global_var_dict - results of evaluation will be stored
             # there
 
-            if not is_distributed or self.local_rank == 0:
+            if not is_distributed or self.global_rank == 0:
                 values_dict = {}
                 for t in tensors_to_return:
                     values_dict[t.unique_name] = []
             dl_device = dl_nm._device
 
             # Evaluation mini-batch for loop
-            num_batches = len(eval_dataloader)
-            for epoch_i, data in enumerate(eval_dataloader, 0):
+            if use_cache:
+                num_batches = len(self.cache)
+                loop_iterator = self.cache
+            else:
+                num_batches = len(eval_dataloader)
+                loop_iterator = eval_dataloader
+
+            for epoch_i, data in enumerate(loop_iterator, 0):
                 if verbose and (
                         num_batches < 10 or (
                         epoch_i % int(num_batches / 10) == 0)
@@ -730,23 +828,42 @@ class PtActions(Actions):
                     self.logger.info(
                         f"Evaluating batch {epoch_i} out of {num_batches}")
                 tensors = []
-                if isinstance(data, torch.Tensor):
-                    data = (data,)
-                for d in data:
-                    if isinstance(d, torch.Tensor):
-                        tensors.append(d.to(dl_device))
-                    else:
-                        tensors.append(d)
+                if use_cache:
+                    registered_e_tensors = data
+                    # delete tensors_to_return
+                    for t in tensors_to_return:
+                        if t.unique_name in registered_e_tensors:
+                            del registered_e_tensors[t.unique_name]
+                    # Need to check for device type mismatch
+                else:
+                    if isinstance(data, torch.Tensor):
+                        data = (data,)
+                    for d in data:
+                        if isinstance(d, torch.Tensor):
+                            tensors.append(d.to(dl_device))
+                        else:
+                            tensors.append(d)
 
-                registered_e_tensors = {t.unique_name: d for t, d in
-                                        zip(call_chain[0][2].values(), tensors)
-                                        if t is not None
-                                        }
+                    registered_e_tensors = {
+                        t.unique_name: d for t, d in
+                        zip(call_chain[0][2].values(), tensors)
+                        if t is not None
+                    }
                 self.__nm_graph_forward_pass(
                     call_chain=call_chain,
                     registered_tensors=registered_e_tensors,
                     mode=ModelMode.eval,
+                    use_cache=use_cache
                 )
+
+                # if offload_to_cpu:
+                #     # Take all cuda tensors and save them to value_dict as
+                #     # cpu tensors to save GPU memory
+                #     for name, tensor in registered_e_tensors.items():
+                #         if isinstance(tensor, torch.Tensor):
+                #             registered_e_tensors[name] = tensor.cpu()
+                if cache:
+                    self.append_to_cache(registered_e_tensors)
 
                 # If distributed. For the outer loop, we need to ensure that
                 # all processes loop through the elements in the same order
@@ -803,12 +920,17 @@ class PtActions(Actions):
                             self.depad_tensor(t, size)
                             for t, size in zip(tensors_list, sizes)
                         ]
-                        if self.local_rank == 0:
+                        if offload_to_cpu:
+                            tensors_list = [t.cpu() for t in tensors_list]
+                        if self.global_rank == 0:
                             values_dict[key] += tensors_list
                     else:  # NON-DISTRIBUTED TRAINING
-                        values_dict[key] += [registered_e_tensors[key]]
+                        tensor = registered_e_tensors[key]
+                        if offload_to_cpu and isinstance(tensor, torch.Tensor):
+                            tensor = tensor.cpu()
+                        values_dict[key] += [tensor]
 
-            if not is_distributed or self.local_rank == 0:
+            if not is_distributed or self.global_rank == 0:
                 inferred_tensors = []
                 for t in tensors_to_return:
                     inferred_tensors.append(values_dict[t.unique_name])
@@ -816,6 +938,18 @@ class PtActions(Actions):
 
             # For all other ranks
             return None
+
+    def append_to_cache(self, registered_tensors: dict):
+        """Simpler helper function to add results of __nm_graph_forward_pass to
+        current cache.
+        """
+        self.cache.append(registered_tensors)
+
+    def clear_cache(self):
+        """ Simple helpful function to clear cache by setting self.cache to
+        None
+        """
+        self.cache = None
 
     def save_state_to(self, path: str):
         """
@@ -907,26 +1041,189 @@ class PtActions(Actions):
                     for module in callchain:
                         self.modules.add(module[0])
 
-    def train(
-            self,
-            tensors_to_optimize,
-            optimizer=None,
-            optimization_params=None,
-            callbacks: Optional[List[ActionCallback]] = None,
-            lr_policy=None,
-            batches_per_step=None,
-            stop_on_nan_loss=False
-    ):
+    @staticmethod
+    def __module_export(module,
+                        output,
+                        d_format: DeploymentFormat,
+                        input_example=None,
+                        output_example=None,
+                        logger=None):
+        # Check if output already exists
+        destination = Path(output)
+        if destination.exists():
+            raise FileExistsError(f"Destination {output} already exists. "
+                                  f"Aborting export.")
+
+        input_names = list(module.input_ports.keys())
+        output_names = list(module.output_ports.keys())
+        dynamic_axes = defaultdict(list)
+
+        def __extract_dynamic_axes(port_name: str, ntype: NeuralType,
+                                   dynamic_axes: defaultdict):
+            if ntype.axis2type:
+                for axis_id, axistype in ntype.axis2type.items():
+                    if issubclass(axistype.semantics, BatchTag) or issubclass(
+                            axistype.semantics, TimeTag):
+                        dynamic_axes[port_name].append(axis_id)
+
+        # This is a hack for Jasper to Jarvis export -- need re-design for this
+        inputs_to_drop = set()
+        outputs_to_drop = set()
+        if type(module).__name__ == "JasperEncoder":
+            print(f"Module is JasperEncoder. We are removing"
+                  f"input and output length ports since they "
+                  f"are not needed for deployment")
+            inputs_to_drop.add("length")
+            outputs_to_drop.add("encoded_lengths")
+
+        # for input_ports
+        for port_name, ntype in module.input_ports.items():
+            if port_name in inputs_to_drop:
+                continue
+            __extract_dynamic_axes(port_name, ntype, dynamic_axes)
+        # for output_ports
+        for port_name, ntype in module.output_ports.items():
+            if port_name in outputs_to_drop:
+                continue
+            __extract_dynamic_axes(port_name, ntype, dynamic_axes)
+
+        if len(dynamic_axes) == 0:
+            dynamic_axes = None
+
+        local_parameters = {}
+        if module._local_parameters is not None:
+            for key, value in module._local_parameters.items():
+                local_parameters[key] = value
+
+        # Remove NeMo-related things from the module
+        # We need to change __call__ method. Note that this will change the
+        # whole class, not just this object! Which is why we need to repair it
+        # in the finally block
+        type(module).__call__ = torch.nn.Module.__call__
+        module._local_parameters = None
+        module._logger = None
+        module._placement = None
+        module._factory = None
+        module._device = None
+
+        module.eval()
+        try:
+            if d_format == DeploymentFormat.TORCHSCRIPT:
+                if input_example is None:
+                    # Route 1 - via torch.jit.script
+                    traced_m = torch.jit.script(module)
+                    traced_m.save(output)
+                else:
+                    # Route 2 - via tracing
+                    traced_m = torch.jit.trace(module, input_example)
+                    traced_m.save(output)
+            elif d_format == DeploymentFormat.ONNX:
+                if input_example is None:
+                    raise ValueError(
+                        f'Example input is None, but ONNX tracing was'
+                        f' attempted')
+                if output_example is None:
+                    if isinstance(input_example, tuple):
+                        output_example = module.forward(*input_example)
+                    else:
+                        output_example = module.forward(input_example)
+                with torch.jit.optimized_execution(True):
+                    jitted_model = torch.jit.trace(module,
+                                                   input_example)
+
+                torch.onnx.export(jitted_model, input_example, output,
+                                  input_names=input_names,
+                                  output_names=output_names,
+                                  verbose=True,
+                                  export_params=True,
+                                  do_constant_folding=True,
+                                  dynamic_axes=dynamic_axes,
+                                  opset_version=10,
+                                  example_outputs=output_example)
+                # fn = output + ".readable"
+                # with open(fn, 'w') as f:
+                #     tempModel = onnx.load(output)
+                #     onnx.save(tempModel, output + ".copy")
+                #     onnx.checker.check_model(tempModel)
+                #     pgraph = onnx.helper.printable_graph(tempModel.graph)
+                #     f.write(pgraph)
+
+            elif d_format == DeploymentFormat.PYTORCH:
+                torch.save(module.state_dict(), output)
+                with open(output + ".json", 'w') as outfile:
+                    json.dump(local_parameters, outfile)
+
+            else:
+                raise NotImplementedError(
+                    f"Not supported deployment format: {d_format}")
+        except Exception as e:  # nopep8
+            if logger:
+                logger.error(f'ERROR: module export failed for {module} with '
+                             f'exception {e}')
+            else:
+                print(f'ERROR: module export failed for {module} with '
+                      f'exception {e}')
+        finally:
+            def __old_call__(self, force_pt=False, *input, **kwargs):
+                pt_call = len(input) > 0 or force_pt
+                if pt_call:
+                    return nn.Module.__call__(self, *input, **kwargs)
+                else:
+                    return NeuralModule.__call__(self, **kwargs)
+
+            type(module).__call__ = __old_call__
+
+    @staticmethod
+    def deployment_export(module,
+                          output: str,
+                          d_format: DeploymentFormat,
+                          input_example=None,
+                          output_example=None,
+                          logger=None):
+        """Exports Neural Module instance for deployment.
+
+        Args:
+            module: neural module to export
+            output (str): where export results should be saved
+            d_format (DeploymentFormat): which deployment format to use
+            input_example: sometimes tracing will require input examples
+            output_example: Should match inference on input_example
+            amp_max_loss_scale (float): Max value for amp loss scaling.
+                Defaults to 2.0**24.
+        """
+        with torch.no_grad():
+            PtActions.__module_export(
+                module=module,
+                output=output,
+                d_format=d_format,
+                input_example=input_example,
+                output_example=output_example,
+                logger=logger)
+
+    def train(self,
+              tensors_to_optimize,
+              optimizer=None,
+              optimization_params=None,
+              callbacks: Optional[List[ActionCallback]] = None,
+              lr_policy=None,
+              batches_per_step=None,
+              stop_on_nan_loss=False,
+              synced_batchnorm=False,
+              synced_batchnorm_groupsize=0,
+              gradient_predivide=False,
+              amp_max_loss_scale=2.**24):
         if not optimization_params:
             optimization_params = {}
-        num_epochs = optimization_params.get("num_epochs", 1)
+        num_epochs = optimization_params.get("num_epochs", None)
         max_steps = optimization_params.get("max_steps", None)
+        if num_epochs is None and max_steps is None:
+            raise ValueError("You must specify either max_steps or num_epochs")
         grad_norm_clip = optimization_params.get('grad_norm_clip', None)
 
         if batches_per_step is None:
             batches_per_step = 1
         # this is necessary because we average gradients over batch
-        bps_scale = torch.FloatTensor([1.0 / batches_per_step])
+        bps_scale = torch.FloatTensor([1.0 / batches_per_step]).squeeze()
 
         if tensors_to_optimize is None:
             # This is Evaluation Mode
@@ -1032,6 +1329,7 @@ class PtActions(Actions):
             self.optimizers = self.__initialize_amp(
                 optimizer=self.optimizers,
                 optim_level=self._optim_level,
+                amp_max_loss_scale=amp_max_loss_scale,
                 amp_min_loss_scale=optimization_params.get(
                     'amp_min_loss_scale', 1.0))
             # Use stored mapping to map amp_init opts to training loop
@@ -1062,7 +1360,10 @@ class PtActions(Actions):
                 )
             else:
                 train_dataloader = dataNM.data_iterator
-                train_sampler = train_dataloader.sampler
+                if hasattr(train_dataloader, 'sampler'):
+                    train_sampler = train_dataloader.sampler
+                else:
+                    train_sampler = None
 
             for train_iter in training_loop:
                 call_chain = train_iter[2]
@@ -1071,7 +1372,29 @@ class PtActions(Actions):
                     pmodule = self.module_reference_table[key][1]
                     if (not isinstance(pmodule, DDP) and
                             isinstance(pmodule, torch.nn.Module)):
-                        pmodule = DDP(pmodule)
+                        gpf = 1
+                        if gradient_predivide:
+                            gpf = dist.get_world_size()
+                        pmodule = DDP(pmodule, gradient_predivide_factor=gpf)
+
+                    # Convert batchnorm modules to synced if applicable
+                    if (synced_batchnorm and
+                            isinstance(pmodule, torch.nn.Module)):
+                        world_size = dist.get_world_size()
+                        if (synced_batchnorm_groupsize > 0 and
+                                world_size % synced_batchnorm_groupsize != 0):
+                            raise ValueError(
+                                f"Synchronized batch norm group size"
+                                f" ({synced_batchnorm_groupsize}) must be 0"
+                                f" or divide total number of GPUs"
+                                f" ({world_size})."
+                            )
+                        process_group = create_syncbn_process_group(
+                            synced_batchnorm_groupsize)
+                        pmodule = convert_syncbn(
+                            pmodule,
+                            process_group=process_group)
+
                     self.module_reference_table[key] = (
                         self.module_reference_table[key][0], pmodule
                     )
@@ -1098,8 +1421,7 @@ class PtActions(Actions):
 
         # MAIN TRAINING LOOP
         # iteration over epochs
-        for epoch_ind in range(self.epoch_num, num_epochs):
-            self.epoch_num = epoch_ind
+        while num_epochs is None or self.epoch_num < num_epochs:
             if train_sampler is not None:
                 train_sampler.set_epoch(self.epoch_num)
             if max_steps is not None and self.step >= max_steps:
@@ -1171,14 +1493,15 @@ class PtActions(Actions):
                             registered_tensors[tensor.unique_name]).any():
                         if stop_on_nan_loss:
                             raise ValueError('Loss is NaN exiting')
-                        self.logger.info('WARNING: Loss is NaN')
+                        self.logger.warning('WARNING: Loss is NaN')
                         curr_optimizer.zero_grad()
                         nan = True
                         break
                     final_loss += registered_tensors[tensor.unique_name]
                 if nan:
                     continue
-                if self._optim_level in AmpOptimizations:
+                if self._optim_level in AmpOptimizations \
+                        and self._optim_level != Optimization.mxprO0:
                     with amp.scale_loss(
                             final_loss,
                             curr_optimizer,
@@ -1187,15 +1510,20 @@ class PtActions(Actions):
                         if torch.isnan(scaled_loss).any():
                             if stop_on_nan_loss:
                                 raise ValueError('Loss is NaN exiting')
-                            self.logger.info('WARNING: Loss is NaN')
+                            self.logger.warning('WARNING: Loss is NaN')
                             curr_optimizer.zero_grad()
                             continue
                         scaled_loss.backward(
                             bps_scale.to(scaled_loss.get_device()))
+                # no AMP optimizations needed
                 else:
-                    final_loss.backward(
-                        bps_scale.to(
-                            final_loss.get_device()))
+                    # multi-GPU, float32
+                    if self._local_rank is not None:
+                        final_loss.backward(
+                            bps_scale.to(final_loss.get_device()))
+                    # single device (CPU or GPU)
+                    else:
+                        final_loss.backward()
 
                 batch_counter += 1
 
@@ -1203,7 +1531,7 @@ class PtActions(Actions):
                     # Ended step. Do optimizer update
                     if grad_norm_clip is not None:
                         torch.nn.utils.clip_grad_norm_(
-                            amp.master_params(curr_optimizer), grad_norm_clip)
+                            master_params(curr_optimizer), grad_norm_clip)
                     curr_optimizer.step()
                     batch_counter = 0
                     # Register iteration end with callbacks
@@ -1214,25 +1542,47 @@ class PtActions(Actions):
                     self._perform_on_iteration_end(callbacks=callbacks)
                     self.step += 1
             # End of epoch for loop
-
             # Register epochs end with callbacks
             self._perform_on_epoch_end(callbacks=callbacks)
+            self.epoch_num += 1
         self._perform_on_action_end(callbacks=callbacks)
 
-    def infer(self, tensors, checkpoint_dir=None, ckpt_pattern='',
-              logger=None):
+    def infer(self,
+              tensors,
+              checkpoint_dir=None,
+              ckpt_pattern='',
+              logger=None,
+              verbose=True,
+              cache=False,
+              use_cache=False,
+              offload_to_cpu=True,
+              modules_to_restore=None):
+        """See NeuralModuleFactory.infer()
+        """
 
+        call_chain, _ = self.__get_top_sorted_modules_and_dataloader(
+            hook=tensors
+        )
         if checkpoint_dir:
             # Find all modules that need to be restored
-            call_chain, _ = self.__get_top_sorted_modules_and_dataloader(
-                hook=tensors
-            )
-            modules_to_restore = []
+            if modules_to_restore is None:
+                modules_to_restore = []
+                modules_to_restore_name = []
+                for op in call_chain:
+                    if op[0].num_weights > 0:
+                        modules_to_restore.append(op[0])
+
+            if not isinstance(modules_to_restore, list):
+                modules_to_restore = [modules_to_restore]
             modules_to_restore_name = []
-            for op in call_chain:
-                if op[0].num_weights > 0:
-                    modules_to_restore.append(op[0])
-                    modules_to_restore_name.append(op[0].__class__.__name__)
+            for mod in modules_to_restore:
+                if not isinstance(mod, NeuralModule):
+                    raise ValueError("Found something that was not a Neural "
+                                     "Module inside modules_to_restore")
+                elif mod.num_weights == 0:
+                    raise ValueError("Found a Neural Module with 0 weights "
+                                     "inside modules_to_restore")
+                modules_to_restore_name.append(str(mod))
 
             module_checkpoints = get_checkpoint_from_dir(
                 modules_to_restore_name, checkpoint_dir, ckpt_pattern
@@ -1243,22 +1593,29 @@ class PtActions(Actions):
                     logger.info(f"Restoring {mod} from {checkpoint}")
                 mod.restore_from(checkpoint, self._local_rank)
 
-            # Init Amp
-            if self._optim_level in AmpOptimizations:
-                pt_modules = []
-                for i in range(len(call_chain)):
-                    if isinstance(call_chain[i][0], nn.Module):
-                        pt_modules.append(call_chain[i][0])
-                    elif isinstance(call_chain[i][0],
-                                    TrainableNeuralModuleWrapper):
-                        pt_modules.append(call_chain[i][0]._pt_module)
+        # Init Amp
+        if (self._optim_level in AmpOptimizations
+                and self._optim_level != Optimization.mxprO0
+                and not self.amp_initialized):
+            pt_modules = []
+            for i in range(len(call_chain)):
+                if isinstance(call_chain[i][0], nn.Module):
+                    pt_modules.append(call_chain[i][0])
+                elif isinstance(call_chain[i][0],
+                                TrainableNeuralModuleWrapper):
+                    pt_modules.append(call_chain[i][0]._pt_module)
 
-                amp.initialize(
-                    min_loss_scale=1.0,
-                    models=pt_modules,
-                    optimizers=None,
-                    opt_level=AmpOptimizations[self._optim_level],
-                )
+            amp.initialize(
+                min_loss_scale=1.0,
+                models=pt_modules,
+                optimizers=None,
+                opt_level=AmpOptimizations[self._optim_level],
+            )
+            self.amp_initialized = True
 
         # Run infer
-        return self._infer(tensors_to_return=tensors, step=0, verbose=True)
+        return self._infer(tensors_to_return=tensors,
+                           verbose=verbose,
+                           cache=cache,
+                           use_cache=use_cache,
+                           offload_to_cpu=offload_to_cpu)

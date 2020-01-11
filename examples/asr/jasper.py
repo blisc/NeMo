@@ -2,12 +2,13 @@
 import argparse
 import copy
 from functools import partial
+import math
 import os
 
 from ruamel.yaml import YAML
 
 import nemo
-from nemo.utils.lr_policies import SquareAnnealing
+from nemo.utils.lr_policies import CosineAnnealing
 import nemo.utils.argparse as nm_argparse
 import nemo_asr
 from nemo_asr.helpers import monitor_asr_train_progress, \
@@ -30,9 +31,10 @@ def parse_args():
     )
 
     # Overwrite default args
-    parser.add_argument("--num_epochs", type=int, default=None, required=True,
-                        help="number of epochs to train. You should specify"
-                             "either num_epochs or max_steps")
+    parser.add_argument("--max_steps", type=int, default=None, required=False,
+                        help="max number of steps to train")
+    parser.add_argument("--num_epochs", type=int, default=None, required=False,
+                        help="number of epochs to train")
     parser.add_argument("--model_config", type=str, required=True,
                         help="model configuration file: model.yaml")
 
@@ -41,23 +43,34 @@ def parse_args():
     parser.add_argument("--beta1", default=0.95, type=float)
     parser.add_argument("--beta2", default=0.25, type=float)
     parser.add_argument("--warmup_steps", default=0, type=int)
+    parser.add_argument("--load_dir", default=None, type=str,
+                        help="directory with pre-trained checkpoint")
 
     args = parser.parse_args()
-    if args.max_steps is not None:
-        raise ValueError("Jasper uses num_epochs instead of max_steps")
 
+    if args.max_steps is not None and args.num_epochs is not None:
+        raise ValueError("Either max_steps or num_epochs should be provided.")
     return args
 
 
-def construct_name(name, lr, batch_size, num_epochs, wd, optimizer,
+def construct_name(name, lr, batch_size, max_steps, num_epochs, wd, optimizer,
                    iter_per_step):
-    return ("{0}-lr_{1}-bs_{2}-e_{3}-wd_{4}-opt_{5}-ips_{6}".format(
-        name, lr,
-        batch_size,
-        num_epochs,
-        wd,
-        optimizer,
-        iter_per_step))
+    if max_steps is not None:
+        return ("{0}-lr_{1}-bs_{2}-s_{3}-wd_{4}-opt_{5}-ips_{6}".format(
+            name, lr,
+            batch_size,
+            max_steps,
+            wd,
+            optimizer,
+            iter_per_step))
+    else:
+        return ("{0}-lr_{1}-bs_{2}-e_{3}-wd_{4}-opt_{5}-ips_{6}".format(
+            name, lr,
+            batch_size,
+            num_epochs,
+            wd,
+            optimizer,
+            iter_per_step))
 
 
 def create_all_dags(args, neural_factory):
@@ -90,12 +103,13 @@ def create_all_dags(args, neural_factory):
     )
 
     N = len(data_layer)
-    steps_per_epoch = int(N / (args.batch_size * args.num_gpus))
+    steps_per_epoch = math.ceil(
+        N / (args.batch_size * args.iter_per_step * args.num_gpus))
     logger.info('Have {0} examples to train on.'.format(N))
 
-    data_preprocessor = nemo_asr.AudioPreprocessing(
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
         sample_rate=sample_rate,
-        **jasper_params["AudioPreprocessing"])
+        **jasper_params["AudioToMelSpectrogramPreprocessor"])
 
     multiply_batch_config = jasper_params.get('MultiplyBatch', None)
     if multiply_batch_config:
@@ -128,7 +142,7 @@ def create_all_dags(args, neural_factory):
         neural_factory.logger.info("There were no val datasets passed")
 
     jasper_encoder = nemo_asr.JasperEncoder(
-        feat_in=jasper_params["AudioPreprocessing"]["features"],
+        feat_in=jasper_params["AudioToMelSpectrogramPreprocessor"]["features"],
         **jasper_params["JasperEncoder"])
 
     jasper_decoder = nemo_asr.JasperDecoderForCTC(
@@ -147,7 +161,7 @@ def create_all_dags(args, neural_factory):
     logger.info(
         f"Number of parameters in decoder: {jasper_decoder.num_weights}")
     logger.info(
-        f"Total number of parameters in decoder: "
+        f"Total number of parameters in model: "
         f"{jasper_decoder.num_weights + jasper_encoder.num_weights}")
     logger.info('================================')
 
@@ -193,6 +207,7 @@ def create_all_dags(args, neural_factory):
 
     chpt_callback = nemo.core.CheckpointCallback(
         folder=neural_factory.checkpoint_dir,
+        load_from_folder=args.load_dir,
         step_freq=args.checkpoint_save_freq)
 
     callbacks = [train_callback, chpt_callback]
@@ -241,6 +256,7 @@ def main():
         args.exp_name,
         args.lr,
         args.batch_size,
+        args.max_steps,
         args.num_epochs,
         args.weight_decay,
         args.optimizer,
@@ -275,11 +291,14 @@ def main():
     neural_factory.train(
         tensors_to_optimize=[train_loss],
         callbacks=callbacks,
-        lr_policy=SquareAnnealing(args.num_epochs * steps_per_epoch,
-                                  warmup_steps=args.warmup_steps),
+        lr_policy=CosineAnnealing(
+            args.max_steps if args.max_steps is not None else
+            args.num_epochs * steps_per_epoch,
+            warmup_steps=args.warmup_steps),
         optimizer=args.optimizer,
         optimization_params={
             "num_epochs": args.num_epochs,
+            "max_steps": args.max_steps,
             "lr": args.lr,
             "betas": (
                 args.beta1,

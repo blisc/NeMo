@@ -1,14 +1,31 @@
 # Copyright (c) 2019 NVIDIA Corporation
-import random
+__all__ = ['Backend',
+           'ModelMode',
+           'Optimization',
+           'DeviceType',
+           'Actions',
+           'NeuralModuleFactory',
+           'DeploymentFormat']
+
 from abc import ABC, abstractmethod
+import random
 from typing import List, Optional
 import logging
 
+from enum import Enum
 import numpy as np
 
 from .callbacks import ActionCallback, EvaluatorCallback
 from .neural_types import *
-from ..utils import ExpManager
+from ..utils import ExpManager, get_logger
+
+
+class DeploymentFormat(Enum):
+    """Which format to use when exporting a Neural Module for deployment"""
+    AUTO = 0
+    PYTORCH = 1
+    TORCHSCRIPT = 2
+    ONNX = 3
 
 
 class Backend(Enum):
@@ -46,14 +63,20 @@ class DeviceType(Enum):
 class Actions(ABC):
     """Basic actions allowed on graphs of Neural Modules"""
 
-    def __init__(self, local_rank,
-                 optimization_level=Optimization.mxprO0,
-                 logger=logging.Logger):
+    def __init__(
+            self,
+            local_rank,
+            global_rank,
+            optimization_level=Optimization.mxprO0,
+            logger=None):
         self._local_rank = local_rank
+        self._global_rank = global_rank
         self._optim_level = optimization_level
         self.step = None
         self.epoch_num = None
         self.logger = logger
+        if logger is None:
+            self.logger = get_logger('')
 
     @property
     def local_rank(self):
@@ -63,6 +86,15 @@ class Actions(ABC):
             (int) rank or worker or None if not in distributed model
         """
         return self._local_rank
+
+    @property
+    def global_rank(self):
+        """Global rank during distributed execution. None if single GPU/CPU
+
+        Returns:
+            (int) rank or worker or None if not in distributed model
+        """
+        return self._global_rank
 
     @abstractmethod
     def train(
@@ -158,42 +190,36 @@ class Actions(ABC):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_iteration_start()
 
     def _perform_on_iteration_end(self, callbacks):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_iteration_end()
 
     def _perform_on_action_start(self, callbacks):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_action_start()
 
     def _perform_on_action_end(self, callbacks):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_action_end()
 
     def _perform_on_epoch_start(self, callbacks):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_epoch_start()
 
     def _perform_on_epoch_end(self, callbacks):
         if callbacks is not None and isinstance(callbacks, List) and len(
                 callbacks) > 0:
             for callback in callbacks:
-                callback._local_rank = self.local_rank
                 callback.on_epoch_end()
 
     def _init_callbacks(self, callbacks):
@@ -267,6 +293,7 @@ class NeuralModuleFactory(object):
             add_time_to_log_dir=False
     ):
         self._local_rank = local_rank
+        self._global_rank = None
 
         if isinstance(optimization_level, str):
             optimization_level = _str_to_opt_level(optimization_level)
@@ -284,9 +311,20 @@ class NeuralModuleFactory(object):
 
         self._backend = backend
         self._world_size = 1
+        broadcast_func = None
         if backend == Backend.PyTorch:
             # TODO: Move all framework specific code from this file
             import torch
+            if self._placement != DeviceType.CPU:
+                if not torch.cuda.is_available():
+                    raise ValueError("You requested to use GPUs but CUDA is "
+                                     "not installed. You can try running using"
+                                     " CPU-only. To do this, instantiate your"
+                                     " factory with placement=DeviceType.CPU"
+                                     "\n"
+                                     "Note that this is slow and is not "
+                                     "well supported.")
+
             torch.backends.cudnn.benchmark = cudnn_benchmark
             if random_seed is not None and cudnn_benchmark:
                 raise ValueError("cudnn_benchmark can not be set to True"
@@ -299,11 +337,59 @@ class NeuralModuleFactory(object):
                 random.seed(random_seed)
 
             if self._local_rank is not None:
-                torch.cuda.set_device(self._local_rank)
                 torch.distributed.init_process_group(
                     backend="nccl", init_method="env://"
                 )
+
+                cuda_set = True
+                # Try to set cuda device. This should fail if self._local_rank
+                # is greater than the number of available GPUs
+                try:
+                    torch.cuda.set_device(self._local_rank)
+                except RuntimeError:
+                    # Note in this case, all tensors are now sent to GPU 0
+                    # who could crash because of OOM. Thus init_process_group()
+                    # must be done before any cuda tensors are allocated
+                    cuda_set = False
+                cuda_set_t = torch.cuda.IntTensor([cuda_set])
+
+                # Do an all_reduce to ensure all workers obtained a GPU
+                # For the strangest reason, BAND doesn't work so I am resorting
+                # to MIN.
+                torch.distributed.all_reduce(
+                    cuda_set_t, op=torch.distributed.ReduceOp.MIN)
+                if cuda_set_t.item() == 0:
+                    raise RuntimeError(
+                        "There was an error initializing distributed training."
+                        " Perhaps you specified more gpus than you have "
+                        "available")
+
+                del cuda_set_t
+                torch.cuda.empty_cache()
+                # Remove test tensor from memory
+
                 self._world_size = torch.distributed.get_world_size()
+                self._global_rank = torch.distributed.get_rank()
+
+                def torch_broadcast_wrapper(str_len=None, string=None, src=0):
+                    """Wrapper function to broadcast string values across all
+                    workers
+                    """
+                    # Create byte cuda torch tensor
+                    if string is not None:
+                        string_tensor = torch.tensor(
+                            list(string.encode()), dtype=torch.uint8).cuda()
+                    else:
+                        string_tensor = torch.tensor(
+                            [0] * str_len, dtype=torch.uint8).cuda()
+                    # Run broadcast
+                    torch.distributed.broadcast(string_tensor, src)
+                    # turn byte tensor back to string
+                    return_string = string_tensor.cpu().numpy()
+                    return_string = b''.join(return_string).decode()
+                    return return_string
+
+                broadcast_func = torch_broadcast_wrapper
         else:
             raise NotImplementedError(
                 "Only Pytorch backend is currently supported.")
@@ -319,9 +405,11 @@ class NeuralModuleFactory(object):
             use_tb=create_tb_writer,
             tb_dir=tensorboard_dir,
             local_rank=local_rank,
+            global_rank=self._global_rank,
             files_to_copy=files_to_copy,
             add_time=add_time_to_log_dir,
-            exist_ok=True)
+            exist_ok=True,
+            broadcast_func=broadcast_func)
         self._tb_writer = self._exp_manager.tb_writer
 
         # Create trainer
@@ -337,6 +425,8 @@ class NeuralModuleFactory(object):
 
     @classmethod
     def reset_default_factory(cls):
+        if cls._DEFAULT:
+            cls._DEFAULT._exp_manager.reset_loggers()
         cls._DEFAULT = None
 
     @staticmethod
@@ -508,6 +598,10 @@ class NeuralModuleFactory(object):
               lr_policy=None,
               batches_per_step=None,
               stop_on_nan_loss=False,
+              synced_batchnorm=False,
+              synced_batchnorm_groupsize=0,
+              gradient_predivide=False,
+              amp_max_loss_scale=2.**24,
               reset=False):
         if reset:
             self.reset_trainer()
@@ -518,7 +612,11 @@ class NeuralModuleFactory(object):
             callbacks=callbacks,
             lr_policy=lr_policy,
             batches_per_step=batches_per_step,
-            stop_on_nan_loss=stop_on_nan_loss)
+            stop_on_nan_loss=stop_on_nan_loss,
+            synced_batchnorm=synced_batchnorm,
+            synced_batchnorm_groupsize=synced_batchnorm_groupsize,
+            gradient_predivide=gradient_predivide,
+            amp_max_loss_scale=amp_max_loss_scale)
 
     def eval(self,
              callbacks: List[EvaluatorCallback]):
@@ -532,24 +630,114 @@ class NeuralModuleFactory(object):
         self.train(
             tensors_to_optimize=None,
             optimizer='sgd',
-            callbacks=callbacks
+            callbacks=callbacks,
+            optimization_params={'num_epochs': 1}
         )
 
-    def infer(self, tensors: List[NmTensor], checkpoint_dir=None,
-              ckpt_pattern=''):
+    def deployment_export(self,
+                          module,
+                          output: str,
+                          d_format: DeploymentFormat,
+                          input_example=None,
+                          output_example=None):
+        """Exports Neural Module instance for deployment.
+
+        Args:
+            module: neural module to export
+            output (str): where export results should be saved
+            d_format (DeploymentFormat): which deployment format to use
+            input_example: sometimes tracing will require input examples
+            output_example: Should match inference on input_example
+        """
+        # Custom hacks: These will be put into a proper place soon
+        # We are checking type like this to avoid taking dependency on nemo_asr
+        if type(module).__name__ == "JasperEncoder":
+            # self.logger.warning(f"Module is JasperEncoder. We are removing"
+            #                    f"input and output length ports since they "
+            #                    f"are not needed for deployment")
+            # del module._input_ports['length']
+            # del module._output_ports['encoded_lengths']
+
+            # disable masked convolutions
+            m_count = 0
+            for m in module.modules():
+                if type(m).__name__ == "MaskedConv1d":
+                    m.use_mask = False
+                    m_count += 1
+            self.logger.warning(f"Turned off {m_count} masked convolutions")
+
+        return self._trainer.deployment_export(
+            module=module,
+            output=output,
+            d_format=d_format,
+            input_example=input_example,
+            output_example=output_example,
+            logger=self.logger,
+        )
+
+    def infer(self,
+              tensors: List[NmTensor],
+              checkpoint_dir=None,
+              ckpt_pattern='',
+              verbose=True,
+              cache=False,
+              use_cache=False,
+              offload_to_cpu=True,
+              modules_to_restore=None):
+        """Runs inference to obtain values for tensors
+
+        Args:
+            tensors (list[NmTensor]): List of NeMo tensors that we want to get
+                values of.
+            checkpoint_dir (str): Path to checkpoint directory. Default is None
+                which does not load checkpoints.
+            ckpt_pattern (str): Pattern used to check for checkpoints inside
+                checkpoint_dir. Default is '' which matches any checkpoints
+                inside checkpoint_dir.
+            verbose (bool): Controls printing. Defaults to True.
+            cache (bool): If True, cache all `tensors` and intermediate tensors
+                so that future calls that have use_cache set will avoid
+                computation. Defaults to False.
+            use_cache (bool): Values from `tensors` will be always re-computed.
+                It will re-use intermediate tensors from the DAG leading to
+                `tensors`. If you want something to be re-computed, put it into
+                `tensors` list. Defaults to False.
+            offload_to_cpu (bool): If True, all evaluated tensors are moved to
+                cpu memory after each inference batch. Defaults to True.
+            modules_to_restore (list): Defaults to None, in which case all
+                NMs inside callchain with weights will be restored. If
+                specified only the modules inside this list will be restored.
+
+        Returns:
+            List of evaluated tensors. Each element in the list is also a list
+            where each element is now a batch of tensor values.
+        """
         return self._trainer.infer(
-            tensors=tensors, checkpoint_dir=checkpoint_dir,
-            ckpt_pattern=ckpt_pattern, logger=self.logger)
+            tensors=tensors,
+            checkpoint_dir=checkpoint_dir,
+            ckpt_pattern=ckpt_pattern,
+            verbose=verbose,
+            logger=self.logger,
+            cache=cache,
+            use_cache=use_cache,
+            offload_to_cpu=offload_to_cpu,
+            modules_to_restore=modules_to_restore)
+
+    def clear_cache(self):
+        """Helper function to clean inference cache."""
+        self._trainer.clear_cache()
 
     def _get_trainer(self, tb_writer=None):
         if self._backend == Backend.PyTorch:
             constructor = NeuralModuleFactory.__name_import(
                 "nemo.backends.pytorch.PtActions"
             )
-            instance = constructor(local_rank=self._local_rank,
-                                   tb_writer=tb_writer,
-                                   optimization_level=self._optim_level,
-                                   logger=self.logger)
+            instance = constructor(
+                local_rank=self._local_rank,
+                global_rank=self._global_rank,
+                tb_writer=tb_writer,
+                optimization_level=self._optim_level,
+                logger=self.logger)
             return instance
         else:
             raise ValueError("Only PyTorch backend is currently supported.")
@@ -571,6 +759,34 @@ class NeuralModuleFactory(object):
     def reset_trainer(self):
         del self._trainer
         self._trainer = self._get_trainer(tb_writer=self._tb_writer)
+
+    def sync_all_processes(self, status=True):
+        """ Helper function for testing that allows proccess 0 to inform all
+        other processes of failures. Does nothing if not using distributed
+        training. Usage example can be seen in examples/asr/jasper_an4.py
+
+        Args:
+            status (bool): Defaults to True. If any proccess passes False, it
+                will trigger a graceful exit on all other processes. It is
+                assumed that the process that passed False will print an error
+                message on its own and exit
+        """
+        if self._world_size == 1:
+            self.logger.info("sync_all_processes does nothing if there is "
+                             "one process")
+            return
+        if self._backend == Backend.PyTorch:
+            import torch
+            status_tensor = torch.cuda.IntTensor([status])
+            torch.distributed.all_reduce(
+                status_tensor, op=torch.distributed.ReduceOp.MIN)
+            if status_tensor.item() == 0:
+                self.logger.error("At least one process had a failure")
+                if status:
+                    raise ValueError(
+                        f"Process with global rank {self._global_rank} entered"
+                        " sync_all_processes with a passing status, but "
+                        "another process indicated a failure")
 
     @property
     def world_size(self):
@@ -599,3 +815,7 @@ class NeuralModuleFactory(object):
     @property
     def work_dir(self):
         return self._exp_manager.work_dir
+
+    @property
+    def global_rank(self):
+        return self._global_rank

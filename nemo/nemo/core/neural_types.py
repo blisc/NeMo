@@ -6,6 +6,30 @@ Neural Modules' input and output ports are also of Neural Type.
 An exception will be raised when a NmTensor and input port where it goes are
 of incompatible types.
 """
+__all__ = ['BaseTag',
+           'BatchTag',
+           'TimeTag',
+           'ProcessedTimeTag',
+           'ChannelTag',
+           'EmbeddedTextTag',
+           'SpectrogramSignalTag',
+           'MelSpectrogramSignalTag',
+           'MFCCSignalTag',
+           'EncodedRepresentationTag',
+           'ClassTag',
+           'WidthTag',
+           'HeightTag',
+           'CategoricalTag',
+           'RegressionTag',
+           'NeuralTypeComparisonResult',
+           'AxisType',
+           'NeuralType',
+           'NmTensor',
+           'NeuralTypeError',
+           'NeuralPortNameMismatchError',
+           'NeuralPortNmTensorMismatchError',
+           'CanNotInferResultNeuralType']
+
 from enum import Enum
 import uuid
 
@@ -46,11 +70,33 @@ class ChannelTag(BaseTag):
         return "channel"
 
 
+class EmbeddedTextTag(ChannelTag):
+    """Tag for any dimensions that contains text that goes through an
+    enbedding layer."""
+
+    def __str__(self):
+        return "embedded_text"
+
+
 class SpectrogramSignalTag(ChannelTag):
     """Tag for spectrogram signal dimension."""
 
     def __str__(self):
         return "spectrogram_signal"
+
+
+class MelSpectrogramSignalTag(SpectrogramSignalTag):
+    """Tag for mel spectrogram signal dimension."""
+
+    def __str__(self):
+        return "mel_spectrogram_signal"
+
+
+class MFCCSignalTag(SpectrogramSignalTag):
+    """Tag for MFCC signal dimension."""
+
+    def __str__(self):
+        return "mfcc_signal"
 
 
 class EncodedRepresentationTag(ChannelTag):
@@ -64,7 +110,7 @@ class EncodedRepresentationTag(ChannelTag):
 class ClassTag(BaseTag):
     """Tag for class dimension.
     For example, number of classes in classification problem,
-    vocabuary size or num of charachters for ASR."""
+    vocabuary size or num of characters for ASR."""
 
     def __str__(self):
         return "channel"
@@ -82,6 +128,22 @@ class HeightTag(BaseTag):
 
     def __str__(self):
         return "height"
+
+
+class CategoricalTag(BatchTag):
+    """Tag for labels for classification tasks."""
+
+    def __str__(self):
+        return "category"
+
+
+class RegressionTag(BatchTag):
+    """Tag for labels for regression tasks.
+    For example, this should be used in STS-B task, where labels
+    represent semantic semilarity score (float)"""
+
+    def __str__(self):
+        return "regression"
 
 
 class NeuralTypeComparisonResult(Enum):
@@ -111,9 +173,9 @@ class AxisType(object):
 
     def __eq__(self, other):
         return (
-                self.semantics == other.semantics
-                and self.dim == other.dim
-                and self.descriptor == other.descriptor
+            self.semantics == other.semantics
+            and self.dim == other.dim
+            and self.descriptor == other.descriptor
         )
 
     def __str__(self):
@@ -222,7 +284,7 @@ class NeuralType(object):
             if self._optional
             else ""
                  + "\n".join(["{0}->{1}".format(axis, tag) for axis, tag in
-                             self._axis2type.items()])
+                              self._axis2type.items()])
         )
 
     def compare(self, n_type2) -> NeuralTypeComparisonResult:

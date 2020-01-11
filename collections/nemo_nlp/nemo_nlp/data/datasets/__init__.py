@@ -1,8 +1,12 @@
-from .bert_pretraining import BertPretrainingDataset
-from .joint_intent_slot import BertJointIntentSlotDataset, \
-    BertJointIntentSlotInferDataset
+from .bert_pretraining import (BertPretrainingDataset,
+                               BertPretrainingPreprocessedDataset)
+from .glue import GLUEDataset
+from .joint_intent_slot import (BertJointIntentSlotDataset,
+                                BertJointIntentSlotInferDataset)
 from .language_modeling import LanguageModelingDataset
-from .ner import BertNERDataset
+from .token_classification import (BertTokenClassificationDataset,
+                                   BertTokenClassificationInferDataset)
+from .punctuation_capitalization import BertPunctuationCapitalizationDataset,\
+  BertPunctuationCapitalizationInferDataset
 from .sentence_classification import BertSentenceClassificationDataset
-from .token_classification import BertTokenClassificationDataset
 from .translation import TranslationDataset

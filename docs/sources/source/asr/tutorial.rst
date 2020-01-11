@@ -1,20 +1,23 @@
 Tutorial
 ========
 
-Make sure you have installed ``nemo`` and ``nemo_asr`` collection.
-See :ref:`installation` section.
+Make sure you have installed ``nemo`` and the ``nemo_asr`` collection.
+See the :ref:`installation` section.
 
 .. note::
-    You only need `nemo` and `nemo_asr` collection for this tutorial.
+  You only need to have ``nemo`` and the ``nemo_asr`` collection for this tutorial.
+
+A more introductory, Jupyter notebook ASR tutorial can be found `on GitHub <https://github.com/NVIDIA/NeMo/tree/master/examples/asr/notebooks>`_.
+
 
 Introduction
 -------------
 
-This Automatic Speech Recognition (ASR) tutorial is focused on Jasper :cite:`li2019jasper` model. Jasper is CTC-based :cite:`graves2006` end-to-end model. The model is called "end-to-end" because it transcripts speech samples without any additional alignment information. CTC allows finding an alignment between audio and text. 
+This Automatic Speech Recognition (ASR) tutorial is focused on Jasper :cite:`asr-tut-li2019jasper` model. Jasper is CTC-based :cite:`asr-tut-graves2006` end-to-end model. The model is called "end-to-end" because it transcripts speech samples without any additional alignment information. CTC allows finding an alignment between audio and text. 
 CTC-ASR training pipeline consists of the following blocks:
 
-1. audio preprocessing (feature extraction): signal normalization, windowing, (log) spectrogram (or mel scale spectrogram, or MFCC)
-2. neural acoustic model (which predicts a probability distribution P_t(c) over vocabulary characters c per each time step t given input features per each timestep)
+1. Audio preprocessing (feature extraction): signal normalization, windowing, (log) spectrogram (or mel scale spectrogram, or MFCC)
+2. Neural acoustic model (which predicts a probability distribution P_t(c) over vocabulary characters c per each time step t given input features per each timestep)
 3. CTC loss function
 
     .. image:: ctc_asr.png
@@ -25,7 +28,7 @@ CTC-ASR training pipeline consists of the following blocks:
 
 Get data
 --------
-We will be using an open-source LibriSpeech :cite:`panayotov2015librispeech` dataset. These scripts will download and convert LibriSpeech into format expected by `nemo_asr`:
+We will be using an open-source LibriSpeech :cite:`asr-tut-panayotov2015librispeech` dataset. These scripts will download and convert LibriSpeech into format expected by `nemo_asr`:
 
 .. code-block:: bash
 
@@ -47,7 +50,7 @@ After download and conversion, your `data` folder should contain 2 json files:
 * dev_clean.json
 * train_clean_100.json
 
-In the tutorial we will use `train_clean_100.json` for training and `dev_clean.json`for evaluation.
+In the tutorial we will use `train_clean_100.json` for training and `dev_clean.json` for evaluation.
 Each line in json file describes a training sample - `audio_filepath` contains path to the wav file, `duration` it's duration in seconds, and `text` is it's transcript:
 
 .. code-block:: json
@@ -60,7 +63,7 @@ Each line in json file describes a training sample - `audio_filepath` contains p
 Training 
 ---------
 
-We will train a small model from the Jasper family :cite:`li2019jasper`.
+We will train a small model from the Jasper family :cite:`asr-tut-li2019jasper`.
 Jasper ("Just Another SPeech Recognizer") is a deep time delay neural network (TDNN) comprising of blocks of 1D-convolutional layers. 
 Jasper family of models are denoted as Jasper_[BxR] where B is the number of blocks, and R - the number of convolutional sub-blocks within a block. Each sub-block contains a 1-D convolution, batch normalization, ReLU, and dropout:
 
@@ -117,7 +120,7 @@ The script below does both training (on `train_clean_100.json`) and evaluation (
         manifest_filepath=eval_datasets,
         labels=labels, batch_size=32, shuffle=False)
 
-    data_preprocessor = nemo_asr.AudioPreprocessing()
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor()
     spec_augment = nemo_asr.SpectrogramAugmentation(rect_masks=5)
 
     jasper_encoder = nemo_asr.JasperEncoder(
@@ -218,7 +221,7 @@ The script below does both training (on `train_clean_100.json`) and evaluation (
         )
 
 .. note::
-    This script trains should finish 50 epochs in about 7 hours on GTX 1080.
+    This script trains should finish 50 epochs in about 7 hours on GTX 1080. You should get an evaluation WER of about 30%.
 
 .. tip::
     To improve your word error rates:
@@ -271,7 +274,7 @@ Assuming, you are working with Volta-based DGX, you can run training like this:
 
 .. code-block:: bash
 
-    python -m torch.distributed.launch --nproc_per_node=<num_gpus> <nemo_git_repo_root>/examples/asr/jasper.py --batch_size=64 --num_epochs=100 --lr=0.015 --warmup_steps=8000 --weight_decay=0.001 --train_dataset=/manifests/librivox-train-all.json --eval_datasets /manifests/librivox-dev-clean.json /manifests/librivox-dev-other.json --model_config=<nemo_git_repo_root>/nemo/examples/asr/configs/jasper15x5SEP.yaml --exp_name=MyLARGE-ASR-EXPERIMENT
+    python -m torch.distributed.launch --nproc_per_node=<num_gpus> <nemo_git_repo_root>/examples/asr/jasper.py --batch_size=64 --num_epochs=100 --lr=0.015 --warmup_steps=8000 --weight_decay=0.001 --train_dataset=/manifests/librivox-train-all.json --eval_datasets /manifests/librivox-dev-clean.json /manifests/librivox-dev-other.json --model_config=<nemo_git_repo_root>/nemo/examples/asr/configs/quartznet15x5.yaml --exp_name=MyLARGE-ASR-EXPERIMENT
 
 The command above should trigger 8-GPU training with mixed precision. In the command above various manifests (.json) files are various datasets. Substitute them with the ones containing your data.
 
@@ -283,30 +286,32 @@ Fine-tuning
 -----------
 Training time can be dramatically reduced if starting from a good pre-trained model:
 
-    (1) Obtain pre-trained model (jasper_encoder, jasper_decoder and configuration files) `from here <https://drive.google.com/drive/folders/1b-TQYY7o8_CQgZsVEe-8_2kHWU0lYJ-z?usp=sharing>`_.
+    (1) Obtain pre-trained model (jasper_encoder, jasper_decoder and configuration files) `from here <https://ngc.nvidia.com/catalog/models/nvidia:quartznet15x5>`_.
     (2) load pre-trained weights right after you've instantiated your jasper_encoder and jasper_decoder, like this:
 
 .. code-block:: python
 
     jasper_encoder.restore_from("<path_to_checkpoints>/15x5SEP/JasperEncoder-STEP-247400.pt")
     jasper_decoder.restore_from("<path_to_checkpoints>/15x5SEP/JasperDecoderForCTC-STEP-247400.pt")
+    # in case of distributed training add args.local_rank
+    jasper_decoder.restore_from("<path_to_checkpoints>/15x5SEP/JasperDecoderForCTC-STEP-247400.pt", args.local_rank)
 
 .. tip::
     When fine-tuning, use smaller learning rate.
 
 
-Inference
----------
+Evaluation
+----------
 
-First download pre-trained model (jasper_encoder, jasper_decoder and configuration files) `from here <https://drive.google.com/drive/folders/1b-TQYY7o8_CQgZsVEe-8_2kHWU0lYJ-z?usp=sharing>`_ into `<path_to_checkpoints>`. We will use this pre-trained model to measure WER on LibriSpeech dev-clean dataset.
+First download pre-trained model (jasper_encoder, jasper_decoder and configuration files) `from here <https://ngc.nvidia.com/catalog/models/nvidia:quartznet15x5>`_ into `<path_to_checkpoints>`. We will use this pre-trained model to measure WER on LibriSpeech dev-clean dataset.
 
 .. code-block:: bash
 
-    python <nemo_git_repo_root>/examples/asr/jasper_infer.py --model_config=<nemo_git_repo_root>/examples/asr/configs/jasper15x5SEP.yaml --eval_datasets "<path_to_data>/dev_clean.json" --load_dir=<directory_containing_checkpoints>
+    python <nemo_git_repo_root>/examples/asr/jasper_eval.py --model_config=<nemo_git_repo_root>/examples/asr/configs/quartznet15x5.yaml --eval_datasets "<path_to_data>/dev_clean.json" --load_dir=<directory_containing_checkpoints>
 
 
-Inference with Language Model
------------------------------
+Evaluation with Language Model
+------------------------------
 
 Using KenLM
 ~~~~~~~~~~~
@@ -319,17 +324,39 @@ Perform the following steps:
         * ``sudo apt-get update && sudo apt-get install swig``
         * ``sudo apt-get install pkg-config libflac-dev libogg-dev libvorbis-dev libboost-dev``
         * ``sudo apt-get install libsndfile1-dev python-setuptools libboost-all-dev python-dev``
+        * ``sudo apt-get install cmake``
         * ``./install_decoders.sh``
     * Build 6-gram KenLM model on LibriSpeech ``./build_6-gram_OpenSLR_lm.sh``
-    * Run jasper_infer.py with the --lm_path flag
+    * Run jasper_eval.py with the --lm_path flag
 
     .. code-block:: bash
 
-        python <nemo_git_repo_root>/examples/asr/jasper_infer.py --model_config=<nemo_git_repo_root>/examples/asr/configs/jasper15x5SEP.yaml --eval_datasets "<path_to_data>/dev_clean.json" --load_dir=<directory_containing_checkpoints> --lm_path=<path_to_6gram.binary>
+        python <nemo_git_repo_root>/examples/asr/jasper_eval.py --model_config=<nemo_git_repo_root>/examples/asr/configs/quartznet15x5.yaml --eval_datasets "<path_to_data>/dev_clean.json" --load_dir=<directory_containing_checkpoints> --lm_path=<path_to_6gram.binary>
 
+Kaldi Compatibility
+-------------------
+
+The ``nemo_asr`` collection can also load datasets that are in a Kaldi-compatible format using the ``KaldiFeatureDataLayer``.
+In order to load your Kaldi-formatted data, you will need to have a directory that contains the following files:
+
+* ``feats.scp``, the file that maps from utterance IDs to the .ark files with the corresponding audio data.
+* ``text``, the file that contains a mapping from the utterance IDs to transcripts.
+* (Optional) ``utt2dur``, the file that maps the utterance IDs to the audio file durations. This is required if you want to filter your audio based on duration.
+
+Of course, you will also need the .ark files that contain the audio data in the location that ``feats.scp`` expects.
+
+To load your Kaldi-formatted data, you can simply use the ``KaldiFeatureDataLayer`` instead of the ``AudioToTextDataLayer``.
+The ``KaldiFeatureDataLayer`` takes in an argument ``kaldi_dir`` instead of a ``manifest_filepath``, and this argument should be set to the directory that contains the files mentioned above.
+See `the documentation <https://nvidia.github.io/NeMo/collections/nemo_asr.html#nemo_asr.data_layer.KaldiFeatureDataLayer>`_ for more detailed information about the arguments to this data layer.
+
+.. note::
+
+  If you are switching to a ``KaldiFeatureDataLayer``, be sure to set any ``feat_in`` parameters to correctly reflect the dimensionality of your Kaldi features, such as in the Jasper encoder. Additionally, your data is likely already preprocessed (e.g. into MFCC format), in which case you can leave out any audio preprocessors like the ``AudioToMelSpectrogramPreprocessor``.
 
 References
 ----------
 
-.. bibliography:: Jasperbib.bib
+.. bibliography:: asr_all.bib
     :style: plain
+    :labelprefix: ASR-TUT
+    :keyprefix: asr-tut-

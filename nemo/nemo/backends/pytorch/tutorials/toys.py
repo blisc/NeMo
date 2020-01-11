@@ -12,17 +12,29 @@ from ....core.neural_types import *
 
 class TaylorNet(TrainableNM):  # Note inheritance from TrainableNM
     """Module which learns Taylor's coefficients."""
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        Returns:
+          A (dict) of module's input ports names to NeuralTypes mapping
+        """
+        return {
             "x": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)})
         }
-        output_ports = {
+
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        Returns:
+          A (dict) of module's output ports names to NeuralTypes mapping
+        """
+        return {
             "y_pred": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)})
         }
-
-        return input_ports, output_ports
 
     def __init__(self, *, dim, **kwargs):
         # Part specific for Neural Modules API:
@@ -49,20 +61,42 @@ class TaylorNet(TrainableNM):  # Note inheritance from TrainableNM
 
 class TaylorNetO(TrainableNM):  # Note inheritance from TrainableNM
     """Module which learns Taylor's coefficients."""
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        x:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        o:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+        """
+        return {
             "x": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
             "o": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
         }
 
-        output_ports = {
-            "y_pred": NeuralType(
-                {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}, optional=True
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        y_pred:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+        """
+        return {
+            "y_pred": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(ChannelTag)},
+                optional=True
             )
         }
-
-        return input_ports, output_ports
 
     def __init__(self, *, dim, **kwargs):
         # Part specific for Neural Modules API:
@@ -93,21 +127,42 @@ class TaylorNetO(TrainableNM):  # Note inheritance from TrainableNM
 
 
 class RealFunctionDataLayer(DataLayerNM):
+    """
+    Data layer that yields (x, f(x)) data and label pairs.
+
+    Args:
+        n: Total number of samples
+        batch_size: Size of each batch per iteration
+        f: A lambda of the function to apply to each x value to get labels.
+           Must take a torch tensor as input, and output a torch tensor of
+           the same shape. Defaults to torch.sin().
+        x_lo: Lower bound of domain to sample
+        x_hi: Upper bound of domain to sample
+    """
+
     def __len__(self):
         return self._n
 
-    @staticmethod
-    def create_ports():
-        input_ports = {}
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports
 
-        output_ports = {
+        x:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        y:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+        """
+        return {
             "x": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
             "y": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
         }
 
-        return input_ports, output_ports
-
-    def __init__(self, *, n, batch_size, **kwargs):
+    def __init__(self, *, n, batch_size, f=t.sin, x_lo=-4, x_hi=4, **kwargs):
         DataLayerNM.__init__(self, **kwargs)
 
         self._n = n
@@ -116,10 +171,10 @@ class RealFunctionDataLayer(DataLayerNM):
             "cuda" if self.placement == DeviceType.GPU else "cpu")
 
         x_data = (
-            t.tensor(np.random.uniform(low=-4, high=4, size=self._n))
+            t.tensor(np.random.uniform(low=x_lo, high=x_hi, size=self._n))
             .unsqueeze(-1).to(self._device)
         )
-        y_data = t.sin(x_data)
+        y_data = f(x_data)
 
         self._data_iterator = t_utils.DataLoader(
             t_utils.TensorDataset(x_data.float(), y_data.float()),
@@ -136,16 +191,38 @@ class RealFunctionDataLayer(DataLayerNM):
 
 
 class MSELoss(LossNM):
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        predictions:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        target:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+        """
+        return {
             "predictions": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
             "target": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
         }
-        output_ports = {"loss": NeuralType(None)}
-        return input_ports, output_ports
+
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        loss:
+            NeuralType(None)
+        """
+        return {
+            "loss": NeuralType(None)
+        }
 
     def __init__(self, **kwargs):
         LossNM.__init__(self, **kwargs)
@@ -156,16 +233,38 @@ class MSELoss(LossNM):
 
 
 class L1Loss(LossNM):
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        predictions:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        target:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+        """
+        return {
             "predictions": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
             "target": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
         }
-        output_ports = {"loss": NeuralType(None)}
-        return input_ports, output_ports
+
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        loss:
+            NeuralType(None)
+        """
+        return {
+            "loss": NeuralType(None)
+        }
 
     def __init__(self, **kwargs):
         LossNM.__init__(self, **kwargs)
@@ -176,15 +275,35 @@ class L1Loss(LossNM):
 
 
 class CrossEntropyLoss(LossNM):
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        predictions:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        labels:
+            0: AxisType(BatchTag)
+        """
+        return {
             "predictions": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
             "labels": NeuralType({0: AxisType(BatchTag)}),
         }
-        output_ports = {"loss": NeuralType(None)}
-        return input_ports, output_ports
+
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        loss:
+            NeuralType(None)
+        """
+        return {
+            "loss": NeuralType(None)
+        }
 
     def __init__(self, **kwargs):
         # Neural Module API specific
@@ -201,9 +320,28 @@ class DopeDualLoss(LossNM):
     """
     The dual loss function that DOPE uses
     """
-    @staticmethod
-    def create_ports():
-        input_ports = {
+
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        belief_predictions:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        belief_labels:
+            0: AxisType(BatchTag)
+
+        affinity_predictions:
+            0: AxisType(BatchTag)
+
+            1: AxisType(ChannelTag)
+
+        affinity_labels:
+            0: AxisType(BatchTag)
+        """
+        return {
             "belief_predictions": NeuralType(
                 {0: AxisType(BatchTag), 1: AxisType(ChannelTag)}
             ),
@@ -214,8 +352,16 @@ class DopeDualLoss(LossNM):
             "affinity_labels": NeuralType({0: AxisType(BatchTag)}),
         }
 
-        output_ports = {"loss": NeuralType(None)}
-        return input_ports, output_ports
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        loss:
+            NeuralType(None)
+        """
+        return {
+            "loss": NeuralType(None)
+        }
 
     def __init__(self, **kwargs):
         # Neural Module API specific
@@ -229,8 +375,8 @@ class DopeDualLoss(LossNM):
         # output, each belief map layers.
         for l in kwargs["belief_predictions"]:
             loss_tmp = (
-                    (l - kwargs["belief_labels"]) * (
-                     l - kwargs["belief_labels"])
+                (l - kwargs["belief_labels"]) * (
+                    l - kwargs["belief_labels"])
             ).mean()
             loss += loss_tmp
 
@@ -238,8 +384,8 @@ class DopeDualLoss(LossNM):
         # output, each belief map layers.
         for l in kwargs["affinity_predictions"]:
             loss_tmp = (
-                    (l - kwargs["affinity_labels"]) * (
-                     l - kwargs["affinity_labels"])
+                (l - kwargs["affinity_labels"]) * (
+                    l - kwargs["affinity_labels"])
             ).mean()
             loss += loss_tmp
 

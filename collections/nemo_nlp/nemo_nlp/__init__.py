@@ -1,4 +1,4 @@
-# Copyright 2019 AI Applications Design Team at NVIDIA. All Rights Reserved.
+# Copyright 2019 NVIDIA. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,25 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+# =============================================================================
 
 from .data import *
-from .transformer_nm import TransformerEncoderNM, TransformerDecoderNM, \
-    TransformerLogSoftmaxNM, PaddedSmoothedCrossEntropyLossNM, \
-    BeamSearchTranslatorNM, GreedyLanguageGeneratorNM
-from .bert import MaskedLanguageModelingLossNM, \
-    SentenceClassificationLogSoftmaxNM, NextSentencePredictionLossNM, \
-    LossAggregatorNM, TokenClassificationLoss, SequenceClassifier, \
-    JointIntentSlotLoss, ZerosLikeNM, \
-    JointIntentSlotClassifier
-from .nlp_utils import read_intent_slot_outputs
-from . import transformer, huggingface
+from .huggingface import *
+from .modules import *
+from .transformer import *
 
-from .callbacks import *
 
-from nemo.core import Backend
+import nemo
 
 
 name = "nemo_nlp"
-backend = Backend.PyTorch
-__version__ = "0.8"
+backend = nemo.core.Backend.PyTorch
+__version__ = "0.9.0"

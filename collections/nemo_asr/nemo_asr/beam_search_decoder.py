@@ -6,7 +6,8 @@ import torch
 
 from nemo.backends.pytorch.nm import NonTrainableNM
 from nemo.core import DeviceType
-from nemo.core.neural_types import *
+from nemo.core.neural_types import (NeuralType, AxisType, BatchTag, TimeTag,
+                                    ChannelTag)
 
 
 class BeamSearchDecoderWithLM(NonTrainableNM):
@@ -30,21 +31,44 @@ class BeamSearchDecoderWithLM(NonTrainableNM):
             beta will result in shorter sequences.
         lm_path (str): Path to n-gram language model
         num_cpus (int): Number of cpus to use
+        cutoff_prob (float): Cutoff probability in vocabulary pruning,
+            default 1.0, no pruning
+        cutoff_top_n (int): Cutoff number in pruning, only top cutoff_top_n
+            characters with highest probs in vocabulary will be used in
+            beam search, default 40.
     """
 
-    @staticmethod
-    def create_ports():
-        input_ports = {
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        "log_probs":
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+            2: AxisType(ChannelTag)
+
+        log_probs_length:
+            0: AxisType(BatchTag)
+        """
+        return {
             "log_probs": NeuralType({0: AxisType(BatchTag),
                                      1: AxisType(TimeTag),
                                      2: AxisType(ChannelTag)}),
             "log_probs_length": NeuralType({0: AxisType(BatchTag)})
         }
 
-        output_ports = {
+    @property
+    def output_ports(self):
+        """Returns definitions of module output ports.
+
+        predictions:
+            NeuralType(None)
+        """
+        return {
             "predictions": NeuralType(None)
         }
-        return input_ports, output_ports
 
     def __init__(
             self, *,
@@ -54,6 +78,8 @@ class BeamSearchDecoderWithLM(NonTrainableNM):
             beta,
             lm_path,
             num_cpus,
+            cutoff_prob=1.0,
+            cutoff_top_n=40,
             **kwargs):
 
         try:
@@ -64,6 +90,15 @@ class BeamSearchDecoderWithLM(NonTrainableNM):
                                       "installation of ctc_decoders "
                                       "from nemo/scripts/install_decoders.py")
 
+        super().__init__(
+            # Override default placement from neural factory
+            placement=DeviceType.CPU,
+            **kwargs)
+
+        if self._factory.world_size > 1:
+            raise ValueError(
+                "BeamSearchDecoderWithLM does not run in distributed mode")
+
         self.scorer = Scorer(
             alpha,
             beta,
@@ -71,15 +106,11 @@ class BeamSearchDecoderWithLM(NonTrainableNM):
             vocabulary=vocab
         )
         self.beam_search_func = ctc_beam_search_decoder_batch
-
-        super().__init__(
-            # Override default placement from neural factory
-            placement=DeviceType.CPU,
-            **kwargs)
-
         self.vocab = vocab
         self.beam_width = beam_width
         self.num_cpus = num_cpus
+        self.cutoff_prob = cutoff_prob
+        self.cutoff_top_n = cutoff_top_n
 
     def forward(self, log_probs, log_probs_length):
         probs = torch.exp(log_probs)
@@ -92,5 +123,7 @@ class BeamSearchDecoderWithLM(NonTrainableNM):
             beam_size=self.beam_width,
             num_processes=self.num_cpus,
             ext_scoring_func=self.scorer,
+            cutoff_prob=self.cutoff_prob,
+            cutoff_top_n=self.cutoff_top_n
         )
         return [res]
