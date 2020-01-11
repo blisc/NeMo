@@ -1,13 +1,10 @@
 # Taken straight from Patter https://github.com/ryanleary/patter
 # TODO: review, and copyright and fix/add comments
-import itertools
 import math
 
 import librosa
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.multiprocessing as mp
 from torch_stft import STFT
 
 from .perturb import AudioAugmentor
@@ -159,7 +156,7 @@ class FilterbankFeatures(nn.Module):
                     super(STFTPatch, self).__init__(*params, **kw_params)
 
                 def forward(self, input_data):
-                    return super(STFTPatch, self).transform(input_data)
+                    return super(STFTPatch, self).transform(input_data)[0]
 
             self.stft = STFTPatch(self.n_fft, self.hop_length,
                                   self.win_length, window)
@@ -254,15 +251,6 @@ class FilterbankFeatures(nn.Module):
                 dim=1)
 
         x = self.stft(x)
-
-        if self.speed_perturb and self.training:
-            mag = x[0].cpu().numpy()
-            phase = x[1].cpu().numpy()
-            x, seq_len = self.speed_perturb(mag*np.exp(phase*1j), seq_len)
-            x = x.cuda()
-            seq_len = seq_len.cuda()
-        else:
-            x = x[0]
 
         # get power spectrum
         if self.mag_power != 1.:

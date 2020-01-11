@@ -129,7 +129,6 @@ transcript_n}
             drop_last=False,
             shuffle=True,
             num_workers=0,
-            tokenizer=None,
             # perturb_config=None,
             **kwargs
     ):

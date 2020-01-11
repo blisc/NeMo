@@ -154,17 +154,6 @@ class ExpManager:
             raise ValueError("ExpManager received use_tb as True but did not "
                              "receive a work_dir")
 
-        if local_rank == 0 or local_rank is None:
-            # Create files for cmd args and git info
-            with open(os.path.join(self.work_dir, f'cmd-args_{tm_suf}.log'),
-                      'w') as f:
-                f.write(" ".join(sys.argv))
-
-            with open(os.path.join(self.work_dir, f'git-info_{tm_suf}.log'),
-                      'w') as f:
-                f.write(f'commit hash: {get_git_hash()}')
-                f.write(get_git_diff())
-
         if ckpt_dir:
             self.ckpt_dir = ckpt_dir
         if self.ckpt_dir:
