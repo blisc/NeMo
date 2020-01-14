@@ -5,6 +5,7 @@ import kaldi_io
 import os
 import pandas as pd
 import string
+import random
 import torch
 from torch.utils.data import Dataset
 
@@ -189,8 +190,9 @@ class TFAudioDataset(Dataset):
     def __init__(self, manifest_filepath, labels, featurizer,
                  max_duration=None,
                  min_duration=None, max_utts=0, normalize=True,
-                 trim=False, eos_id=None, logger=False, load_audio=True,
-                 tokenizer=None):
+                 trim=False, bos_id=None, eos_id=None, logger=False,
+                 load_audio=True,
+                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None):
         """
         Dataset that loads tensors via a json file containing paths to audio
         files, transcripts, and durations
@@ -220,6 +222,7 @@ class TFAudioDataset(Dataset):
             load_audio: Boolean flag indicate whether do or not load audio
         """
         m_paths = manifest_filepath.split(',')
+        self.tokenizer = tokenizer
         self.manifest = TFManifest(m_paths, labels,
                                    max_duration=max_duration,
                                    min_duration=min_duration,
@@ -230,7 +233,10 @@ class TFAudioDataset(Dataset):
         self.featurizer = featurizer
         self.trim = trim
         self.eos_id = eos_id
+        self.bos_id = bos_id
+        self.vocab_size = tokenizer_vocab_size
         self.load_audio = load_audio
+        self.mlm_prob = mlm_prob
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
@@ -254,8 +260,15 @@ class TFAudioDataset(Dataset):
 
         t = sample["tokenizer_transcript"]
         tl = len(t) - 1
-        decoder_outputs = t[1:]
-        decoder_inputs = t[:-1]
+
+        if self.mlm_prob:
+            # decoder_inputs should be decoder_outputs but with masks
+            # tl are now the masks
+            decoder_outputs = t
+            decoder_inputs, tl = self.mask_ids(t)
+        else:
+            decoder_outputs = t[1:]
+            decoder_inputs = t[:-1]
 
         char_transcript = sample["char_transcript"]
         char_transcript_l = len(sample["char_transcript"])
@@ -268,8 +281,266 @@ class TFAudioDataset(Dataset):
             torch.tensor(char_transcript).long(),\
             torch.tensor(char_transcript_l).long(),
 
+    def mask_ids(self, ids):
+        """
+        Args:
+          ids: list of token ids representing a chunk of text
+        Returns:
+          masked_ids: list of input tokens with some of the entries masked
+            according to the following protocol from the original BERT paper:
+            each token is masked with a probability of 15% and is replaced with
+            1) the [MASK] token 80% of the time,
+            2) random token 10% of the time,
+            3) the same token 10% of the time.
+          output_mask: list of binary variables which indicate what tokens has
+            been masked (to calculate the loss function for these tokens only)
+        """
+
+        # Whole-word masking by default, as it gives better performance.
+        cand_indexes = [[ids[0]]]
+        for tid in ids[1:]:
+            token = self.tokenizer.ids_to_tokens([tid])[0]
+            is_suffix = token.startswith('\u2581')
+            if is_suffix:
+                # group together with its previous token to form a whole-word
+                cand_indexes[-1].append(tid)
+            else:
+                cand_indexes.append([tid])
+
+        masked_ids, output_mask = [], []
+        mask_id = self.tokenizer.token_to_id("<mask>")
+
+        for word_ids in cand_indexes:
+            is_special = (word_ids[0] == self.bos_id) or \
+                         (word_ids[0] == self.eos_id)
+            if is_special or (random.random() > self.mlm_prob):
+                output_mask.extend([0] * len(word_ids))
+                masked_ids.extend(word_ids)
+            else:
+                output_mask.extend([1] * len(word_ids))
+                p = random.random()
+                # for 80%, replace with mask
+                if p < 0.8:
+                    masked_ids.extend([mask_id] * len(word_ids))
+                # for 10%, replace by a random token
+                elif p < 0.9:
+                    for _ in word_ids:
+                        # randomly select a valid word
+                        random_word = random.randrange(self.vocab_size)
+                        while random_word in (self.bos_id, self.eos_id):
+                            random_word = random.randrange(self.vocab_size)
+                        masked_ids.append(random_word)
+                # for 10%, use same token
+                else:
+                    masked_ids.extend(word_ids)
+
+        return masked_ids, output_mask
+
     def __len__(self):
         return len(self.manifest)
+
+
+class MLMAudioDataset(Dataset):
+    def __init__(self, manifest_filepath, labels, featurizer,
+                 max_duration=None,
+                 min_duration=None, max_utts=0, normalize=True,
+                 trim=False, bos_id=None, eos_id=None, logger=False,
+                 load_audio=True,
+                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None):
+        """
+        Dataset that loads tensors via a json file containing paths to audio
+        files, transcripts, and durations
+        (in seconds). Each new line is a different sample. Example below:
+
+        {"audio_filepath": "/path/to/audio.wav", "text_filepath":
+        "/path/to/audio.txt", "duration": 23.147}
+        ...
+        {"audio_filepath": "/path/to/audio.wav", "text": "the
+        transcription", offset": 301.75, "duration": 0.82, "utt":
+        "utterance_id",
+        "ctm_utt": "en_4156", "side": "A"}
+
+        Args:
+            manifest_filepath: Path to manifest json as described above. Can
+            be coma-separated paths.
+            labels: String containing all the possible characters to map to
+            featurizer: Initialized featurizer class that converts paths of
+            audio to feature tensors
+            max_duration: If audio exceeds this length, do not include in
+            dataset
+            min_duration: If audio is less than this length, do not include
+            in dataset
+            max_utts: Limit number of utterances
+            normalize: whether to normalize transcript text (default): True
+            eos_id: Id of end of sequence symbol to append if not None
+            load_audio: Boolean flag indicate whether do or not load audio
+        """
+        m_paths = manifest_filepath.split(',')
+        self.tokenizer = tokenizer
+        self.manifest = TFManifest(m_paths, labels,
+                                   max_duration=max_duration,
+                                   min_duration=min_duration,
+                                   max_utts=max_utts,
+                                   normalize=normalize,
+                                   tokenizer=tokenizer,
+                                   logger=logger)
+        self.featurizer = featurizer
+        self.trim = trim
+        self.eos_id = eos_id
+        self.bos_id = bos_id
+        self.vocab_size = tokenizer_vocab_size
+        self.load_audio = load_audio
+        self.mlm_prob = mlm_prob
+        if logger:
+            logger.info(
+                "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
+                "hours.".format(
+                    self.manifest.duration / 3600,
+                    self.manifest.filtered_duration / 3600))
+
+    def __getitem__(self, index):
+        sample = self.manifest[index]
+        if self.load_audio:
+            duration = sample['duration'] if 'duration' in sample else 0
+            offset = sample['offset'] if 'offset' in sample else 0
+            features = self.featurizer.process(sample['audio_filepath'],
+                                               offset=offset,
+                                               duration=duration,
+                                               trim=self.trim)
+            f, fl = features, torch.tensor(features.shape[0]).long()
+            # f = f / (torch.max(torch.abs(f)) + 1e-5)
+        else:
+            f, fl = None, None
+
+        t = sample["tokenizer_transcript"]
+        tl = len(t) - 1
+
+        if self.mlm_prob:
+            # decoder_inputs should be decoder_outputs but with masks
+            # tl are now the masks
+            decoder_outputs = t
+            decoder_inputs, output_mask = self.mask_ids(t)
+        else:
+            decoder_outputs = t[1:]
+            decoder_inputs = t[:-1]
+
+        char_transcript = sample["char_transcript"]
+        char_transcript_l = len(sample["char_transcript"])
+
+        return \
+            f, fl, \
+            torch.tensor(decoder_inputs).long(),\
+            torch.tensor(decoder_outputs).long(),\
+            torch.tensor(tl).long(),\
+            torch.tensor(output_mask).long(),\
+            torch.tensor(char_transcript).long(),\
+            torch.tensor(char_transcript_l).long(),
+
+    def mask_ids(self, ids):
+        """
+        Args:
+          ids: list of token ids representing a chunk of text
+        Returns:
+          masked_ids: list of input tokens with some of the entries masked
+            according to the following protocol from the original BERT paper:
+            each token is masked with a probability of 15% and is replaced with
+            1) the [MASK] token 80% of the time,
+            2) random token 10% of the time,
+            3) the same token 10% of the time.
+          output_mask: list of binary variables which indicate what tokens has
+            been masked (to calculate the loss function for these tokens only)
+        """
+
+        # Whole-word masking by default, as it gives better performance.
+        cand_indexes = [[ids[0]]]
+        for tid in ids[1:]:
+            token = self.tokenizer.ids_to_tokens([tid])[0]
+            is_suffix = token.startswith('\u2581')
+            if is_suffix:
+                # group together with its previous token to form a whole-word
+                cand_indexes[-1].append(tid)
+            else:
+                cand_indexes.append([tid])
+
+        masked_ids, output_mask = [], []
+        mask_id = self.tokenizer.token_to_id("<mask>")
+
+        for word_ids in cand_indexes:
+            is_special = (word_ids[0] == self.bos_id) or \
+                         (word_ids[0] == self.eos_id)
+            if is_special or (random.random() > self.mlm_prob):
+                output_mask.extend([0] * len(word_ids))
+                masked_ids.extend(word_ids)
+            else:
+                output_mask.extend([1] * len(word_ids))
+                p = random.random()
+                # for 80%, replace with mask
+                if p < 0.8:
+                    masked_ids.extend([mask_id] * len(word_ids))
+                # for 10%, replace by a random token
+                elif p < 0.9:
+                    for _ in word_ids:
+                        # randomly select a valid word
+                        random_word = random.randrange(self.vocab_size)
+                        while random_word in (self.bos_id, self.eos_id):
+                            random_word = random.randrange(self.vocab_size)
+                        masked_ids.append(random_word)
+                # for 10%, use same token
+                else:
+                    masked_ids.extend(word_ids)
+
+        return masked_ids, output_mask
+
+    def __len__(self):
+        return len(self.manifest)
+
+
+
+def mlmaudio_seq_collate_fn(batch):
+    def find_max_len(seq, index):
+        max_len = -1
+        for item in seq:
+            if item[index].size(0) > max_len:
+                max_len = item[index].size(0)
+        return max_len
+
+    batch_size = len(batch)
+
+    audio_signal, audio_lengths = None, None
+    if batch[0][0] is not None:
+        max_audio_len = find_max_len(batch, 0)
+
+        audio_signal = torch.zeros(batch_size, max_audio_len,
+                                   dtype=torch.float)
+        audio_lengths = []
+        for i, s in enumerate(batch):
+            audio_signal[i].narrow(0, 0, s[0].size(0)).copy_(s[0])
+            audio_lengths.append(s[1])
+        audio_lengths = torch.tensor(audio_lengths, dtype=torch.long)
+
+    max_transcript_len = find_max_len(batch, 2)
+    max_char_transcript_len = find_max_len(batch, 6)
+
+    decoder_in = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
+    decoder_out = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
+    output_mask = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
+    transcript_lengths = []
+    char_transcript = torch.zeros(
+        batch_size, max_char_transcript_len, dtype=torch.long)
+    char_transcript_lengths = []
+    for i, s in enumerate(batch):
+        decoder_in[i].narrow(0, 0, s[2].size(0)).copy_(s[2])
+        decoder_out[i].narrow(0, 0, s[3].size(0)).copy_(s[3])
+        transcript_lengths.append(s[4])
+        output_mask[i].narrow(0, 0, s[5].size(0)).copy_(s[5])
+        char_transcript[i].narrow(0, 0, s[6].size(0)).copy_(s[6])
+        char_transcript_lengths.append(s[7])
+    transcript_lengths = torch.tensor(transcript_lengths, dtype=torch.long)
+    char_transcript_lengths = torch.tensor(
+        char_transcript_lengths, dtype=torch.long)
+
+    return audio_signal, audio_lengths, decoder_in, decoder_out,\
+        transcript_lengths, output_mask, char_transcript, char_transcript_lengths
 
 
 def tfaudio_seq_collate_fn(batch):

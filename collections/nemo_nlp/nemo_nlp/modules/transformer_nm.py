@@ -235,6 +235,7 @@ class TransformerDecoderNM(TrainableNM):
                  attn_layer_dropout=0.0,
                  learn_positional_encodings=False,
                  hidden_act='relu',
+                 bidirectional=False,
                  **kwargs):
         TrainableNM.__init__(self, **kwargs)
 
@@ -253,7 +254,8 @@ class TransformerDecoderNM(TrainableNM):
             ffn_dropout=ffn_dropout,
             hidden_act=hidden_act,
             attn_score_dropout=attn_score_dropout,
-            attn_layer_dropout=attn_layer_dropout
+            attn_layer_dropout=attn_layer_dropout,
+            bidirectional=bidirectional
         )
 
         std_init_range = 1 / math.sqrt(d_model)

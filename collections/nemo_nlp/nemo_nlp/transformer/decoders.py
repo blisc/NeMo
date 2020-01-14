@@ -51,8 +51,9 @@ class TransformerDecoderBlock(nn.Module):
 
 class TransformerDecoder(nn.Module):
 
-    def __init__(self, num_layers, hidden_size, **kwargs):
+    def __init__(self, num_layers, hidden_size, bidirectional=False, **kwargs):
         super().__init__()
+        self.bidirectional = bidirectional
 
         layer = TransformerDecoderBlock(hidden_size, **kwargs)
         self.layers = nn.ModuleList(
@@ -81,7 +82,11 @@ class TransformerDecoder(nn.Module):
                 or the last layer only
         """
 
-        decoder_attn_mask = form_attention_mask(decoder_mask, diagonal=0)
+        diagonal = 0
+        if self.bidirectional:
+            diagonal = None
+        decoder_attn_mask = form_attention_mask(
+            decoder_mask, diagonal=diagonal)
         encoder_attn_mask = form_attention_mask(encoder_mask)
 
         memory_states = self._get_memory_states(

@@ -16,9 +16,7 @@ from nemo.core import Backend
 
 from .audio_preprocessing import *
 from .beam_search_decoder import BeamSearchDecoderWithLM
-from .data_layer import (
-        AudioToTextDataLayer, KaldiFeatureDataLayer, TranscriptDataLayer,
-        IntToSeq, IntToSeq2, TFAudioToTextDataLayer)
+from .data_layer import *
 from .greedy_ctc_decoder import GreedyCTCDecoder
 from .jasper import JasperEncoder, JasperDecoderForCTC
 from .las.misc import JasperRNNConnector
@@ -26,6 +24,8 @@ from .losses import CTCLossNM
 
 __all__ = ['Backend',
            'AudioToTextDataLayer',
+           'TFAudioToTextDataLayer',
+           'MLMAudioToTextDataLayer',
            'AudioPreprocessing',
            'AudioPreprocessor',
            'AudioToMFCCPreprocessor',
@@ -40,7 +40,9 @@ __all__ = ['Backend',
            'JasperEncoder',
            'JasperDecoderForCTC',
            'JasperRNNConnector',
-           'CTCLossNM']
+           'CTCLossNM',
+           'IntToSeq',
+           'IntToSeq2']
 
 
 name = "nemo_asr"

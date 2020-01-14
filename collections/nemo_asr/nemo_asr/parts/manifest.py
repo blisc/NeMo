@@ -4,6 +4,7 @@ import json
 import string
 
 from nemo.utils import get_logger
+import nemo_nlp
 from .cleaners import clean_text
 
 
@@ -199,6 +200,12 @@ class TFManifest(object):
         self.labels_map = dict([(labels[i], i) for i in range(len(labels))])
         self.blank_index = -1
         self.tokenizer = tokenizer
+        if isinstance(self.tokenizer, nemo_nlp.YouTokenToMeTokenizer):
+            self.bos_id = self.tokenizer.bos_id()
+            self.eos_id = self.tokenizer.eos_id()
+        elif isinstance(self.tokenizer, nemo_nlp.SentencePieceTokenizer):
+            self.bos_id = self.tokenizer.token_to_id("<sos>")
+            self.eos_id = self.tokenizer.token_to_id("<eos>")
         self.max_len = 0
         ids = []
         duration = 0.0
@@ -275,7 +282,7 @@ class TFManifest(object):
 
     def tokenize(self, transcript):
         t = self.tokenizer.text_to_ids(transcript)
-        t = [self.tokenizer.bos_id()] + t + [self.tokenizer.eos_id()]
+        t = [self.bos_id] + t + [self.eos_id]
         if len(t) > self.max_len:
             self.max_len = len(t)
         return t
