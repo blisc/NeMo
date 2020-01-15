@@ -455,7 +455,9 @@ class MLMAudioDataset(Dataset):
         for tid in ids[1:]:
             token = self.tokenizer.ids_to_tokens([tid])[0]
             is_suffix = token.startswith('\u2581')
-            if is_suffix:
+            if tid in [self.bos_id, self.eos_id]:
+                cand_indexes.append([tid])
+            elif not is_suffix:
                 # group together with its previous token to form a whole-word
                 cand_indexes[-1].append(tid)
             else:

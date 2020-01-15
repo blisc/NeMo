@@ -197,8 +197,8 @@ class TFManifest(object):
             self.bos_id = self.tokenizer.bos_id()
             self.eos_id = self.tokenizer.eos_id()
         elif isinstance(self.tokenizer, nemo_nlp.SentencePieceTokenizer):
-            self.bos_id = self.tokenizer.token_to_id("<sos>")
-            self.eos_id = self.tokenizer.token_to_id("<eos>")
+            self.bos_id = self.tokenizer.token_to_id("<s>")
+            self.eos_id = self.tokenizer.token_to_id("</s>")
         self.max_len = 0
         ids = []
         duration = 0.0

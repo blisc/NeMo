@@ -21,6 +21,8 @@ from .greedy_ctc_decoder import GreedyCTCDecoder
 from .jasper import JasperEncoder, JasperDecoderForCTC
 from .las.misc import JasperRNNConnector
 from .losses import CTCLossNM
+from .parts.features import WaveformFeaturizer
+from .parts.dataset import MLMAudioDataset
 
 __all__ = ['Backend',
            'AudioToTextDataLayer',

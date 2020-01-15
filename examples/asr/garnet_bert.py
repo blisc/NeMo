@@ -113,8 +113,8 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         num_workers=cpu_per_traindl,
         tokenizer=tokenizer,
         mlm_prob=0.15,
-        bos_id=tokenizer.token_to_id("<sos>"),
-        eos_id=tokenizer.token_to_id("<eos>"),
+        bos_id=tokenizer.token_to_id("<s>"),
+        eos_id=tokenizer.token_to_id("</s>"),
         tokenizer_vocab_size=tokenizer.vocab_size,
         **garnet_params['AudioToTextDataLayer']['train']
     )
