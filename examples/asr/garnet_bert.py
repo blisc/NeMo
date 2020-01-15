@@ -102,7 +102,8 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         model_path=args.tokenizer_file)
     # tokenizer = nemo_nlp.NemoBertTokenizer(
     #     pretrained_model="bert-base-uncased")  # + "-vocab.txt")
-    assert tokenizer.token_to_id("<pad>") == 0, f"{tokenizer.pad_id}"
+    if tokenizer.token_to_id("<pad>") != 0:
+        raise ValueError(f'{tokenizer.token_to_id("<pad>")}')
     if args.debug:
         garnet_params['AudioToTextDataLayer']['train'][
             'normalize_transcripts'] = False
@@ -188,7 +189,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     #     d_model=768
     # )
 
-    assert(t_log_softmax.mlp.last_linear_layer.weight.shape == 
+    assert(t_log_softmax.mlp.last_linear_layer.weight.shape ==
            decoder.embedding_layer.token_embedding.weight.shape)
     t_log_softmax.mlp.last_linear_layer.weight = \
         decoder.embedding_layer.token_embedding.weight
