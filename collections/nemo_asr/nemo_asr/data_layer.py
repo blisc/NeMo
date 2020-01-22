@@ -701,6 +701,7 @@ transcript_n}
             tokenizer=None,
             tokenizer_vocab_size=None,
             mlm_prob=0,
+            _eval=False,
             # perturb_config=None,
             **kwargs
     ):
@@ -716,7 +717,7 @@ transcript_n}
             trim=trim_silence, logger=self._logger, bos_id=bos_id,
             eos_id=eos_id, load_audio=load_audio,
             tokenizer=tokenizer, tokenizer_vocab_size=tokenizer_vocab_size,
-            mlm_prob=mlm_prob
+            mlm_prob=mlm_prob, _eval=_eval
         )
 
         if self._placement == DeviceType.AllGpu:

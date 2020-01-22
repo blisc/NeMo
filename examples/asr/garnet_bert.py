@@ -299,74 +299,76 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     callbacks.append(train_callback)
 
     # TODO: Add eval path
-    # if args.eval_datasets:
-    #     for val_path in args.eval_datasets:
-    #         data_eval = nemo_asr.TFAudioToTextDataLayer(
-    #             manifest_filepath=val_path,
-    #             batch_size=args.eval_batch_size,
-    #             tokenizer=tokenizer,
-    #             **garnet_params['AudioToTextDataLayer']['eval']
-    #         )
-    #         audios, audio_lens, decoder_in, decoder_out, t_len, char_t, char_l\
-    #             = data_eval()
-    #         processed_audios, processed_audio_lens = data_preprocessor(
-    #             input_signal=audios,
-    #             length=audio_lens
-    #         )
-    #         encoded, enc_length_0 = encoder(
-    #             audio_signal=processed_audios,
-    #             length=processed_audio_lens
-    #         )
-    #         enc_length = int_to_seq(x=encoded, length=enc_length_0)
-    #         t_len = int_to_seq2(x=decoder_in, length=t_len)
-    #         connected_encoded = connector(tensor=encoded)
-    #         logits = decoder(
-    #             input_ids_tgt=decoder_in,
-    #             hidden_states_src=connected_encoded,
-    #             input_mask_src=enc_length,
-    #             input_mask_tgt=t_len,
-    #         )
-    #         log_probs = t_log_softmax(hidden_states=logits)
-    #         eval_loss = loss(
-    #             log_probs=log_probs,
-    #             target_ids=decoder_out
-    #         )
-    #         beam_trans = beam_translator(
-    #             hidden_states_src=connected_encoded, input_mask_src=enc_length
-    #         )
+    if args.eval_datasets:
+        for val_path in args.eval_datasets:
+            data_eval = nemo_asr.MLMAudioToTextDataLayer(
+                manifest_filepath=val_path,
+                batch_size=args.eval_batch_size,
+                tokenizer=tokenizer,
+                bos_id=tokenizer.token_to_id("<s>"),
+                eos_id=tokenizer.token_to_id("</s>"),
+                tokenizer_vocab_size=tokenizer.vocab_size,
+                _eval=True,
+                **garnet_params['AudioToTextDataLayer']['eval']
+            )
+            audios, audio_lens, decoder_in, decoder_out, t_len, out_mask, char_t, char_l = data_eval()
+            processed_audios, processed_audio_lens = data_preprocessor(
+                input_signal=audios,
+                length=audio_lens
+            )
+            encoded, enc_length_0 = encoder(
+                audio_signal=processed_audios,
+                length=processed_audio_lens
+            )
+            enc_length = int_to_seq(x=encoded, length=enc_length_0)
+            t_len = int_to_seq2(x=decoder_in, length=t_len)
+            connected_encoded = connector(tensor=encoded)
+            logits = decoder(
+                input_ids_tgt=decoder_in,
+                hidden_states_src=connected_encoded,
+                input_mask_src=enc_length,
+                input_mask_tgt=t_len,
+            )
+            log_probs = t_log_softmax(hidden_states=logits)
+            eval_loss = loss(
+                logits=log_probs,
+                output_ids=decoder_out,
+                output_mask=out_mask)
 
-    #         tensors = [eval_loss, decoder_out, beam_trans]
+            predictions = greedy_decoder(log_probs=log_probs)
 
-    #         if args.enable_ctc_loss:
-    #             ctc_log_probs = ctc_decoder(encoder_output=encoded)
-    #             ctc_predictions = greedy_decoder(log_probs=ctc_log_probs)
-    #             ctc_loss_tensor = ctc_loss(
-    #                 log_probs=ctc_log_probs,
-    #                 targets=char_t,
-    #                 input_length=enc_length_0,
-    #                 target_length=char_l)
-    #             tensors.extend(
-    #                 [ctc_loss_tensor, char_t, char_l, ctc_predictions])
+            tensors = [eval_loss, decoder_out, predictions]
 
-    #         eval_callback = nemo.core.EvaluatorCallback(
-    #             eval_tensors=list(tensors),
-    #             user_iter_callback=partial(
-    #                 process_evaluation_batch_xf,
-    #                 tokenizer=tokenizer,
-    #                 labels=char_labels
-    #             ),
-    #             user_epochs_done_callback=partial(
-    #                 process_evaluation_epoch_xf,
-    #                 tag=os.path.basename(val_path),
-    #                 calc_wer=True,
-    #                 logger=logger
-    #             ),
-    #             eval_step=args.eval_freq,
-    #             tb_writer=neural_factory.tb_writer
-    #         )
-    #         callbacks.append(eval_callback)
-    # else:
-    #     logger.warning("No val dataset")
+            if args.enable_ctc_loss:
+                ctc_log_probs = ctc_decoder(encoder_output=encoded)
+                ctc_predictions = greedy_decoder(log_probs=ctc_log_probs)
+                ctc_loss_tensor = ctc_loss(
+                    log_probs=ctc_log_probs,
+                    targets=char_t,
+                    input_length=enc_length_0,
+                    target_length=char_l)
+                tensors.extend(
+                    [ctc_loss_tensor, char_t, char_l, ctc_predictions])
+
+            eval_callback = nemo.core.EvaluatorCallback(
+                eval_tensors=list(tensors),
+                user_iter_callback=partial(
+                    process_evaluation_batch_xf,
+                    tokenizer=tokenizer,
+                    labels=char_labels
+                ),
+                user_epochs_done_callback=partial(
+                    process_evaluation_epoch_xf,
+                    tag=os.path.basename(val_path),
+                    calc_wer=True,
+                    logger=logger
+                ),
+                eval_step=args.eval_freq,
+                tb_writer=neural_factory.tb_writer
+            )
+            callbacks.append(eval_callback)
+    else:
+        logger.warning("No val dataset")
 
     saver_callback = nemo.core.CheckpointCallback(
         folder=neural_factory.checkpoint_dir,

@@ -345,7 +345,8 @@ class MLMAudioDataset(Dataset):
                  min_duration=None, max_utts=0, normalize=True,
                  trim=False, bos_id=None, eos_id=None, logger=False,
                  load_audio=True,
-                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None):
+                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None,
+                 _eval=False):
         """
         Dataset that loads tensors via a json file containing paths to audio
         files, transcripts, and durations
@@ -390,6 +391,7 @@ class MLMAudioDataset(Dataset):
         self.vocab_size = tokenizer_vocab_size
         self.load_audio = load_audio
         self.mlm_prob = mlm_prob
+        self.eval = _eval
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
@@ -414,7 +416,14 @@ class MLMAudioDataset(Dataset):
         t = sample["tokenizer_transcript"]
         tl = len(t) - 1
 
-        if self.mlm_prob:
+        if self.eval:
+            decoder_outputs = t
+            output_mask = [1] * len(decoder_outputs)
+            output_mask[1] = 0
+            mask_id = self.tokenizer.token_to_id("<mask>")
+            decoder_inputs = [mask_id] * len(decoder_outputs)
+            decoder_inputs[0] = self.bos_id
+        elif self.mlm_prob:
             # decoder_inputs should be decoder_outputs but with masks
             # tl are now the masks
             decoder_outputs = t
