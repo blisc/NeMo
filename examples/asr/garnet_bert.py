@@ -432,7 +432,7 @@ def main():
     batch_size = args.batch_size
     num_epochs = args.num_epochs
     steps_per_epoch = int(num_data / (batch_size * neural_factory.world_size))
-    total_steps = num_epochs * steps_per_epoch
+    total_steps = num_epochs * steps_per_epoch / args.iter_per_step
 
     neural_factory.logger.info(f'Num data: {num_data}')
     neural_factory.logger.info(f'Steps per epoch: {steps_per_epoch}')
