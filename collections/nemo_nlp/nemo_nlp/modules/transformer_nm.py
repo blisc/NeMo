@@ -276,6 +276,81 @@ class TransformerDecoderNM(TrainableNM):
         return hidden_states
 
 
+class TransformerDecoderInferNM(TransformerDecoderNM):
+    @property
+    def input_ports(self):
+        """Returns definitions of module input ports.
+
+        input_ids_tgt:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+        hidden_states_src:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+            2: AxisType(ChannelTag)
+
+        input_mask_src:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+
+        input_mask_tgt:
+            0: AxisType(BatchTag)
+
+            1: AxisType(TimeTag)
+        """
+        return {
+            "input_ids_tgt": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag)
+            }),
+            "hidden_states_src": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag),
+                2: AxisType(ChannelTag)
+            }),
+            "input_mask_src": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag)
+            }),
+            "input_mask_tgt": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag)
+            }),
+            "input_length": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag)
+            }),
+            "ctc_predictions": NeuralType({
+                0: AxisType(BatchTag),
+                1: AxisType(TimeTag)
+            }),
+        }
+
+    def forward(self,
+                input_ids_tgt,
+                hidden_states_src,
+                input_mask_src,
+                input_mask_tgt,
+                input_length,
+                ctc_predictions):
+        K = 10
+        for i in range(K):
+            # Need to predict input_length / K units on every loop
+            hidden_states_tgt = self.embedding_layer(input_ids_tgt)
+            hidden_states = self.decoder(hidden_states_tgt,
+                                         input_mask_tgt,
+                                         hidden_states_src,
+                                         input_mask_src)
+            # Grab top input_length / K
+            
+        return hidden_states
+
+
 class GreedyLanguageGeneratorNM(TrainableNM):
     """
     Neural module for greedy text generation with language model

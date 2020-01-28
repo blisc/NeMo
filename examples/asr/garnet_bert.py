@@ -225,6 +225,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     # )
     int_to_seq = nemo_asr.IntToSeq()
     int_to_seq2 = nemo_asr.IntToSeq2()
+    greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
     # Creating DAG
     audios, audio_lens, decoder_in, decoder_out, t_len, out_mask, char_t, char_l = data()
@@ -271,7 +272,6 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
             num_classes=len(char_labels)
         )
         ctc_loss = nemo_asr.CTCLossNM(num_classes=len(char_labels))
-        greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
         ctc_log_probs = ctc_decoder(encoder_output=encoded)
         ctc_predictions = greedy_decoder(log_probs=ctc_log_probs)
