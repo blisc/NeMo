@@ -15,17 +15,16 @@ import nemo
 import nemo.utils.argparse as nm_argparse
 from nemo.utils.lr_policies import SquareAnnealing
 import nemo_asr
-from nemo_asr.las.helpers import process_evaluation_batch_xf, \
-    process_evaluation_epoch_xf
+from nemo_asr.las.helpers import process_evaluation_batch_xf, process_evaluation_epoch_xf
 import nemo_nlp
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        parents=[nm_argparse.NemoArgParser()],
-        description='GarNet with BERT',
-        conflict_handler='resolve')
+        parents=[nm_argparse.NemoArgParser()], description='GarNet with BERT', conflict_handler='resolve'
+    )
     parser.set_defaults(
         checkpoint_dir=None,
         optimizer="novograd",
@@ -34,21 +33,21 @@ def parse_args():
         weight_decay=1e-3,
         lr=1e-2,
         amp_opt_level="O1",
-        create_tb_writer=True
+        create_tb_writer=True,
     )
 
     # Overwrite default args
-    parser.add_argument("--num_epochs", type=int, default=None, required=True,
-                        help="number of epochs to train. You should specify"
-                             "either num_epochs or max_steps")
-    parser.add_argument("--model_config", type=str, required=True,
-                        help="model configuration file: model.yaml")
-    parser.add_argument("--train_dataset", type=str, required=True,
-                        help="training dataset path")
-    parser.add_argument("--beta1", type=float,
-                        help="Adam/AdamW/NovoGrad beta1")
-    parser.add_argument("--beta2", type=float, default=0.25,
-                        help="Adam/AdamW/NovoGrad beta2")
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=None,
+        required=True,
+        help="number of epochs to train. You should specify" "either num_epochs or max_steps",
+    )
+    parser.add_argument("--model_config", type=str, required=True, help="model configuration file: model.yaml")
+    parser.add_argument("--train_dataset", type=str, required=True, help="training dataset path")
+    parser.add_argument("--beta1", type=float, help="Adam/AdamW/NovoGrad beta1")
+    parser.add_argument("--beta2", type=float, default=0.25, help="Adam/AdamW/NovoGrad beta2")
 
     # Create new args
     parser.add_argument("--exp_name", default="GarNet", type=str)
@@ -98,15 +97,13 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     cpu_per_traindl = max(int(total_cpus / neural_factory.world_size), 1)
 
     # Defining nodes
-    tokenizer = nemo_nlp.SentencePieceTokenizer(
-        model_path=args.tokenizer_file)
+    tokenizer = nemo_nlp.SentencePieceTokenizer(model_path=args.tokenizer_file)
     # tokenizer = nemo_nlp.NemoBertTokenizer(
     #     pretrained_model="bert-base-uncased")  # + "-vocab.txt")
     if tokenizer.token_to_id("<pad>") != 0:
         raise ValueError(f'{tokenizer.token_to_id("<pad>")}')
     if args.debug:
-        garnet_params['AudioToTextDataLayer']['train'][
-            'normalize_transcripts'] = False
+        garnet_params['AudioToTextDataLayer']['train']['normalize_transcripts'] = False
     data = nemo_asr.MLMAudioToTextDataLayer(
         manifest_filepath=args.train_dataset,
         batch_size=args.batch_size,
@@ -116,23 +113,14 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         bos_id=tokenizer.token_to_id("<s>"),
         eos_id=tokenizer.token_to_id("</s>"),
         tokenizer_vocab_size=tokenizer.vocab_size,
-        **garnet_params['AudioToTextDataLayer']['train']
+        **garnet_params['AudioToTextDataLayer']['train'],
     )
-    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
-        **garnet_params['AudioPreprocessing']
-    )
-    data_augmentation = nemo_asr.SpectrogramAugmentation(
-        **garnet_params['SpectrogramAugmentation']
-    )
-    encoder = nemo_asr.JasperEncoder(
-        **garnet_params['JasperEncoder']
-    )
-    if args.encoder_checkpoint is not None \
-            and os.path.exists(args.encoder_checkpoint):
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(**garnet_params['AudioPreprocessing'])
+    data_augmentation = nemo_asr.SpectrogramAugmentation(**garnet_params['SpectrogramAugmentation'])
+    encoder = nemo_asr.JasperEncoder(**garnet_params['JasperEncoder'])
+    if args.encoder_checkpoint is not None and os.path.exists(args.encoder_checkpoint):
         encoder.restore_from(args.encoder_checkpoint, args.local_rank)
-        logger.info(
-            f'Loaded weights for encoder'
-            f' from {args.encoder_checkpoint}')
+        logger.info(f'Loaded weights for encoder' f' from {args.encoder_checkpoint}')
         if garnet_params['JasperEncoder']['freeze']:
             encoder.freeze()
             logger.info(f'Freeze encoder weights')
@@ -140,11 +128,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
 
     scale = False
     if args.scale:
-        scale = 1./np.sqrt(args.decoder_layers)
+        scale = 1.0 / np.sqrt(args.decoder_layers)
     connector = nemo_asr.JasperRNNConnector(
-        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
-        out_channels=512,
-        scale=scale
+        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'], out_channels=512, scale=scale
     )
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=512,
@@ -159,12 +145,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         first_sub_layer="self_attention",
         attn_score_dropout=0.1,
         attn_layer_dropout=0.1,
-        bidirectional=True
+        bidirectional=True,
     )
-    t_log_softmax = nemo_nlp.TokenClassifier(
-        num_classes=vocab_size,
-        hidden_size=512
-    )
+    t_log_softmax = nemo_nlp.TokenClassifier(num_classes=vocab_size, hidden_size=512)
 
     # connector = nemo_asr.JasperRNNConnector(
     #     in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
@@ -189,15 +172,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     #     d_model=768
     # )
 
-    assert(t_log_softmax.mlp.last_linear_layer.weight.shape ==
-           decoder.embedding_layer.token_embedding.weight.shape)
-    t_log_softmax.mlp.last_linear_layer.weight = \
-        decoder.embedding_layer.token_embedding.weight
-    if args.decoder_checkpoint is not None \
-            and os.path.exists(args.decoder_checkpoint):
+    assert t_log_softmax.mlp.last_linear_layer.weight.shape == decoder.embedding_layer.token_embedding.weight.shape
+    t_log_softmax.mlp.last_linear_layer.weight = decoder.embedding_layer.token_embedding.weight
+    if args.decoder_checkpoint is not None and os.path.exists(args.decoder_checkpoint):
         decoder.restore_from(args.decoder_checkpoint, args.local_rank)
-        logger.info(f'Loaded weights for decoder'
-                    f' from {args.decoder_checkpoint}')
+        logger.info(f'Loaded weights for decoder' f' from {args.decoder_checkpoint}')
         # if cfg['DecoderRNN']['freeze']:
         #     decoder.freeze()
         #     if VERBOSE:
@@ -229,57 +208,40 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
 
     # Creating DAG
     audios, audio_lens, decoder_in, decoder_out, t_len, out_mask, char_t, char_l = data()
-    processed_audios, processed_audio_lens = data_preprocessor(
-        input_signal=audios,
-        length=audio_lens
-    )
+    processed_audios, processed_audio_lens = data_preprocessor(input_signal=audios, length=audio_lens)
     augmented_spec = data_augmentation(input_spec=processed_audios)
-    encoded, enc_length_0 = encoder(
-        audio_signal=augmented_spec,
-        length=processed_audio_lens
-    )
+    encoded, enc_length_0 = encoder(audio_signal=augmented_spec, length=processed_audio_lens)
     enc_length = int_to_seq(x=encoded, length=enc_length_0)
     t_len = int_to_seq2(x=decoder_in, length=t_len)
     connected_encoded = connector(tensor=encoded)
     logits = decoder(
-        input_ids_tgt=decoder_in,
-        hidden_states_src=connected_encoded,
-        input_mask_src=enc_length,
-        input_mask_tgt=t_len,
+        input_ids_tgt=decoder_in, hidden_states_src=connected_encoded, input_mask_src=enc_length, input_mask_tgt=t_len,
     )
     log_probs = t_log_softmax(hidden_states=logits)
-    train_loss = loss(
-        logits=log_probs,
-        output_ids=decoder_out,
-        output_mask=out_mask)
+    train_loss = loss(logits=log_probs, output_ids=decoder_out, output_mask=out_mask)
     train_loss = [train_loss]
     callbacks = []
     # Callbacks
     train_callback = nemo.core.SimpleLossLoggerCallback(
         tensors=train_loss,
         print_func=lambda x: logger.info(f"Train SeqLoss: {x[0].item()}"),
-        get_tb_values=lambda x: [
-            ("a_loss", x[0]),
-            ("b_seqloss", x[0])],
+        get_tb_values=lambda x: [("a_loss", x[0]), ("b_seqloss", x[0])],
         step_freq=args.log_freq,
-        tb_writer=neural_factory.tb_writer
+        tb_writer=neural_factory.tb_writer,
     )
 
     if args.enable_ctc_loss:
         logger.info("Training with joint CTC and seqloss")
         ctc_decoder = nemo_asr.JasperDecoderForCTC(
-            feat_in=garnet_params["JasperEncoder"]["jasper"][-1]["filters"],
-            num_classes=len(char_labels)
+            feat_in=garnet_params["JasperEncoder"]["jasper"][-1]["filters"], num_classes=len(char_labels)
         )
         ctc_loss = nemo_asr.CTCLossNM(num_classes=len(char_labels))
 
         ctc_log_probs = ctc_decoder(encoder_output=encoded)
         ctc_predictions = greedy_decoder(log_probs=ctc_log_probs)
         ctc_loss_tensor = ctc_loss(
-            log_probs=ctc_log_probs,
-            targets=char_t,
-            input_length=enc_length_0,
-            target_length=char_l)
+            log_probs=ctc_log_probs, targets=char_t, input_length=enc_length_0, target_length=char_l
+        )
         train_loss = [train_loss[0], ctc_loss_tensor]
         train_callback = nemo.core.SimpleLossLoggerCallback(
             tensors=train_loss,
@@ -287,13 +249,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 f"\n"
                 f"\t\tTrain Loss: {x[0].item() + x[1].item():4f}\n"
                 f"\t\tTrain SeqLoss: {x[0].item():4f}\n"
-                f"\t\tTrain CTCLoss: {x[1].item():4f}"),
-            get_tb_values=lambda x: [
-                ("a_loss", x[0]+x[1]),
-                ("b_seqloss", x[0]),
-                ("c_ctcloss", x[1])],
+                f"\t\tTrain CTCLoss: {x[1].item():4f}"
+            ),
+            get_tb_values=lambda x: [("a_loss", x[0] + x[1]), ("b_seqloss", x[0]), ("c_ctcloss", x[1])],
             step_freq=args.log_freq,
-            tb_writer=neural_factory.tb_writer
+            tb_writer=neural_factory.tb_writer,
         )
 
     callbacks.append(train_callback)
@@ -309,17 +269,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 eos_id=tokenizer.token_to_id("</s>"),
                 tokenizer_vocab_size=tokenizer.vocab_size,
                 _eval=True,
-                **garnet_params['AudioToTextDataLayer']['eval']
+                **garnet_params['AudioToTextDataLayer']['eval'],
             )
             audios, audio_lens, decoder_in, decoder_out, t_len, out_mask, char_t, char_l = data_eval()
-            processed_audios, processed_audio_lens = data_preprocessor(
-                input_signal=audios,
-                length=audio_lens
-            )
-            encoded, enc_length_0 = encoder(
-                audio_signal=processed_audios,
-                length=processed_audio_lens
-            )
+            processed_audios, processed_audio_lens = data_preprocessor(input_signal=audios, length=audio_lens)
+            encoded, enc_length_0 = encoder(audio_signal=processed_audios, length=processed_audio_lens)
             enc_length = int_to_seq(x=encoded, length=enc_length_0)
             t_len = int_to_seq2(x=decoder_in, length=t_len)
             connected_encoded = connector(tensor=encoded)
@@ -330,10 +284,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 input_mask_tgt=t_len,
             )
             log_probs = t_log_softmax(hidden_states=logits)
-            eval_loss = loss(
-                logits=log_probs,
-                output_ids=decoder_out,
-                output_mask=out_mask)
+            eval_loss = loss(logits=log_probs, output_ids=decoder_out, output_mask=out_mask)
 
             predictions = greedy_decoder(log_probs=log_probs)
 
@@ -343,36 +294,25 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 ctc_log_probs = ctc_decoder(encoder_output=encoded)
                 ctc_predictions = greedy_decoder(log_probs=ctc_log_probs)
                 ctc_loss_tensor = ctc_loss(
-                    log_probs=ctc_log_probs,
-                    targets=char_t,
-                    input_length=enc_length_0,
-                    target_length=char_l)
-                tensors.extend(
-                    [ctc_loss_tensor, char_t, char_l, ctc_predictions])
+                    log_probs=ctc_log_probs, targets=char_t, input_length=enc_length_0, target_length=char_l
+                )
+                tensors.extend([ctc_loss_tensor, char_t, char_l, ctc_predictions])
 
             eval_callback = nemo.core.EvaluatorCallback(
                 eval_tensors=list(tensors),
-                user_iter_callback=partial(
-                    process_evaluation_batch_xf,
-                    tokenizer=tokenizer,
-                    labels=char_labels
-                ),
+                user_iter_callback=partial(process_evaluation_batch_xf, tokenizer=tokenizer, labels=char_labels),
                 user_epochs_done_callback=partial(
-                    process_evaluation_epoch_xf,
-                    tag=os.path.basename(val_path),
-                    calc_wer=True,
-                    logger=logger
+                    process_evaluation_epoch_xf, tag=os.path.basename(val_path), calc_wer=True, logger=logger
                 ),
                 eval_step=args.eval_freq,
-                tb_writer=neural_factory.tb_writer
+                tb_writer=neural_factory.tb_writer,
             )
             callbacks.append(eval_callback)
     else:
         logger.warning("No val dataset")
 
     saver_callback = nemo.core.CheckpointCallback(
-        folder=neural_factory.checkpoint_dir,
-        step_freq=args.checkpoint_save_freq
+        folder=neural_factory.checkpoint_dir, step_freq=args.checkpoint_save_freq
     )
     callbacks.append(saver_callback)
 
@@ -388,7 +328,7 @@ def construct_name(args, cfg):
         args.exp_name,
         'bs' + str(args.batch_size * world_size * args.iter_per_step),
         'epochs' + str(args.num_epochs),
-        'ctc' + str(args.enable_ctc_loss)
+        'ctc' + str(args.enable_ctc_loss),
     )
     if args.work_dir:
         name = os.path.join(args.work_dir, name)
@@ -410,7 +350,7 @@ def main():
         log_dir=name,
         create_tb_writer=True,
         files_to_copy=[args.model_config, __file__],
-        add_time_to_log_dir=args.add_time_dir
+        add_time_to_log_dir=args.add_time_dir,
     )
     logger = neural_factory.logger
     tb_writer = neural_factory.tb_writer
@@ -426,8 +366,7 @@ def main():
         logger.info(f'Using seed {args.random_seed}')
 
     # Defining computational graph
-    loss, callbacks, num_data = create_dag_and_callbacks(
-        args, garnet_params, neural_factory)
+    loss, callbacks, num_data = create_dag_and_callbacks(args, garnet_params, neural_factory)
 
     batch_size = args.batch_size
     num_epochs = args.num_epochs
@@ -437,8 +376,7 @@ def main():
     neural_factory.logger.info(f'Num data: {num_data}')
     neural_factory.logger.info(f'Steps per epoch: {steps_per_epoch}')
     neural_factory.logger.info(f'Total steps: {total_steps}')
-    neural_factory.logger.info(
-        f'Optimization Params:\n{pformat(garnet_params["optimization"])}')
+    neural_factory.logger.info(f'Optimization Params:\n{pformat(garnet_params["optimization"])}')
 
     # Optimize
     neural_factory.train(
@@ -447,14 +385,11 @@ def main():
         lr_policy=SquareAnnealing(
             total_steps,
             min_lr=garnet_params['optimization']['min_lr'],
-            warmup_steps=(
-                garnet_params['optimization']['warmup_epochs']
-                * steps_per_epoch
-            )
+            warmup_steps=(garnet_params['optimization']['warmup_epochs'] * steps_per_epoch),
         ),
         optimizer=args.optimizer,
         optimization_params=garnet_params['optimization']['params'],
-        batches_per_step=args.iter_per_step
+        batches_per_step=args.iter_per_step,
     )
 
 

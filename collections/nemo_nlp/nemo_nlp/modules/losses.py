@@ -7,11 +7,13 @@ from .pytorch_utils import SmoothedCrossEntropyLoss
 from ..utils.nlp_utils import mask_padded_tokens
 
 
-__all__ = ['MaskedLanguageModelingLossNM',
-           'LossAggregatorNM',
-           'TokenClassificationLoss',
-           'JointIntentSlotLoss',
-           'PaddedSmoothedCrossEntropyLossNM']
+__all__ = [
+    'MaskedLanguageModelingLossNM',
+    'LossAggregatorNM',
+    'TokenClassificationLoss',
+    'JointIntentSlotLoss',
+    'PaddedSmoothedCrossEntropyLossNM',
+]
 
 
 class MaskedLanguageModelingLossNM(LossNM):
@@ -44,22 +46,9 @@ class MaskedLanguageModelingLossNM(LossNM):
             1: AxisType(TimeTag)
         """
         return {
-            "logits":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag),
-                2: AxisType(ChannelTag)
-            }),
-            "output_ids":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            }),
-            "output_mask":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            })
+            "logits": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag), 2: AxisType(ChannelTag)}),
+            "output_ids": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
+            "output_mask": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
         }
 
     @property
@@ -69,9 +58,7 @@ class MaskedLanguageModelingLossNM(LossNM):
         loss:
             NeuralType(None)
         """
-        return {
-            "loss": NeuralType(None)
-        }
+        return {"loss": NeuralType(None)}
 
     def __init__(self, label_smoothing=0.0, **kwargs):
         LossNM.__init__(self, **kwargs)
@@ -108,9 +95,7 @@ class LossAggregatorNM(LossNM):
         loss:
             NeuralType(None)
         """
-        return {
-            "loss": NeuralType(None)
-        }
+        return {"loss": NeuralType(None)}
 
     def __init__(self, *, num_inputs=2, **kwargs):
         # Store number of inputs/losses.
@@ -160,19 +145,9 @@ class TokenClassificationLoss(LossNM):
             1: AxisType(TimeTag)
         """
         return {
-            "logits": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag),
-                2: AxisType(ChannelTag)
-            }),
-            "labels": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            }),
-            "loss_mask": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            })
+            "logits": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag), 2: AxisType(ChannelTag)}),
+            "labels": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
+            "loss_mask": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
         }
 
     @property
@@ -182,9 +157,7 @@ class TokenClassificationLoss(LossNM):
         loss:
             NeuralType(None)
         """
-        return {
-            "loss": NeuralType(None)
-        }
+        return {"loss": NeuralType(None)}
 
     def __init__(self, num_classes, class_weights=None, **kwargs):
         LossNM.__init__(self, **kwargs)
@@ -255,27 +228,11 @@ class JointIntentSlotLoss(LossNM):
             1: AxisType(TimeTag)
         """
         return {
-            "intent_logits": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(ChannelTag)
-            }),
-            "slot_logits": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag),
-                2: AxisType(ChannelTag)
-            }),
-            "loss_mask": NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            }),
-            "intents": NeuralType({
-                0: AxisType(BatchTag),
-            }),
-            "slots":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            }),
+            "intent_logits": NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag)}),
+            "slot_logits": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag), 2: AxisType(ChannelTag)}),
+            "loss_mask": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
+            "intents": NeuralType({0: AxisType(BatchTag),}),
+            "slots": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
         }
 
     @property
@@ -285,16 +242,16 @@ class JointIntentSlotLoss(LossNM):
         loss:
             NeuralType(None)
         """
-        return {
-            "loss": NeuralType(None)
-        }
+        return {"loss": NeuralType(None)}
 
-    def __init__(self,
-                 num_slots,
-                 slot_classes_loss_weights=None,
-                 intent_classes_loss_weights=None,
-                 intent_loss_weight=0.6,
-                 **kwargs):
+    def __init__(
+        self,
+        num_slots,
+        slot_classes_loss_weights=None,
+        intent_classes_loss_weights=None,
+        intent_loss_weight=0.6,
+        **kwargs
+    ):
         LossNM.__init__(self, **kwargs)
         self.num_slots = num_slots
         self.intent_loss_weight = intent_loss_weight
@@ -303,24 +260,15 @@ class JointIntentSlotLoss(LossNM):
 
         # For weighted loss to tackle class imbalance
         if slot_classes_loss_weights:
-            self.slot_classes_loss_weights = torch.FloatTensor(
-                slot_classes_loss_weights).to(self._device)
+            self.slot_classes_loss_weights = torch.FloatTensor(slot_classes_loss_weights).to(self._device)
 
         if intent_classes_loss_weights:
-            self.intent_classes_loss_weights = torch.FloatTensor(
-                intent_classes_loss_weights).to(self._device)
+            self.intent_classes_loss_weights = torch.FloatTensor(intent_classes_loss_weights).to(self._device)
 
-        self._criterion_intent = nn.CrossEntropyLoss(
-            weight=self.intent_classes_loss_weights)
-        self._criterion_slot = nn.CrossEntropyLoss(
-            weight=self.slot_classes_loss_weights)
+        self._criterion_intent = nn.CrossEntropyLoss(weight=self.intent_classes_loss_weights)
+        self._criterion_slot = nn.CrossEntropyLoss(weight=self.slot_classes_loss_weights)
 
-    def _loss_function(self,
-                       intent_logits,
-                       slot_logits,
-                       loss_mask,
-                       intents,
-                       slots):
+    def _loss_function(self, intent_logits, slot_logits, loss_mask, intents, slots):
         intent_loss = self._criterion_intent(intent_logits, intents)
 
         active_loss = loss_mask.view(-1) > 0.5
@@ -332,8 +280,7 @@ class JointIntentSlotLoss(LossNM):
             slot_loss = 0.0
         else:
             slot_loss = self._criterion_slot(active_logits, active_labels)
-        loss = intent_loss * self.intent_loss_weight + \
-            slot_loss * (1 - self.intent_loss_weight)
+        loss = intent_loss * self.intent_loss_weight + slot_loss * (1 - self.intent_loss_weight)
 
         return loss
 
@@ -368,17 +315,8 @@ class PaddedSmoothedCrossEntropyLossNM(LossNM):
             1: AxisType(TimeTag)
         """
         return {
-            "logits":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag),
-                2: AxisType(ChannelTag)
-            }),
-            "target_ids":
-            NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag)
-            })
+            "logits": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag), 2: AxisType(ChannelTag)}),
+            "target_ids": NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag)}),
         }
 
     @property
@@ -388,22 +326,19 @@ class PaddedSmoothedCrossEntropyLossNM(LossNM):
         loss:
             NeuralType(None)
         """
-        return {
-            "loss": NeuralType(None)
-        }
+        return {"loss": NeuralType(None)}
 
     def __init__(self, **kwargs):
         LossNM.__init__(self, **kwargs)
 
         loss_params = {
             "label_smoothing": self.local_parameters.get("label_smoothing", 0),
-            "predict_last_k": self.local_parameters.get("predict_last_k", 0)
+            "predict_last_k": self.local_parameters.get("predict_last_k", 0),
         }
         self._loss_fn = SmoothedCrossEntropyLoss(**loss_params)
         self._pad_id = self.local_parameters['pad_id']
 
     def _loss_function(self, logits, target_ids):
-        target_mask = mask_padded_tokens(
-            target_ids, self._pad_id).to(logits.dtype)
+        target_mask = mask_padded_tokens(target_ids, self._pad_id).to(logits.dtype)
         loss = self._loss_fn(logits, target_ids, target_mask)
         return loss
