@@ -15,17 +15,15 @@ import nemo
 import nemo.utils.argparse as nm_argparse
 from nemo.utils.lr_policies import SquareAnnealing
 import nemo_asr
-from nemo_asr.las.helpers import process_evaluation_batch_xf, \
-    process_evaluation_epoch_xf
+from nemo_asr.las.helpers import process_evaluation_batch_xf, process_evaluation_epoch_xf
 from nemo_asr.helpers import word_error_rate
 import nemo_nlp
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        parents=[nm_argparse.NemoArgParser()],
-        description='GarNet with Transformer',
-        conflict_handler='resolve')
+        parents=[nm_argparse.NemoArgParser()], description='GarNet with Transformer', conflict_handler='resolve'
+    )
     parser.set_defaults(
         checkpoint_dir=None,
         optimizer="novograd",
@@ -34,15 +32,17 @@ def parse_args():
         weight_decay=1e-5,
         lr=1e-3,
         amp_opt_level="O1",
-        create_tb_writer=True
+        create_tb_writer=True,
     )
 
     # Overwrite default args
-    parser.add_argument("--num_epochs", type=int, default=0,
-                        help="number of epochs to train. You should specify"
-                             "either num_epochs or max_steps")
-    parser.add_argument("--model_config", type=str, required=True,
-                        help="model configuration file: model.yaml")
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=0,
+        help="number of epochs to train. You should specify" "either num_epochs or max_steps",
+    )
+    parser.add_argument("--model_config", type=str, required=True, help="model configuration file: model.yaml")
 
     # Create new args
     parser.add_argument("--exp_name", default="GarNet", type=str)
@@ -81,8 +81,7 @@ def create_dag(args, garnet_params, neural_factory):
     cpu_per_traindl = max(int(total_cpus / neural_factory.world_size), 1)
 
     # Defining nodes
-    tokenizer = nemo_nlp.YouTokenToMeTokenizer(
-        model_path=args.tokenizer_file)
+    tokenizer = nemo_nlp.YouTokenToMeTokenizer(model_path=args.tokenizer_file)
     # tokenizer = nemo_nlp.BERTTokenizer(
     #     pretrained_model="bert-base-uncased")  # + "-vocab.txt")
     assert tokenizer.pad_id() == 0, f"{tokenizer.pad_id}"
@@ -92,18 +91,14 @@ def create_dag(args, garnet_params, neural_factory):
         batch_size=args.batch_size,
         num_workers=cpu_per_traindl,
         tokenizer=tokenizer,
-        **garnet_params['AudioToTextDataLayer']['eval']
+        **garnet_params['AudioToTextDataLayer']['eval'],
     )
-    data_preprocessor = nemo_asr.AudioPreprocessing(
-        **garnet_params['AudioPreprocessing']
-    )
+    data_preprocessor = nemo_asr.AudioPreprocessing(**garnet_params['AudioPreprocessing'])
     encoder = nemo_asr.JasperEncoder(
-        feat_in=garnet_params["AudioPreprocessing"]["features"],
-        **garnet_params['JasperEncoder']
+        feat_in=garnet_params["AudioPreprocessing"]["features"], **garnet_params['JasperEncoder']
     )
     connector = nemo_asr.JasperRNNConnector(
-        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
-        out_channels=512
+        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'], out_channels=512
     )
 
     # Transformer Decoder
@@ -122,18 +117,11 @@ def create_dag(args, garnet_params, neural_factory):
         attn_score_dropout=0.1,
         attn_layer_dropout=0.1,
     )
-    t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(
-        vocab_size=vocab_size,
-        d_model=512
-    )
+    t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(vocab_size=vocab_size, d_model=512)
     decoder.restore_from("<update_me>")
-    t_log_softmax.log_softmax.dense.weight = \
-        decoder.embedding_layer.token_embedding.weight
+    t_log_softmax.log_softmax.dense.weight = decoder.embedding_layer.token_embedding.weight
 
-    loss = nemo_nlp.PaddedSmoothedCrossEntropyLossNM(
-        pad_id=tokenizer.pad_id(),
-        label_smoothing=0.1
-    )
+    loss = nemo_nlp.PaddedSmoothedCrossEntropyLossNM(pad_id=tokenizer.pad_id(), label_smoothing=0.1)
     beam_translator = nemo_nlp.BeamSearchTranslatorNM(
         decoder=decoder,
         log_softmax=t_log_softmax,
@@ -142,21 +130,15 @@ def create_dag(args, garnet_params, neural_factory):
         length_penalty=0.0,
         bos_token=tokenizer.bos_id(),
         pad_token=tokenizer.pad_id(),
-        eos_token=tokenizer.eos_id()
+        eos_token=tokenizer.eos_id(),
     )
     int_to_seq = nemo_asr.IntToSeq()
     int_to_seq2 = nemo_asr.IntToSeq2()
 
     # Creating DAG
     audios, audio_lens, decoder_in, decoder_out, t_len = data()
-    processed_audios, processed_audio_lens = data_preprocessor(
-        input_signal=audios,
-        length=audio_lens
-    )
-    encoded, enc_length = encoder(
-        audio_signal=processed_audios,
-        length=processed_audio_lens
-    )
+    processed_audios, processed_audio_lens = data_preprocessor(input_signal=audios, length=audio_lens)
+    encoded, enc_length = encoder(audio_signal=processed_audios, length=processed_audio_lens)
     enc_length = int_to_seq(x=encoded, length=enc_length)
     t_len = int_to_seq2(x=decoder_in, length=t_len)
     encoded = connector(tensor=encoded)
@@ -171,19 +153,14 @@ def create_dag(args, garnet_params, neural_factory):
     #     log_probs=log_probs,
     #     target_ids=decoder_out
     # )
-    beam_trans = beam_translator(
-        hidden_states_src=encoded, input_mask_src=enc_length
-    )
+    beam_trans = beam_translator(hidden_states_src=encoded, input_mask_src=enc_length)
 
     return [beam_trans, decoder_out], tokenizer
 
 
 def construct_name(args, cfg):
     name = '{}_{}_{}_{}'.format(
-        cfg['model'],
-        args.exp_name,
-        'bs' + str(args.batch_size),
-        'epochs' + str(args.num_epochs)
+        cfg['model'], args.exp_name, 'bs' + str(args.batch_size), 'epochs' + str(args.num_epochs)
     )
     if args.work_dir:
         name = os.path.join(args.work_dir, name)
@@ -204,7 +181,7 @@ def main():
         cudnn_benchmark=args.cudnn_benchmark,
         log_dir=name,
         create_tb_writer=True,
-        files_to_copy=[args.model_config, __file__]
+        files_to_copy=[args.model_config, __file__],
     )
     logger = neural_factory.logger
     tb_writer = neural_factory.tb_writer
@@ -223,10 +200,7 @@ def main():
     tensors, tokenizer = create_dag(args, garnet_params, neural_factory)
 
     start = time.time()
-    evaluated_tensors = neural_factory.infer(
-        tensors=tensors,
-        checkpoint_dir=args.load_dir,
-    )
+    evaluated_tensors = neural_factory.infer(tensors=tensors, checkpoint_dir=args.load_dir,)
 
     predictions = []
     for t in evaluated_tensors[0]:
@@ -242,7 +216,7 @@ def main():
             references.append(tokenizer.ids_to_text(k))
 
     wer = word_error_rate(hypotheses=predictions, references=references)
-    logger.info("Greedy WER {:.2f}%".format(wer*100))
+    logger.info("Greedy WER {:.2f}%".format(wer * 100))
 
     end = time.time()
     print(f"Total time: {end-start}s")

@@ -40,8 +40,7 @@ def seq_collate_fn(batch, token_pad_value=0):
         tokens_i_len = tokens_i_len.item()
         if tokens_i_len < max_tokens_len:
             pad = (0, max_tokens_len - tokens_i_len)
-            tokens_i = torch.nn.functional.pad(
-                tokens_i, pad, value=token_pad_value)
+            tokens_i = torch.nn.functional.pad(tokens_i, pad, value=token_pad_value)
         tokens.append(tokens_i)
 
     if has_audio:
@@ -118,31 +117,36 @@ class AudioDataset(Dataset):
         eos_id: Id of end of sequence symbol to append if not None
         load_audio: Boolean flag indicate whether do or not load audio
     """
+
     def __init__(
-            self,
-            manifest_filepath,
-            labels,
-            featurizer,
-            max_duration=None,
-            min_duration=None,
-            max_utts=0,
-            blank_index=-1,
-            unk_index=-1,
-            normalize=True,
-            trim=False,
-            bos_id=None,
-            eos_id=None,
-            logger=False,
-            load_audio=True,
-            manifest_class=ManifestEN):
+        self,
+        manifest_filepath,
+        labels,
+        featurizer,
+        max_duration=None,
+        min_duration=None,
+        max_utts=0,
+        blank_index=-1,
+        unk_index=-1,
+        normalize=True,
+        trim=False,
+        bos_id=None,
+        eos_id=None,
+        logger=False,
+        load_audio=True,
+        manifest_class=ManifestEN,
+    ):
         m_paths = manifest_filepath.split(',')
-        self.manifest = manifest_class(m_paths, labels,
-                                       max_duration=max_duration,
-                                       min_duration=min_duration,
-                                       max_utts=max_utts,
-                                       blank_index=blank_index,
-                                       unk_index=unk_index,
-                                       normalize=normalize)
+        self.manifest = manifest_class(
+            m_paths,
+            labels,
+            max_duration=max_duration,
+            min_duration=min_duration,
+            max_utts=max_utts,
+            blank_index=blank_index,
+            unk_index=unk_index,
+            normalize=normalize,
+        )
         self.featurizer = featurizer
         self.trim = trim
         self.eos_id = eos_id
@@ -151,19 +155,17 @@ class AudioDataset(Dataset):
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
-                "hours.".format(
-                    self.manifest.duration / 3600,
-                    self.manifest.filtered_duration / 3600))
+                "hours.".format(self.manifest.duration / 3600, self.manifest.filtered_duration / 3600)
+            )
 
     def __getitem__(self, index):
         sample = self.manifest[index]
         if self.load_audio:
             duration = sample['duration'] if 'duration' in sample else 0
             offset = sample['offset'] if 'offset' in sample else 0
-            features = self.featurizer.process(sample['audio_filepath'],
-                                               offset=offset,
-                                               duration=duration,
-                                               trim=self.trim)
+            features = self.featurizer.process(
+                sample['audio_filepath'], offset=offset, duration=duration, trim=self.trim
+            )
             f, fl = features, torch.tensor(features.shape[0]).long()
             # f = f / (torch.max(torch.abs(f)) + 1e-5)
         else:
@@ -177,21 +179,31 @@ class AudioDataset(Dataset):
             t = t + [self.eos_id]
             tl += 1
 
-        return \
-            f, fl, \
-            torch.tensor(t).long(), torch.tensor(tl).long()
+        return f, fl, torch.tensor(t).long(), torch.tensor(tl).long()
 
     def __len__(self):
         return len(self.manifest)
 
 
 class TFAudioDataset(Dataset):
-    def __init__(self, manifest_filepath, labels, featurizer,
-                 max_duration=None,
-                 min_duration=None, max_utts=0, normalize=True,
-                 trim=False, bos_id=None, eos_id=None, logger=False,
-                 load_audio=True,
-                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None):
+    def __init__(
+        self,
+        manifest_filepath,
+        labels,
+        featurizer,
+        max_duration=None,
+        min_duration=None,
+        max_utts=0,
+        normalize=True,
+        trim=False,
+        bos_id=None,
+        eos_id=None,
+        logger=False,
+        load_audio=True,
+        tokenizer=None,
+        mlm_prob=0,
+        tokenizer_vocab_size=None,
+    ):
         """
         Dataset that loads tensors via a json file containing paths to audio
         files, transcripts, and durations
@@ -222,13 +234,16 @@ class TFAudioDataset(Dataset):
         """
         m_paths = manifest_filepath.split(',')
         self.tokenizer = tokenizer
-        self.manifest = TFManifest(m_paths, labels,
-                                   max_duration=max_duration,
-                                   min_duration=min_duration,
-                                   max_utts=max_utts,
-                                   normalize=normalize,
-                                   tokenizer=tokenizer,
-                                   logger=logger)
+        self.manifest = TFManifest(
+            m_paths,
+            labels,
+            max_duration=max_duration,
+            min_duration=min_duration,
+            max_utts=max_utts,
+            normalize=normalize,
+            tokenizer=tokenizer,
+            logger=logger,
+        )
         self.featurizer = featurizer
         self.trim = trim
         self.eos_id = eos_id
@@ -239,19 +254,17 @@ class TFAudioDataset(Dataset):
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
-                "hours.".format(
-                    self.manifest.duration / 3600,
-                    self.manifest.filtered_duration / 3600))
+                "hours.".format(self.manifest.duration / 3600, self.manifest.filtered_duration / 3600)
+            )
 
     def __getitem__(self, index):
         sample = self.manifest[index]
         if self.load_audio:
             duration = sample['duration'] if 'duration' in sample else 0
             offset = sample['offset'] if 'offset' in sample else 0
-            features = self.featurizer.process(sample['audio_filepath'],
-                                               offset=offset,
-                                               duration=duration,
-                                               trim=self.trim)
+            features = self.featurizer.process(
+                sample['audio_filepath'], offset=offset, duration=duration, trim=self.trim
+            )
             f, fl = features, torch.tensor(features.shape[0]).long()
             # f = f / (torch.max(torch.abs(f)) + 1e-5)
         else:
@@ -272,13 +285,15 @@ class TFAudioDataset(Dataset):
         char_transcript = sample["char_transcript"]
         char_transcript_l = len(sample["char_transcript"])
 
-        return \
-            f, fl, \
-            torch.tensor(decoder_inputs).long(),\
-            torch.tensor(decoder_outputs).long(),\
-            torch.tensor(tl).long(),\
-            torch.tensor(char_transcript).long(),\
+        return (
+            f,
+            fl,
+            torch.tensor(decoder_inputs).long(),
+            torch.tensor(decoder_outputs).long(),
+            torch.tensor(tl).long(),
+            torch.tensor(char_transcript).long(),
             torch.tensor(char_transcript_l).long(),
+        )
 
     def mask_ids(self, ids):
         """
@@ -310,8 +325,7 @@ class TFAudioDataset(Dataset):
         mask_id = self.tokenizer.token_to_id("<mask>")
 
         for word_ids in cand_indexes:
-            is_special = (word_ids[0] == self.bos_id) or \
-                         (word_ids[0] == self.eos_id)
+            is_special = (word_ids[0] == self.bos_id) or (word_ids[0] == self.eos_id)
             if is_special or (random.random() > self.mlm_prob):
                 output_mask.extend([0] * len(word_ids))
                 masked_ids.extend(word_ids)
@@ -340,13 +354,25 @@ class TFAudioDataset(Dataset):
 
 
 class MLMAudioDataset(Dataset):
-    def __init__(self, manifest_filepath, labels, featurizer,
-                 max_duration=None,
-                 min_duration=None, max_utts=0, normalize=True,
-                 trim=False, bos_id=None, eos_id=None, logger=False,
-                 load_audio=True,
-                 tokenizer=None, mlm_prob=0, tokenizer_vocab_size=None,
-                 _eval=False):
+    def __init__(
+        self,
+        manifest_filepath,
+        labels,
+        featurizer,
+        max_duration=None,
+        min_duration=None,
+        max_utts=0,
+        normalize=True,
+        trim=False,
+        bos_id=None,
+        eos_id=None,
+        logger=False,
+        load_audio=True,
+        tokenizer=None,
+        mlm_prob=0,
+        tokenizer_vocab_size=None,
+        _eval=False,
+    ):
         """
         Dataset that loads tensors via a json file containing paths to audio
         files, transcripts, and durations
@@ -377,13 +403,16 @@ class MLMAudioDataset(Dataset):
         """
         m_paths = manifest_filepath.split(',')
         self.tokenizer = tokenizer
-        self.manifest = TFManifest(m_paths, labels,
-                                   max_duration=max_duration,
-                                   min_duration=min_duration,
-                                   max_utts=max_utts,
-                                   normalize=normalize,
-                                   tokenizer=tokenizer,
-                                   logger=logger)
+        self.manifest = TFManifest(
+            m_paths,
+            labels,
+            max_duration=max_duration,
+            min_duration=min_duration,
+            max_utts=max_utts,
+            normalize=normalize,
+            tokenizer=tokenizer,
+            logger=logger,
+        )
         self.featurizer = featurizer
         self.trim = trim
         self.eos_id = eos_id
@@ -395,19 +424,17 @@ class MLMAudioDataset(Dataset):
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
-                "hours.".format(
-                    self.manifest.duration / 3600,
-                    self.manifest.filtered_duration / 3600))
+                "hours.".format(self.manifest.duration / 3600, self.manifest.filtered_duration / 3600)
+            )
 
     def __getitem__(self, index):
         sample = self.manifest[index]
         if self.load_audio:
             duration = sample['duration'] if 'duration' in sample else 0
             offset = sample['offset'] if 'offset' in sample else 0
-            features = self.featurizer.process(sample['audio_filepath'],
-                                               offset=offset,
-                                               duration=duration,
-                                               trim=self.trim)
+            features = self.featurizer.process(
+                sample['audio_filepath'], offset=offset, duration=duration, trim=self.trim
+            )
             f, fl = features, torch.tensor(features.shape[0]).long()
             # f = f / (torch.max(torch.abs(f)) + 1e-5)
         else:
@@ -435,14 +462,16 @@ class MLMAudioDataset(Dataset):
         char_transcript = sample["char_transcript"]
         char_transcript_l = len(sample["char_transcript"])
 
-        return \
-            f, fl, \
-            torch.tensor(decoder_inputs).long(),\
-            torch.tensor(decoder_outputs).long(),\
-            torch.tensor(tl).long(),\
-            torch.tensor(output_mask).long(),\
-            torch.tensor(char_transcript).long(),\
+        return (
+            f,
+            fl,
+            torch.tensor(decoder_inputs).long(),
+            torch.tensor(decoder_outputs).long(),
+            torch.tensor(tl).long(),
+            torch.tensor(output_mask).long(),
+            torch.tensor(char_transcript).long(),
             torch.tensor(char_transcript_l).long(),
+        )
 
     def mask_ids(self, ids):
         """
@@ -476,8 +505,7 @@ class MLMAudioDataset(Dataset):
         mask_id = self.tokenizer.token_to_id("<mask>")
 
         for word_ids in cand_indexes:
-            is_special = (word_ids[0] == self.bos_id) or \
-                         (word_ids[0] == self.eos_id)
+            is_special = (word_ids[0] == self.bos_id) or (word_ids[0] == self.eos_id)
             if is_special or (random.random() > self.mlm_prob):
                 output_mask.extend([0] * len(word_ids))
                 masked_ids.extend(word_ids)
@@ -505,7 +533,6 @@ class MLMAudioDataset(Dataset):
         return len(self.manifest)
 
 
-
 def mlmaudio_seq_collate_fn(batch):
     def find_max_len(seq, index):
         max_len = -1
@@ -520,8 +547,7 @@ def mlmaudio_seq_collate_fn(batch):
     if batch[0][0] is not None:
         max_audio_len = find_max_len(batch, 0)
 
-        audio_signal = torch.zeros(batch_size, max_audio_len,
-                                   dtype=torch.float)
+        audio_signal = torch.zeros(batch_size, max_audio_len, dtype=torch.float)
         audio_lengths = []
         for i, s in enumerate(batch):
             audio_signal[i].narrow(0, 0, s[0].size(0)).copy_(s[0])
@@ -535,8 +561,7 @@ def mlmaudio_seq_collate_fn(batch):
     decoder_out = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
     output_mask = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
     transcript_lengths = []
-    char_transcript = torch.zeros(
-        batch_size, max_char_transcript_len, dtype=torch.long)
+    char_transcript = torch.zeros(batch_size, max_char_transcript_len, dtype=torch.long)
     char_transcript_lengths = []
     for i, s in enumerate(batch):
         decoder_in[i].narrow(0, 0, s[2].size(0)).copy_(s[2])
@@ -546,11 +571,18 @@ def mlmaudio_seq_collate_fn(batch):
         char_transcript[i].narrow(0, 0, s[6].size(0)).copy_(s[6])
         char_transcript_lengths.append(s[7])
     transcript_lengths = torch.tensor(transcript_lengths, dtype=torch.long)
-    char_transcript_lengths = torch.tensor(
-        char_transcript_lengths, dtype=torch.long)
+    char_transcript_lengths = torch.tensor(char_transcript_lengths, dtype=torch.long)
 
-    return audio_signal, audio_lengths, decoder_in, decoder_out,\
-        transcript_lengths, output_mask, char_transcript, char_transcript_lengths
+    return (
+        audio_signal,
+        audio_lengths,
+        decoder_in,
+        decoder_out,
+        transcript_lengths,
+        output_mask,
+        char_transcript,
+        char_transcript_lengths,
+    )
 
 
 def tfaudio_seq_collate_fn(batch):
@@ -567,8 +599,7 @@ def tfaudio_seq_collate_fn(batch):
     if batch[0][0] is not None:
         max_audio_len = find_max_len(batch, 0)
 
-        audio_signal = torch.zeros(batch_size, max_audio_len,
-                                   dtype=torch.float)
+        audio_signal = torch.zeros(batch_size, max_audio_len, dtype=torch.float)
         audio_lengths = []
         for i, s in enumerate(batch):
             audio_signal[i].narrow(0, 0, s[0].size(0)).copy_(s[0])
@@ -581,8 +612,7 @@ def tfaudio_seq_collate_fn(batch):
     decoder_in = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
     decoder_out = torch.zeros(batch_size, max_transcript_len, dtype=torch.long)
     transcript_lengths = []
-    char_transcript = torch.zeros(
-        batch_size, max_char_transcript_len, dtype=torch.long)
+    char_transcript = torch.zeros(batch_size, max_char_transcript_len, dtype=torch.long)
     char_transcript_lengths = []
     for i, s in enumerate(batch):
         decoder_in[i].narrow(0, 0, s[2].size(0)).copy_(s[2])
@@ -591,11 +621,17 @@ def tfaudio_seq_collate_fn(batch):
         char_transcript[i].narrow(0, 0, s[5].size(0)).copy_(s[5])
         char_transcript_lengths.append(s[6])
     transcript_lengths = torch.tensor(transcript_lengths, dtype=torch.long)
-    char_transcript_lengths = torch.tensor(
-        char_transcript_lengths, dtype=torch.long)
+    char_transcript_lengths = torch.tensor(char_transcript_lengths, dtype=torch.long)
 
-    return audio_signal, audio_lengths, decoder_in, decoder_out,\
-        transcript_lengths, char_transcript, char_transcript_lengths
+    return (
+        audio_signal,
+        audio_lengths,
+        decoder_in,
+        decoder_out,
+        transcript_lengths,
+        char_transcript,
+        char_transcript_lengths,
+    )
 
 
 class KaldiFeatureDataset(Dataset):
@@ -617,18 +653,20 @@ class KaldiFeatureDataset(Dataset):
         normalize: whether to normalize transcript text. Defaults to True.
         eos_id: Id of end of sequence symbol to append if not None.
     """
+
     def __init__(
-            self,
-            kaldi_dir,
-            labels,
-            min_duration=None,
-            max_duration=None,
-            max_utts=0,
-            unk_index=-1,
-            blank_index=-1,
-            normalize=True,
-            eos_id=None,
-            logger=None):
+        self,
+        kaldi_dir,
+        labels,
+        min_duration=None,
+        max_duration=None,
+        max_utts=0,
+        unk_index=-1,
+        blank_index=-1,
+        normalize=True,
+        eos_id=None,
+        logger=None,
+    ):
         self.eos_id = eos_id
         self.unk_index = unk_index
         self.blank_index = blank_index
@@ -640,10 +678,7 @@ class KaldiFeatureDataset(Dataset):
 
         # Read Kaldi features (MFCC, PLP) using feats.scp
         feats_path = os.path.join(kaldi_dir, 'feats.scp')
-        id2feats = {
-            utt_id: torch.from_numpy(feats)
-            for utt_id, feats in kaldi_io.read_mat_scp(feats_path)
-        }
+        id2feats = {utt_id: torch.from_numpy(feats) for utt_id, feats in kaldi_io.read_mat_scp(feats_path)}
 
         # Get durations, if utt2dur exists
         utt2dur_path = os.path.join(kaldi_dir, 'utt2dur')
@@ -660,8 +695,7 @@ class KaldiFeatureDataset(Dataset):
             )
         elif logger:
             logger.info(
-                f"Did not find utt2dur when loading data from "
-                f"{kaldi_dir}. Skipping dataset duration calculations."
+                f"Did not find utt2dur when loading data from " f"{kaldi_dir}. Skipping dataset duration calculations."
             )
 
         # Match transcripts to features
@@ -677,8 +711,7 @@ class KaldiFeatureDataset(Dataset):
 
                     text = line[split_idx:].strip()
                     if normalize:
-                        text = ManifestEN.normalize_text(
-                            text, labels)
+                        text = ManifestEN.normalize_text(text, labels)
                     dur = id2dur[utt_id] if id2dur else None
 
                     # Filter by duration if specified & utt2dur exists
@@ -693,12 +726,10 @@ class KaldiFeatureDataset(Dataset):
                         'utt_id': utt_id,
                         'text': text,
                         'tokens': ManifestBase.tokenize_transcript(
-                            text,
-                            self.labels_map,
-                            self.unk_index,
-                            self.blank_index),
+                            text, self.labels_map, self.unk_index, self.blank_index
+                        ),
                         'audio': audio_features.t(),
-                        'duration': dur
+                        'duration': dur,
                     }
 
                     data.append(sample)
@@ -711,8 +742,8 @@ class KaldiFeatureDataset(Dataset):
         if logger and id2dur:
             # utt2dur durations are in seconds
             logger.info(
-                    f"Dataset loaded with {duration/60 : .2f} hours. "
-                    f"Filtered {filtered_duration/60 : .2f} hours.")
+                f"Dataset loaded with {duration/60 : .2f} hours. " f"Filtered {filtered_duration/60 : .2f} hours."
+            )
 
         self.data = data
 
@@ -740,6 +771,7 @@ class TranscriptDataset(Dataset):
         labels (list): List of string labels to use when to str2int translation
         eos_id (int): Label position of end of string symbol
     """
+
     def __init__(self, path, labels, bos_id=None, eos_id=None, lowercase=True):
         _, ext = os.path.splitext(path)
         if ext == '.csv':
@@ -770,11 +802,9 @@ class TranscriptDataset(Dataset):
         return len(self.texts)
 
     def __getitem__(self, item):
-        tokenized_text = ManifestBase.tokenize_transcript(
-            self.texts[item], self.char2num, -1, -1)
+        tokenized_text = ManifestBase.tokenize_transcript(self.texts[item], self.char2num, -1, -1)
         if self.bos_id:
             tokenized_text = [self.bos_id] + tokenized_text
         if self.eos_id:
             tokenized_text = tokenized_text + [self.eos_id]
-        return (torch.tensor(tokenized_text, dtype=torch.long),
-                torch.tensor(len(tokenized_text), dtype=torch.long))
+        return (torch.tensor(tokenized_text, dtype=torch.long), torch.tensor(len(tokenized_text), dtype=torch.long))

@@ -22,13 +22,7 @@ from ..utils import dataset_to_ids, clean_src_and_target
 
 
 class TranslationDataset(Dataset):
-    def __init__(self,
-                 tokenizer_src,
-                 tokenizer_tgt,
-                 dataset_src,
-                 dataset_tgt,
-                 tokens_in_batch=1024,
-                 clean=False):
+    def __init__(self, tokenizer_src, tokenizer_tgt, dataset_src, dataset_tgt, tokens_in_batch=1024, clean=False):
 
         self.src_tokenizer = tokenizer_src
         self.tgt_tokenizer = tokenizer_tgt
@@ -64,15 +58,11 @@ class TranslationDataset(Dataset):
         for batch_idx, b in enumerate(batch_indices):
             src_len = max([len(src_ids[i]) for i in b])
             tgt_len = max([len(tgt_ids[i]) for i in b])
-            src_ids_ = self.src_tokenizer.pad_id() * np.ones(
-                (len(b), src_len), dtype=np.int)
-            tgt_ids_ = self.tgt_tokenizer.pad_id() * np.ones(
-                (len(b), tgt_len), dtype=np.int)
+            src_ids_ = self.src_tokenizer.pad_id() * np.ones((len(b), src_len), dtype=np.int)
+            tgt_ids_ = self.tgt_tokenizer.pad_id() * np.ones((len(b), tgt_len), dtype=np.int)
             for i, sentence_idx in enumerate(b):
-                src_ids_[i][:len(src_ids[sentence_idx]
-                                 )] = src_ids[sentence_idx]
-                tgt_ids_[i][:len(tgt_ids[sentence_idx]
-                                 )] = tgt_ids[sentence_idx]
+                src_ids_[i][: len(src_ids[sentence_idx])] = src_ids[sentence_idx]
+                tgt_ids_[i][: len(tgt_ids[sentence_idx])] = tgt_ids[sentence_idx]
             batches[batch_idx] = {"src": src_ids_, "tgt": tgt_ids_}
         return batches
 
@@ -141,16 +131,13 @@ class TranslationDataset(Dataset):
                         batches_to_evict = num_examples_to_split
 
                     batches.append(batches[num_batches][batches_to_evict:])
-                    batches[num_batches] = \
-                        batches[num_batches][:batches_to_evict]
+                    batches[num_batches] = batches[num_batches][:batches_to_evict]
                     batch_size = num_examples_to_split - batches_to_evict
 
                     num_batches += 1
                     if batch_size > 0:
-                        src_len = max(
-                            [len(src_ids[j]) for j in batches[num_batches]])
-                        tgt_len = max(
-                            [len(tgt_ids[j]) for j in batches[num_batches]])
+                        src_len = max([len(src_ids[j]) for j in batches[num_batches]])
+                        tgt_len = max([len(tgt_ids[j]) for j in batches[num_batches]])
                     else:
                         src_len = 0
                         tgt_len = 0

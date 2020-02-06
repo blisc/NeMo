@@ -30,7 +30,7 @@ def tokenize_en(line):
     line = re.sub('^ ', '', line)
     line = re.sub(' $', '', line)
     # separate other special characters
-    line = re.sub(r'([^\s\.\'\`\,\-\w]|[_'+NUMERICS+'])', r' \g<1> ', line)
+    line = re.sub(r'([^\s\.\'\`\,\-\w]|[_' + NUMERICS + '])', r' \g<1> ', line)
     line = re.sub(r'(\w)\-(?=\w)', r'\g<1> @-@ ', line)
 
     # multidots stay together
@@ -62,12 +62,12 @@ def tokenize_en(line):
         match = re.search(r'^(\S+)\.$', word)
         if match:
             pre = match.group(1)
-            if i == len(words)-1:
+            if i == len(words) - 1:
                 """split last words independently as they are unlikely
                 to be non-breaking prefixes"""
-                word = pre+' .'
+                word = pre + ' .'
             else:
-                word = pre+' .'
+                word = pre + ' .'
 
         word += ' '
         line += word

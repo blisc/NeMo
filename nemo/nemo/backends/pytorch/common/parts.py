@@ -3,6 +3,7 @@ __all__ = ['Attention', 'MultiLayerPerceptron']
 import os
 
 import torch
+
 # noinspection PyPep8Naming
 from torch import nn
 
@@ -33,19 +34,13 @@ class Attention(nn.Module):
             query = self.linear_in(query)
             query = query.view(batch_size, output_len, dims)
 
-        attention_scores = torch.bmm(
-            query, context.transpose(1, 2).contiguous()
-        )
+        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
 
-        attention_scores = attention_scores.view(
-            batch_size * output_len, query_len
-        )
+        attention_scores = attention_scores.view(batch_size * output_len, query_len)
         attention_weights = self.softmax(attention_scores)
         if self.dropout.p != 0.0:
             attention_weights = self.dropout(attention_weights)
-        attention_weights = attention_weights.view(
-            batch_size, output_len, query_len
-        )
+        attention_weights = attention_weights.view(batch_size, output_len, query_len)
 
         mix = torch.bmm(attention_weights, context)
 
@@ -72,13 +67,7 @@ class MultiLayerPerceptron(nn.Module):
         log_softmax (bool): whether to add a log_softmax layer before output
     """
 
-    def __init__(self,
-                 hidden_size,
-                 num_classes,
-                 device,
-                 num_layers=2,
-                 activation='relu',
-                 log_softmax=True):
+    def __init__(self, hidden_size, num_classes, device, num_layers=2, activation='relu', log_softmax=True):
         super().__init__()
         self.layers = 0
         for _ in range(num_layers - 1):
@@ -101,7 +90,6 @@ class MultiLayerPerceptron(nn.Module):
             output_states = getattr(self, f'layer{i}')(output_states)
 
         if self.log_softmax:
-            output_states = torch.log_softmax(
-                output_states.float(), dim=-1).to(hidden_states.dtype)
+            output_states = torch.log_softmax(output_states.float(), dim=-1).to(hidden_states.dtype)
             # TODO: make it work with float16
         return output_states

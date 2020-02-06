@@ -4,10 +4,8 @@ import argparse
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description='Build N-gram LM model from text file')
-    parser.add_argument('text', metavar='text', type=str,
-                        help='text file')
+    parser = argparse.ArgumentParser(description='Build N-gram LM model from text file')
+    parser.add_argument('text', metavar='text', type=str, help='text file')
     parser.add_argument('--n', type=int, help='n for n-grams', default=3)
     args = parser.parse_args()
 

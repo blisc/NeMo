@@ -3,11 +3,16 @@ from transformers import GPT2Tokenizer
 
 
 class NemoGPT2Tokenizer(TokenizerSpec):
-    def __init__(self, pretrained_model=None,
-                 vocab_file=None, merges_file=None, errors='replace',
-                 bos_token="<|endoftext|>",
-                 eos_token="<|endoftext|>",
-                 **kwargs):
+    def __init__(
+        self,
+        pretrained_model=None,
+        vocab_file=None,
+        merges_file=None,
+        errors='replace',
+        bos_token="<|endoftext|>",
+        eos_token="<|endoftext|>",
+        **kwargs
+    ):
         if pretrained_model:
             self.tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model)
         self.vocab_size = self.tokenizer.vocab_size

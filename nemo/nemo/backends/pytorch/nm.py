@@ -52,17 +52,12 @@ class TrainableNM(NeuralModule, nn.Module):
     def set_weights(self, name2weight, name2name_and_transform=None):
         if name2weight is not None and len(name2weight) > 0:
             if name2name_and_transform is None:
-                self.load_state_dict(
-                    {key: name2weight[key][0] for key in name2weight.keys()}
-                )
+                self.load_state_dict({key: name2weight[key][0] for key in name2weight.keys()})
             else:
-                self.load_state_dict(
-                    {key: name2weight[key][0] for key in name2weight.keys()}
-                )
+                self.load_state_dict({key: name2weight[key][0] for key in name2weight.keys()})
 
     @t.jit.ignore()
-    def tie_weights_with(self, module, weight_names,
-                         name2name_and_transform=None):
+    def tie_weights_with(self, module, weight_names, name2name_and_transform=None):
         if module is None:
             raise ValueError("Module to tie weights can't be None")
         if weight_names is None or len(weight_names) == 0:
@@ -74,23 +69,12 @@ class TrainableNM(NeuralModule, nn.Module):
         else:
             for self_w_name in weight_names:
                 if self_w_name in name2name_and_transform:
-                    if (
-                            name2name_and_transform[self_w_name][1]
-                            == WeightShareTransform.SAME
-                    ):
+                    if name2name_and_transform[self_w_name][1] == WeightShareTransform.SAME:
                         rsetattr(
-                            self,
-                            self_w_name,
-                            rgetattr(module,
-                                     name2name_and_transform[self_w_name][0]),
+                            self, self_w_name, rgetattr(module, name2name_and_transform[self_w_name][0]),
                         )
-                    elif (
-                            name2name_and_transform[self_w_name][1]
-                            == WeightShareTransform.TRANSPOSE
-                    ):
-                        raise NotImplementedError(
-                            "Sorry, currently this is not implemented."
-                        )
+                    elif name2name_and_transform[self_w_name][1] == WeightShareTransform.TRANSPOSE:
+                        raise NotImplementedError("Sorry, currently this is not implemented.")
                 else:
                     rsetattr(self, self_w_name, rgetattr(module, self_w_name))
 
@@ -158,14 +142,19 @@ class NonTrainableNM(NeuralModule):
     def get_weights(self) -> Optional[Dict[(str, bool)]]:
         None
 
-    def set_weights(self, name2weight: Dict[(str, Tuple[str, bool])],
-                    name2name_and_transform: Dict[
-                        (str, Tuple[str, WeightShareTransform])] = None):
+    def set_weights(
+        self,
+        name2weight: Dict[(str, Tuple[str, bool])],
+        name2name_and_transform: Dict[(str, Tuple[str, WeightShareTransform])] = None,
+    ):
         pass
 
-    def tie_weights_with(self, module, weight_names=List[str],
-                         name2name_and_transform: Dict[
-                             (str, Tuple[str, WeightShareTransform])] = None):
+    def tie_weights_with(
+        self,
+        module,
+        weight_names=List[str],
+        name2name_and_transform: Dict[(str, Tuple[str, WeightShareTransform])] = None,
+    ):
         pass
 
     def save_to(self, path: str):
@@ -209,52 +198,31 @@ class DataLayerNM(NeuralModule):
         return {}
 
     def get_weights(self):
-        nemo.logging.warning(
-            "Data Layer does not have any weights to return. "
-            "This get_weights call returns None."
-        )
+        nemo.logging.warning("Data Layer does not have any weights to return. " "This get_weights call returns None.")
         return None
 
-    def set_weights(self, name2weight: Dict[(str, bool)],
-                    name2name_and_transform):
-        nemo.logging.warning(
-            "Data Layer does not have any weights to set. "
-            "This set_weights call is ignored."
-        )
+    def set_weights(self, name2weight: Dict[(str, bool)], name2name_and_transform):
+        nemo.logging.warning("Data Layer does not have any weights to set. " "This set_weights call is ignored.")
         return None
 
     def tie_weights_with(self, module, weight_names):
-        nemo.logging.warning(
-            "Data Layer does not have any weights to tie. "
-            "This tie_weights_with call is ignored."
-        )
+        nemo.logging.warning("Data Layer does not have any weights to tie. " "This tie_weights_with call is ignored.")
         return None
 
     def save_to(self, path):
-        nemo.logging.warning(
-            "Data Layer does not have any state to save. "
-            "This save_to call is ignored."
-        )
+        nemo.logging.warning("Data Layer does not have any state to save. " "This save_to call is ignored.")
         return None
 
     def restore_from(self, path):
-        raise NotImplementedError(
-            "Data Layer could not be restored from any saved " "state."
-        )
+        raise NotImplementedError("Data Layer could not be restored from any saved " "state.")
         return None
 
     def freeze(self, weights: Set[str] = None):
-        nemo.logging.warning(
-            "Data Layer does not have any weights to freeze. "
-            "This freeze call is ignored."
-        )
+        nemo.logging.warning("Data Layer does not have any weights to freeze. " "This freeze call is ignored.")
         return None
 
     def unfreeze(self, weights: Set[str] = None):
-        nemo.logging.warning(
-            "Data Layer does not have any weights to unfreeze. "
-            "This unfreeze call is ignored."
-        )
+        nemo.logging.warning("Data Layer does not have any weights to unfreeze. " "This unfreeze call is ignored.")
         return None
 
     @property
@@ -300,46 +268,35 @@ class LossNM(NeuralModule):
         #      "to return. This get_weights call returns None.")
         return None
 
-    def set_weights(self, name2weight: Dict[(str, bool)],
-                    name2name_and_transform):
+    def set_weights(self, name2weight: Dict[(str, bool)], name2name_and_transform):
         nemo.logging.warning(
-            "Loss function module does not have any weights to set. "
-            "This set_weights call is ignored."
+            "Loss function module does not have any weights to set. " "This set_weights call is ignored."
         )
         return None
 
     def tie_weights_with(self, module, weight_names):
         nemo.logging.warning(
-            "Loss function module does not have any weights to tie. "
-            "This tie_weights_with call is ignored."
+            "Loss function module does not have any weights to tie. " "This tie_weights_with call is ignored."
         )
         return None
 
     def save_to(self, path):
-        nemo.logging.warning(
-            "Loss function module does not have any state to save. "
-            "This save_to call is ignored."
-        )
+        nemo.logging.warning("Loss function module does not have any state to save. " "This save_to call is ignored.")
         return None
 
     def restore_from(self, path):
-        raise NotImplementedError(
-            "Loss function module could not be restored from " "any saved "
-            "state."
-        )
+        raise NotImplementedError("Loss function module could not be restored from " "any saved " "state.")
         return None
 
     def freeze(self, weights: Set[str] = None):
         nemo.logging.warning(
-            "Loss function module does not have any weights to freeze. "
-            "This freeze call is ignored."
+            "Loss function module does not have any weights to freeze. " "This freeze call is ignored."
         )
         return None
 
     def unfreeze(self, weights: Set[str] = None):
         nemo.logging.warning(
-            "Loss function module does not have any weights to "
-            "unfreeze. This unfreeze call is ignored."
+            "Loss function module does not have any weights to " "unfreeze. This unfreeze call is ignored."
         )
         return None
 

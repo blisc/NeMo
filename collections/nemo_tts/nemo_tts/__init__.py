@@ -14,18 +14,26 @@
 # =============================================================================
 from nemo.core import Backend
 
-from .tacotron2_modules import (MakeGate, Tacotron2Loss, Tacotron2Postnet,
-                                Tacotron2Decoder, Tacotron2DecoderInfer,
-                                Tacotron2Encoder, TextEmbedding)
+from .tacotron2_modules import (
+    MakeGate,
+    Tacotron2Loss,
+    Tacotron2Postnet,
+    Tacotron2Decoder,
+    Tacotron2DecoderInfer,
+    Tacotron2Encoder,
+    TextEmbedding,
+)
 from .waveglow_modules import WaveGlowNM, WaveGlowInferNM, WaveGlowLoss
 from .data_layers import AudioDataLayer
-from .parts.helpers import (waveglow_log_to_tb_func,
-                            waveglow_process_eval_batch,
-                            waveglow_eval_log_to_tb_func,
-                            tacotron2_log_to_tb_func,
-                            tacotron2_process_eval_batch,
-                            tacotron2_process_final_eval,
-                            tacotron2_eval_log_to_tb_func)
+from .parts.helpers import (
+    waveglow_log_to_tb_func,
+    waveglow_process_eval_batch,
+    waveglow_eval_log_to_tb_func,
+    tacotron2_log_to_tb_func,
+    tacotron2_process_eval_batch,
+    tacotron2_process_final_eval,
+    tacotron2_eval_log_to_tb_func,
+)
 
 name = "nemo_tts"
 backend = Backend.PyTorch

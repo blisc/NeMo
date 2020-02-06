@@ -17,9 +17,7 @@ def tensor2list(tensor):
     return tensor.detach().cpu().tolist()
 
 
-def eval_iter_callback(tensors,
-                       global_vars,
-                       eval_data_layer):
+def eval_iter_callback(tensors, global_vars, eval_data_layer):
     if "all_intent_preds" not in global_vars.keys():
         global_vars["all_intent_preds"] = []
     if "all_intent_labels" not in global_vars.keys():
@@ -58,8 +56,7 @@ def eval_iter_callback(tensors,
         if kv.startswith('subtokens_mask'):
             for v_tensor in v:
                 for subtokens_mask_tensor in v_tensor:
-                    all_subtokens_mask.extend(
-                        tensor2list(subtokens_mask_tensor))
+                    all_subtokens_mask.extend(tensor2list(subtokens_mask_tensor))
 
     all_intent_preds = list(np.argmax(np.asarray(all_intent_logits), 1))
     all_slot_preds = list(np.argmax(np.asarray(all_slot_logits), 2).flatten())
@@ -88,11 +85,10 @@ def eval_epochs_done_callback(global_vars, graph_fold):
     i = 0
     if intent_preds.shape[0] > 21:
         i = random.randint(0, intent_preds.shape[0] - 21)
-    nemo.logging.info("Sampled i_preds: [%s]" % list2str(intent_preds[i:i+20]))
-    nemo.logging.info(
-        "Sampled intents: [%s]" % list2str(intent_labels[i:i+20]))
-    nemo.logging.info("Sampled s_preds: [%s]" % list2str(slot_preds[i:i+20]))
-    nemo.logging.info("Sampled slots: [%s]" % list2str(slot_labels[i:i+20]))
+    nemo.logging.info("Sampled i_preds: [%s]" % list2str(intent_preds[i : i + 20]))
+    nemo.logging.info("Sampled intents: [%s]" % list2str(intent_labels[i : i + 20]))
+    nemo.logging.info("Sampled s_preds: [%s]" % list2str(slot_preds[i : i + 20]))
+    nemo.logging.info("Sampled slots: [%s]" % list2str(slot_labels[i : i + 20]))
     cm = confusion_matrix(intent_labels, intent_preds)
     nemo.logging.info(f'Confusion matrix:\n{cm}')
     fig = plt.figure()
@@ -109,14 +105,17 @@ def eval_epochs_done_callback(global_vars, graph_fold):
     correct_preds = sum(intent_labels == intent_preds)
     intent_accuracy = correct_preds / intent_labels.shape[0]
     nemo.logging.info(f'Intent accuracy: {intent_accuracy}')
-    nemo.logging.info(f'Classification report:\n \
-        {classification_report(intent_labels, intent_preds)}')
+    nemo.logging.info(
+        f'Classification report:\n \
+        {classification_report(intent_labels, intent_preds)}'
+    )
 
     nemo.logging.info('Slot prediction results')
     slot_accuracy = sum(slot_labels == slot_preds) / slot_labels.shape[0]
     nemo.logging.info(f'Slot accuracy: {slot_accuracy}')
-    nemo.logging.info(f'Classification report:\n \
-        {classification_report(slot_labels[:-2], slot_preds[:-2])}')
+    nemo.logging.info(
+        f'Classification report:\n \
+        {classification_report(slot_labels[:-2], slot_preds[:-2])}'
+    )
 
-    return dict({'intent_accuracy': intent_accuracy,
-                 'slot_accuracy': slot_accuracy})
+    return dict({'intent_accuracy': intent_accuracy, 'slot_accuracy': slot_accuracy})

@@ -8,17 +8,19 @@ import nemo_nlp
 from .cleaners import clean_text
 
 
-class ManifestBase():
-    def __init__(self,
-                 manifest_paths,
-                 labels,
-                 max_duration=None,
-                 min_duration=None,
-                 sort_by_duration=False,
-                 max_utts=0,
-                 blank_index=-1,
-                 unk_index=-1,
-                 normalize=True):
+class ManifestBase:
+    def __init__(
+        self,
+        manifest_paths,
+        labels,
+        max_duration=None,
+        min_duration=None,
+        sort_by_duration=False,
+        max_utts=0,
+        blank_index=-1,
+        unk_index=-1,
+        normalize=True,
+    ):
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.sort_by_duration = sort_by_duration
@@ -53,16 +55,14 @@ class ManifestBase():
                 text = self.normalize_text(text, labels)
             if not isinstance(text, str):
                 nemo.logging.warning(
-                    "WARNING: Got transcript: {}. It is not a "
-                    "string. Dropping data point".format(text)
+                    "WARNING: Got transcript: {}. It is not a " "string. Dropping data point".format(text)
                 )
                 filtered_duration += item['duration']
                 continue
             # item['text'] = text
 
             # tokenize transcript text
-            item["tokens"] = self.tokenize_transcript(
-                    text, self.labels_map, self.unk_index, self.blank_index)
+            item["tokens"] = self.tokenize_transcript(text, self.labels_map, self.unk_index, self.blank_index)
 
             # support files using audio_filename
             if 'audio_filename' in item and 'audio_filepath' not in item:
@@ -76,8 +76,7 @@ class ManifestBase():
             duration += item['duration']
 
             if max_utts > 0 and len(data) >= max_utts:
-                nemo.logging.info(
-                    'Stop parsing due to max_utts ({})'.format(max_utts))
+                nemo.logging.info('Stop parsing due to max_utts ({})'.format(max_utts))
                 break
 
         if sort_by_duration:
@@ -156,11 +155,7 @@ class ManifestEN(ManifestBase):
         # Punctuation to remove
         punctuation = string.punctuation
         # Define punctuation that will be handled by text cleaner
-        punctuation_to_replace = {
-            "+": "plus",
-            "&": "and",
-            "%": "percent"
-        }
+        punctuation_to_replace = {"+": "plus", "&": "and", "%": "percent"}
         for char in punctuation_to_replace:
             punctuation = punctuation.replace(char, "")
         # We might also want to consider:
@@ -187,9 +182,18 @@ class ManifestEN(ManifestBase):
 
 
 class TFManifest(object):
-    def __init__(self, manifest_paths, labels, max_duration=None,
-                 min_duration=None, sort_by_duration=False, max_utts=0,
-                 normalize=True, tokenizer=None, logger=None):
+    def __init__(
+        self,
+        manifest_paths,
+        labels,
+        max_duration=None,
+        min_duration=None,
+        sort_by_duration=False,
+        max_utts=0,
+        normalize=True,
+        tokenizer=None,
+        logger=None,
+    ):
         self.labels_map = dict([(labels[i], i) for i in range(len(labels))])
         self.blank_index = -1
         self.tokenizer = tokenizer
@@ -208,34 +212,26 @@ class TFManifest(object):
             with open(manifest_path, "r", encoding="utf-8") as fh:
                 for line in fh:
                     data = json.loads(line)
-                    if min_duration is not None and data['duration'] \
-                            < min_duration:
+                    if min_duration is not None and data['duration'] < min_duration:
                         filtered_duration += data['duration']
                         continue
-                    if max_duration is not None and data['duration'] \
-                            > max_duration:
+                    if max_duration is not None and data['duration'] > max_duration:
                         filtered_duration += data['duration']
                         continue
 
                     # Prune and normalize according to transcript
-                    transcript_text = data[
-                        'text'] if "text" in data else self.load_transcript(
-                        data['text_filepath'])
+                    transcript_text = data['text'] if "text" in data else self.load_transcript(data['text_filepath'])
                     if normalize:
-                        transcript_text = ManifestEN.normalize_text(
-                            transcript_text,
-                            labels=labels)
+                        transcript_text = ManifestEN.normalize_text(transcript_text, labels=labels)
                     if not isinstance(transcript_text, str):
                         print(
                             "WARNING: Got transcript: {}. It is not a "
-                            "string. Dropping data point".format(
-                                transcript_text))
+                            "string. Dropping data point".format(transcript_text)
+                        )
                         filtered_duration += data['duration']
                         continue
-                    data["tokenizer_transcript"] = self.tokenize(
-                        transcript_text)
-                    data["char_transcript"] = self.parse_transcript(
-                        transcript_text)
+                    data["tokenizer_transcript"] = self.tokenize(transcript_text)
+                    data["char_transcript"] = self.parse_transcript(transcript_text)
                     # data['transcript_text'] = transcript_text
                     # print(transcript_text)
 
@@ -246,9 +242,7 @@ class TFManifest(object):
                     duration += data['duration']
 
                     if max_utts > 0 and len(ids) >= max_utts:
-                        print(
-                            'Stopping parsing %s as max_utts=%d' % (
-                                manifest_path, max_utts))
+                        print('Stopping parsing %s as max_utts=%d' % (manifest_path, max_utts))
                         break
 
         if logger:
@@ -268,8 +262,7 @@ class TFManifest(object):
         return transcript
 
     def parse_transcript(self, transcript):
-        chars = [self.labels_map.get(x, self.blank_index)
-                 for x in list(transcript)]
+        chars = [self.labels_map.get(x, self.blank_index) for x in list(transcript)]
         transcript = list(filter(lambda x: x != self.blank_index, chars))
         return transcript
 

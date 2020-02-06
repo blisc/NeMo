@@ -1,7 +1,6 @@
 import unittest
 
-from nemo.utils.lr_policies import SquareAnnealing, CosineAnnealing, \
-    WarmupAnnealing
+from nemo.utils.lr_policies import SquareAnnealing, CosineAnnealing, WarmupAnnealing
 
 from .common_setup import NeMoUnitTest
 

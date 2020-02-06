@@ -11,8 +11,7 @@ from ..helpers import __gather_predictions, __gather_transcripts
 ENG_MWN = 5.3
 
 
-def process_evaluation_batch(tensors, global_vars, labels, specials,
-                             tb_writer=None, write_attn=True):
+def process_evaluation_batch(tensors, global_vars, labels, specials, tb_writer=None, write_attn=True):
     loss, log_probs = ([],) * 2
     transcripts, transcript_texts = ([],) * 2
     predictions, prediction_texts = ([],) * 2
@@ -33,8 +32,7 @@ def process_evaluation_batch(tensors, global_vars, labels, specials,
 
     global_vars.setdefault('loss', [])
     global_vars['loss'].extend(loss)
-    bpc, ppl = char_lm_metrics(log_probs, transcripts,
-                               transcript_texts, specials['pad_id'])
+    bpc, ppl = char_lm_metrics(log_probs, transcripts, transcript_texts, specials['pad_id'])
     global_vars.setdefault('bpc', [])
     global_vars['bpc'].extend(bpc)
     global_vars.setdefault('ppl', [])
@@ -49,15 +47,12 @@ def process_evaluation_batch(tensors, global_vars, labels, specials,
         sample_len = len(prediction_texts[0][0])
         if sample_len > 0:
             attention_weights = attention_weights[0][0, :sample_len, :]
-            tb_writer.add_image(
-                'image/eval_attention_weights', attention_weights,
-                dataformats='HW'
-            )
+            tb_writer.add_image('image/eval_attention_weights', attention_weights, dataformats='HW')
 
 
-def process_evaluation_epoch(global_vars,
-                             metrics=('loss', 'bpc', 'ppl'), calc_wer=False,
-                             logger=None, mode='eval', tag='none'):
+def process_evaluation_epoch(
+    global_vars, metrics=('loss', 'bpc', 'ppl'), calc_wer=False, logger=None, mode='eval', tag='none'
+):
     tag = '_'.join(tag.lower().strip().split())
     return_dict = {}
     for metric in metrics:
@@ -77,8 +72,7 @@ def process_evaluation_epoch(global_vars,
             logger.info(transcript_texts[:10])
             logger.info(prediction_texts[:10])
 
-        wer = word_error_rate(hypotheses=prediction_texts,
-                              references=transcript_texts)
+        wer = word_error_rate(hypotheses=prediction_texts, references=transcript_texts)
         return_dict[f'metric/{mode}_wer_{tag}'] = wer
 
     if logger:
@@ -114,19 +108,11 @@ def process_evaluation_batch_xf(tensors, global_vars, tokenizer, labels):
         global_vars.setdefault('ctc_transcript_texts', [])
         global_vars.setdefault('ctc_prediction_texts', [])
         global_vars['ctcloss'].extend(tensor_list[3])
-        global_vars['ctc_prediction_texts'] += __gather_predictions(
-            tensor_list[6], labels=labels)
-        global_vars['ctc_transcript_texts'] += __gather_transcripts(
-            tensor_list[4], tensor_list[5], labels=labels)
+        global_vars['ctc_prediction_texts'] += __gather_predictions(tensor_list[6], labels=labels)
+        global_vars['ctc_transcript_texts'] += __gather_transcripts(tensor_list[4], tensor_list[5], labels=labels)
 
 
-def process_evaluation_epoch_xf(
-        global_vars,
-        calc_wer=True,
-        logger=None,
-        mode='eval',
-        tag='none'
-        ):
+def process_evaluation_epoch_xf(global_vars, calc_wer=True, logger=None, mode='eval', tag='none'):
     tag = '_'.join(tag.lower().strip().split())
     return_dict = {}
     ctc = False
@@ -140,62 +126,53 @@ def process_evaluation_epoch_xf(
         return_dict[f'metric/{mode}_{metric}_{tag}'] = value
 
     if ctc:
-        return_dict[f'metric/{mode}_loss_{tag}'] =\
-            return_dict[f'metric/{mode}_seqloss_{tag}'] +\
-            return_dict[f'metric/{mode}_ctcloss_{tag}']
+        return_dict[f'metric/{mode}_loss_{tag}'] = (
+            return_dict[f'metric/{mode}_seqloss_{tag}'] + return_dict[f'metric/{mode}_ctcloss_{tag}']
+        )
     else:
-        return_dict[f'metric/{mode}_loss_{tag}'] = return_dict[
-            f'metric/{mode}_seqloss_{tag}']
+        return_dict[f'metric/{mode}_loss_{tag}'] = return_dict[f'metric/{mode}_seqloss_{tag}']
 
     if calc_wer:
         transcripts = global_vars['transcript_texts']
         predictions = global_vars['prediction_texts']
 
-        wer = word_error_rate(hypotheses=predictions,
-                              references=transcripts)
+        wer = word_error_rate(hypotheses=predictions, references=transcripts)
         return_dict[f'metric/{mode}_seq_wer_{tag}'] = wer
 
         if logger:
             choices = np.random.randint(len(transcripts), size=10)
             pstring = "Ten examples (transcripts and predictions)\n"
-            pexamples = [
-                f"{i}:\nseq t:{transcripts[c]}\nseq p:{predictions[c]}\n"
-                for i, c in enumerate(choices)]
+            pexamples = [f"{i}:\nseq t:{transcripts[c]}\nseq p:{predictions[c]}\n" for i, c in enumerate(choices)]
 
         if ctc:
             transcripts = global_vars['ctc_transcript_texts']
             predictions = global_vars['ctc_prediction_texts']
 
-            wer = word_error_rate(hypotheses=predictions,
-                                  references=transcripts)
+            wer = word_error_rate(hypotheses=predictions, references=transcripts)
             return_dict[f'metric/{mode}_ctc_wer_{tag}'] = wer
 
             if logger:
                 pexamples = [
-                    pexamples[i] +
-                    f'ctc t:{transcripts[c]}\nctc p:{predictions[c]}\n'
-                    for i, c in enumerate(choices)]
+                    pexamples[i] + f'ctc t:{transcripts[c]}\nctc p:{predictions[c]}\n' for i, c in enumerate(choices)
+                ]
 
         if logger:
             logger.info(pstring + "".join(pexamples).strip())
 
     if logger:
-        logger.info("\n"+pformat(return_dict))
+        logger.info("\n" + pformat(return_dict))
 
     return return_dict
 
 
 def __decode(tensors_list, labels, specials):
-    labels_map = dict([(i, labels[i]) for i in range(len(labels))
-                       if i not in set(specials.values())])
+    labels_map = dict([(i, labels[i]) for i in range(len(labels)) if i not in set(specials.values())])
     results = []
     for tensor in tensors_list:
         tensor = tensor.long().cpu()
         hypotheses = []
         for i in range(tensor.shape[0]):
-            hypothesis = ''.join([labels_map[c]
-                                  for c in tensor[i].numpy().tolist()
-                                  if c in labels_map])
+            hypothesis = ''.join([labels_map[c] for c in tensor[i].numpy().tolist() if c in labels_map])
             hypotheses.append(hypothesis)
 
         results.append(hypotheses)

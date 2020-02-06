@@ -7,25 +7,20 @@ from .manifest import AudioManifest
 
 
 class AudioOnlyDataset(Dataset):
-    def __init__(self,
-                 manifest_filepath,
-                 n_segments=0,
-                 max_duration=None,
-                 min_duration=None,
-                 trim=False,
-                 logger=False):
+    def __init__(
+        self, manifest_filepath, n_segments=0, max_duration=None, min_duration=None, trim=False, logger=False
+    ):
         """See AudioDataLayer"""
         m_paths = manifest_filepath.split(',')
-        self.manifest = AudioManifest(m_paths,
-                                      max_duration=max_duration,
-                                      min_duration=min_duration)
+        self.manifest = AudioManifest(m_paths, max_duration=max_duration, min_duration=min_duration)
         self.trim = trim
         self.n_segments = n_segments
         if logger:
             logger.info(
                 f"Dataset loaded with {self.manifest.duration / 3600:.2f} "
                 f"hours. Filtered {self.manifest.filtered_duration / 3600:.2f}"
-                f" hours.")
+                f" hours."
+            )
 
     def AudioCollateFunc(self, batch):
         def find_max_len(seq, index):
@@ -44,8 +39,7 @@ class AudioOnlyDataset(Dataset):
             else:
                 max_audio_len = find_max_len(batch, 0)
 
-            audio_signal = torch.zeros(
-                batch_size, max_audio_len, dtype=torch.float)
+            audio_signal = torch.zeros(batch_size, max_audio_len, dtype=torch.float)
             audio_lengths = []
             for i, s in enumerate(batch):
                 audio_signal[i].narrow(0, 0, s[0].size(0)).copy_(s[0])
@@ -56,10 +50,7 @@ class AudioOnlyDataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.manifest[index]
-        features = AudioSegment.segment_from_file(
-            sample['audio_filepath'],
-            n_segments=self.n_segments,
-            trim=self.trim)
+        features = AudioSegment.segment_from_file(sample['audio_filepath'], n_segments=self.n_segments, trim=self.trim)
         features = torch.tensor(features.samples, dtype=torch.float)
         f, fl = features, torch.tensor(features.shape[0]).long()
 

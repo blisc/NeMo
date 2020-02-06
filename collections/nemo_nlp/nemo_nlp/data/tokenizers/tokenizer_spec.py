@@ -8,6 +8,7 @@ class TokenizerSpec(ABC):
     element represents a wordpiece. Ids should be a list of ints where each
     element represents a wordpiece.
     """
+
     @abstractmethod
     def text_to_tokens(self, text):
         pass

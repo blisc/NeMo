@@ -78,8 +78,8 @@ def eval_epochs_done_callback(global_vars, output_dir, task_name):
         i = random.randint(0, preds.shape[0] - 21)
 
     nemo.logging.info("Task name: %s" % task_name.upper())
-    nemo.logging.info("Sampled preds: [%s]" % list2str(preds[i:i+20]))
-    nemo.logging.info("Sampled labels: [%s]" % list2str(labels[i:i+20]))
+    nemo.logging.info("Sampled preds: [%s]" % list2str(preds[i : i + 20]))
+    nemo.logging.info("Sampled labels: [%s]" % list2str(labels[i : i + 20]))
 
     results = compute_metrics(task_name, preds, labels)
 
@@ -100,9 +100,7 @@ def accuracy(preds, labels):
 def acc_and_f1(preds, labels):
     accuracy = (preds == labels).mean()
     f1 = f1_score(y_true=labels, y_pred=preds)
-    return {"acc": accuracy,
-            "f1": f1,
-            "acc_and_f1": (accuracy + f1) / 2}
+    return {"acc": accuracy, "f1": f1, "acc_and_f1": (accuracy + f1) / 2}
 
 
 def mcc(preds, labels):
@@ -112,9 +110,7 @@ def mcc(preds, labels):
 def pearson_and_spearman(preds, labels):
     pearson_corr = pearsonr(preds, labels)[0]
     spearman_corr = spearmanr(preds, labels)[0]
-    return {"pearson": pearson_corr,
-            "spearmanr": spearman_corr,
-            "corr": (pearson_corr + spearman_corr) / 2}
+    return {"pearson": pearson_corr, "spearmanr": spearman_corr, "corr": (pearson_corr + spearman_corr) / 2}
 
 
 def compute_metrics(task_name, preds, labels):

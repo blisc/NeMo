@@ -40,20 +40,21 @@ def remove_spaces(text):
 
 
 class NemoBertTokenizer(TokenizerSpec):
-    def __init__(self, pretrained_model=None,
-                 vocab_file=None,
-                 do_lower_case=True,
-                 max_len=None,
-                 do_basic_tokenize=True,
-                 never_split=("[UNK]", "[SEP]", "[PAD]", "[CLS]", "[MASK]")):
+    def __init__(
+        self,
+        pretrained_model=None,
+        vocab_file=None,
+        do_lower_case=True,
+        max_len=None,
+        do_basic_tokenize=True,
+        never_split=("[UNK]", "[SEP]", "[PAD]", "[CLS]", "[MASK]"),
+    ):
         if pretrained_model:
             self.tokenizer = BertTokenizer.from_pretrained(pretrained_model)
             if "uncased" not in pretrained_model:
                 self.tokenizer.basic_tokenizer.do_lower_case = False
         else:
-            self.tokenizer = BertTokenizer(vocab_file,
-                                           do_lower_case,
-                                           do_basic_tokenize)
+            self.tokenizer = BertTokenizer(vocab_file, do_lower_case, do_basic_tokenize)
         self.vocab_size = len(self.tokenizer.vocab)
         self.never_split = never_split
 

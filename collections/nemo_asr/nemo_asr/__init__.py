@@ -24,27 +24,29 @@ from .losses import CTCLossNM
 from .parts.features import WaveformFeaturizer
 from .parts.dataset import MLMAudioDataset
 
-__all__ = ['Backend',
-           'AudioToTextDataLayer',
-           'TFAudioToTextDataLayer',
-           'MLMAudioToTextDataLayer',
-           'AudioPreprocessing',
-           'AudioPreprocessor',
-           'AudioToMFCCPreprocessor',
-           'AudioToMelSpectrogramPreprocessor',
-           'AudioToSpectrogramPreprocessor',
-           'MultiplyBatch',
-           'SpectrogramAugmentation',
-           'KaldiFeatureDataLayer',
-           'TranscriptDataLayer',
-           'GreedyCTCDecoder',
-           'BeamSearchDecoderWithLM',
-           'JasperEncoder',
-           'JasperDecoderForCTC',
-           'JasperRNNConnector',
-           'CTCLossNM',
-           'IntToSeq',
-           'IntToSeq2']
+__all__ = [
+    'Backend',
+    'AudioToTextDataLayer',
+    'TFAudioToTextDataLayer',
+    'MLMAudioToTextDataLayer',
+    'AudioPreprocessing',
+    'AudioPreprocessor',
+    'AudioToMFCCPreprocessor',
+    'AudioToMelSpectrogramPreprocessor',
+    'AudioToSpectrogramPreprocessor',
+    'MultiplyBatch',
+    'SpectrogramAugmentation',
+    'KaldiFeatureDataLayer',
+    'TranscriptDataLayer',
+    'GreedyCTCDecoder',
+    'BeamSearchDecoderWithLM',
+    'JasperEncoder',
+    'JasperDecoderForCTC',
+    'JasperRNNConnector',
+    'CTCLossNM',
+    'IntToSeq',
+    'IntToSeq2',
+]
 
 
 name = "nemo_asr"

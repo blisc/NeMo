@@ -28,34 +28,26 @@ labels = jasper_model_definition['labels']
 
 # Instantiate necessary Neural Modules
 # Note that data layer is missing from here
-neural_factory = nemo.core.NeuralModuleFactory(
-    placement=nemo.core.DeviceType.GPU,
-    backend=nemo.core.Backend.PyTorch)
-data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
-        factory=neural_factory)
+neural_factory = nemo.core.NeuralModuleFactory(placement=nemo.core.DeviceType.GPU, backend=nemo.core.Backend.PyTorch)
+data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(factory=neural_factory)
 jasper_encoder = nemo_asr.JasperEncoder(
     jasper=jasper_model_definition['JasperEncoder']['jasper'],
     activation=jasper_model_definition['JasperEncoder']['activation'],
-    feat_in=jasper_model_definition[
-        'AudioToMelSpectrogramPreprocessor']['features'])
+    feat_in=jasper_model_definition['AudioToMelSpectrogramPreprocessor']['features'],
+)
 jasper_encoder.restore_from(CHECKPOINT_ENCODER, local_rank=0)
-jasper_decoder = nemo_asr.JasperDecoderForCTC(
-    feat_in=1024,
-    num_classes=len(labels))
+jasper_decoder = nemo_asr.JasperDecoderForCTC(feat_in=1024, num_classes=len(labels))
 jasper_decoder.restore_from(CHECKPOINT_DECODER, local_rank=0)
 greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
 if ENABLE_NGRAM and os.path.isfile(LM_PATH):
     beam_search_with_lm = nemo_asr.BeamSearchDecoderWithLM(
-        vocab=labels,
-        beam_width=64,
-        alpha=2.0,
-        beta=1.0,
-        lm_path=LM_PATH,
-        num_cpus=max(os.cpu_count(), 1))
+        vocab=labels, beam_width=64, alpha=2.0, beta=1.0, lm_path=LM_PATH, num_cpus=max(os.cpu_count(), 1)
+    )
 else:
     print("Beam search is not enabled")
 
 from app import routes  # noqa
+
 if __name__ == '__main__':
     app.run()

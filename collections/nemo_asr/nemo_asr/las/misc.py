@@ -3,8 +3,7 @@
 from torch import nn
 
 from nemo.backends.pytorch.nm import TrainableNM
-from nemo.core.neural_types import NeuralType, AxisType, BatchTag, TimeTag, \
-    ChannelTag
+from nemo.core.neural_types import NeuralType, AxisType, BatchTag, TimeTag, ChannelTag
 from nemo_asr.jasper import init_weights as jasper_init_weights
 
 
@@ -29,13 +28,7 @@ class JasperRNNConnector(TrainableNM):
 
             2: AxisType(TimeTag)
         """
-        return {
-            'tensor': NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(ChannelTag),
-                2: AxisType(TimeTag)
-            })
-        }
+        return {'tensor': NeuralType({0: AxisType(BatchTag), 1: AxisType(ChannelTag), 2: AxisType(TimeTag)})}
 
     @property
     def output_ports(self):
@@ -48,19 +41,12 @@ class JasperRNNConnector(TrainableNM):
 
             2: AxisType(ChannelTag)
         """
-        return {
-            'tensor': NeuralType({
-                0: AxisType(BatchTag),
-                1: AxisType(TimeTag),
-                2: AxisType(ChannelTag)
-            })
-        }
+        return {'tensor': NeuralType({0: AxisType(BatchTag), 1: AxisType(TimeTag), 2: AxisType(ChannelTag)})}
 
     def __init__(self, in_channels, out_channels, scale=False, **kwargs):
         super().__init__(**kwargs)
 
-        self.icnn = nn.Conv1d(in_channels, out_channels,
-                              kernel_size=1, bias=True)
+        self.icnn = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=True)
         self.bn = nn.BatchNorm1d(out_channels)
         self.scale = scale
 

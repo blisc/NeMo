@@ -16,21 +16,11 @@ from ctc_decoders import ctc_beam_search_decoder_batch
 from nemo_asr.parts.dataset import ManifestEN
 
 
-parser = argparse.ArgumentParser(
-    description="CTC decoding and tuning with LM rescoring"
-)
-parser.add_argument("--mode", help="either 'eval' (default) or 'infer'",
-                    default="eval")
-parser.add_argument(
-    "--model_toml", help="Toml file describing the model and vocabulary",
-    required=True
-)
-parser.add_argument(
-    "--infer_output_file", help="output CSV file for 'infer' mode",
-    required=False
-)
-parser.add_argument("--logits", help="pickle file with CTC logits",
-                    required=True)
+parser = argparse.ArgumentParser(description="CTC decoding and tuning with LM rescoring")
+parser.add_argument("--mode", help="either 'eval' (default) or 'infer'", default="eval")
+parser.add_argument("--model_toml", help="Toml file describing the model and vocabulary", required=True)
+parser.add_argument("--infer_output_file", help="output CSV file for 'infer' mode", required=False)
+parser.add_argument("--logits", help="pickle file with CTC logits", required=True)
 parser.add_argument(
     "--labels",
     help="JSON file with audio filenames \
@@ -38,24 +28,14 @@ parser.add_argument(
     required=True,
 )
 parser.add_argument("--lm", help="KenLM binary file", required=True)
-parser.add_argument("--alpha", type=float, help="value of LM weight",
-                    required=True)
+parser.add_argument("--alpha", type=float, help="value of LM weight", required=True)
 parser.add_argument(
-    "--alpha_max",
-    type=float,
-    help="maximum value of LM weight (for a grid search in 'eval' mode)",
-    required=False,
+    "--alpha_max", type=float, help="maximum value of LM weight (for a grid search in 'eval' mode)", required=False,
 )
 parser.add_argument(
-    "--alpha_step",
-    type=float,
-    help="step for LM weight's tuning in 'eval' mode",
-    required=False,
-    default=0.1,
+    "--alpha_step", type=float, help="step for LM weight's tuning in 'eval' mode", required=False, default=0.1,
 )
-parser.add_argument(
-    "--beta", type=float, help="value of word count weight", required=True
-)
+parser.add_argument("--beta", type=float, help="value of word count weight", required=True)
 parser.add_argument(
     "--beta_max",
     type=float,
@@ -64,18 +44,10 @@ parser.add_argument(
     required=False,
 )
 parser.add_argument(
-    "--beta_step",
-    type=float,
-    help="step for word count weight's tuning in 'eval' mode",
-    required=False,
-    default=0.1,
+    "--beta_step", type=float, help="step for word count weight's tuning in 'eval' mode", required=False, default=0.1,
 )
 parser.add_argument(
-    "--beam_width",
-    type=int,
-    help="beam width for beam search decoder",
-    required=False,
-    default=128,
+    "--beam_width", type=int, help="beam width for beam search decoder", required=False, default=128,
 )
 parser.add_argument(
     "--dump_all_beams_to",
@@ -213,14 +185,9 @@ if args.mode == "eval":
     best_result = {"wer": 1e6, "alpha": 0.0, "beta": 0.0, "beams": None}
     for alpha in np.arange(args.alpha, args.alpha_max, args.alpha_step):
         for beta in np.arange(args.beta, args.beta_max, args.beta_step):
-            scorer = Scorer(alpha, beta, model_path=args.lm,
-                            vocabulary=vocab[:-1])
+            scorer = Scorer(alpha, beta, model_path=args.lm, vocabulary=vocab[:-1])
             res = ctc_beam_search_decoder_batch(
-                probs_batch,
-                vocab[:-1],
-                beam_size=args.beam_width,
-                num_processes=num_cpus,
-                ext_scoring_func=scorer,
+                probs_batch, vocab[:-1], beam_size=args.beam_width, num_processes=num_cpus, ext_scoring_func=scorer,
             )
             total_dist = 0.0
             total_count = 0.0
@@ -237,8 +204,7 @@ if args.mode == "eval":
                 best_result["alpha"] = alpha
                 best_result["beta"] = beta
                 best_result["beams"] = res
-            print("alpha={:.2f}, beta={:.2f}: WER={:.4f}".format(alpha, beta,
-                                                                 wer))
+            print("alpha={:.2f}, beta={:.2f}: WER={:.4f}".format(alpha, beta, wer))
     print(
         "BEST: alpha={:.2f}, beta={:.2f}, WER={:.4f}".format(
             best_result["alpha"], best_result["beta"], best_result["wer"]
@@ -254,14 +220,9 @@ if args.mode == "eval":
                 f.write("E=>>>>>>>>\n")
 
 elif args.mode == "infer":
-    scorer = Scorer(args.alpha, args.beta, model_path=args.lm,
-                    vocabulary=vocab[:-1])
+    scorer = Scorer(args.alpha, args.beta, model_path=args.lm, vocabulary=vocab[:-1])
     res = ctc_beam_search_decoder_batch(
-        probs_batch,
-        vocab[:-1],
-        beam_size=args.beam_width,
-        num_processes=num_cpus,
-        ext_scoring_func=scorer,
+        probs_batch, vocab[:-1], beam_size=args.beam_width, num_processes=num_cpus, ext_scoring_func=scorer,
     )
     infer_preds = np.empty(shape=(len(labels), 2), dtype=object)
     for idx, item in enumerate(labels):
@@ -271,9 +232,5 @@ elif args.mode == "infer":
         infer_preds[idx, 1] = text[0]
 
     np.savetxt(
-        args.infer_output_file,
-        infer_preds,
-        fmt="%s",
-        delimiter=",",
-        header="wav_filename,transcript",
+        args.infer_output_file, infer_preds, fmt="%s", delimiter=",", header="wav_filename,transcript",
     )
