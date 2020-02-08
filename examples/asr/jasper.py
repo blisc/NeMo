@@ -82,7 +82,7 @@ def create_all_dags(args, neural_factory):
         sample_rate=sample_rate,
         labels=vocab,
         batch_size=args.batch_size,
-        num_workers=cpu_per_traindl,
+        num_workers=1,
         **train_dl_params,
         # normalize_transcripts=False
     )
@@ -116,7 +116,7 @@ def create_all_dags(args, neural_factory):
                 sample_rate=sample_rate,
                 labels=vocab,
                 batch_size=args.eval_batch_size,
-                num_workers=cpu_per_traindl,
+                num_workers=1,
                 **eval_dl_params,
             )
 
