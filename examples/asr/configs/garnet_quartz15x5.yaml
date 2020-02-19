@@ -6,7 +6,7 @@ labels: &labels [" ", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k",
 # num_sub_blocks: &rep 4
 
 optimization:
-    warmup_epochs: 1
+    warmup_epochs: 2
     min_lr: 1e-5
     params:
         num_epochs: 100

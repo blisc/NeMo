@@ -203,6 +203,11 @@ class TFManifest(object):
         elif isinstance(self.tokenizer, nemo_nlp.SentencePieceTokenizer):
             self.bos_id = self.tokenizer.token_to_id("<s>")
             self.eos_id = self.tokenizer.token_to_id("</s>")
+        elif isinstance(self.tokenizer, nemo_nlp.NemoBertTokenizer):
+            self.bos_id = self.tokenizer.bos_id()
+            self.eos_id = self.tokenizer.eos_id()
+        elif not self.tokenizer:
+            raise ValueError
         self.max_len = 0
         ids = []
         duration = 0.0

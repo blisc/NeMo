@@ -13,7 +13,7 @@ from ruamel.yaml import YAML
 
 import nemo
 import nemo.utils.argparse as nm_argparse
-from nemo.utils.lr_policies import SquareAnnealing
+from nemo.utils.lr_policies import CosineAnnealing
 import nemo_asr
 from nemo_asr.las.helpers import process_evaluation_batch_xf, process_evaluation_epoch_xf
 import nemo_nlp
@@ -376,7 +376,7 @@ def main():
     neural_factory.train(
         tensors_to_optimize=loss,
         callbacks=callbacks,
-        lr_policy=SquareAnnealing(
+        lr_policy=CosineAnnealing(
             total_steps,
             min_lr=garnet_params['optimization']['min_lr'],
             warmup_steps=(garnet_params['optimization']['warmup_epochs'] * steps_per_epoch),
