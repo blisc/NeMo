@@ -120,7 +120,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         tokenizer=tokenizer,
         **garnet_params['AudioToTextDataLayer']['train'],
     )
-    data_preprocessor = nemo_asr.AudioPreprocessing(**garnet_params['AudioPreprocessing'])
+    data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(**garnet_params['AudioPreprocessing'])
     data_augmentation = nemo_asr.SpectrogramAugmentation(**garnet_params['SpectrogramAugmentation'])
     encoder = nemo_asr.JasperEncoder(**garnet_params['JasperEncoder'])
     if args.encoder_checkpoint is not None and os.path.exists(args.encoder_checkpoint):
@@ -135,7 +135,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     if args.scale:
         scale = 1.0 / np.sqrt(args.decoder_layers)
     connector = nemo_asr.JasperRNNConnector(
-        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'], out_channels=512, scale=scale
+        in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
+        out_channels=args.decoder_d_model,
+        scale=scale,
     )
     decoder = nemo_nlp.TransformerDecoderNM(
         d_model=args.decoder_d_model,
@@ -152,7 +154,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         attn_layer_dropout=0.1,
         hidden_act=args.decoder_hidden_act,
     )
-    t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(vocab_size=vocab_size, d_model=512)
+    t_log_softmax = nemo_nlp.TokenClassifier(num_classes=vocab_size, hidden_size=args.decoder_d_model)
 
     # connector = nemo_asr.JasperRNNConnector(
     #     in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'],
@@ -177,7 +179,8 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     #     d_model=768
     # )
 
-    t_log_softmax.log_softmax.dense.weight = decoder.embedding_layer.token_embedding.weight
+    assert t_log_softmax.mlp.last_linear_layer.weight.shape == decoder.embedding_layer.token_embedding.weight.shape
+    t_log_softmax.mlp.last_linear_layer.weight = decoder.embedding_layer.token_embedding.weight
     if args.decoder_checkpoint is not None and os.path.exists(args.decoder_checkpoint):
         decoder.restore_from(args.decoder_checkpoint, args.local_rank)
         logger.info(f'Loaded weights for decoder' f' from {args.decoder_checkpoint}')
@@ -217,7 +220,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         input_ids_tgt=decoder_in, hidden_states_src=connected_encoded, input_mask_src=enc_length, input_mask_tgt=t_len,
     )
     log_probs = t_log_softmax(hidden_states=logits)
-    train_loss = loss(log_probs=log_probs, target_ids=decoder_out)
+    train_loss = loss(logits=log_probs, target_ids=decoder_out)
     train_loss = [train_loss]
     callbacks = []
     # Callbacks
@@ -279,7 +282,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
                 input_mask_tgt=t_len,
             )
             log_probs = t_log_softmax(hidden_states=logits)
-            eval_loss = loss(log_probs=log_probs, target_ids=decoder_out)
+            eval_loss = loss(logits=log_probs, target_ids=decoder_out)
             beam_trans = beam_translator(hidden_states_src=connected_encoded, input_mask_src=enc_length)
 
             tensors = [eval_loss, decoder_out, beam_trans]
