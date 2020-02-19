@@ -51,7 +51,8 @@ def parse_args():
 
     # Create new args
     parser.add_argument("--exp_name", default="GarNet", type=str)
-    parser.add_argument("--tokenizer_file", required=True, type=str)
+    parser.add_argument("--tokenizer", choices=["nemobert", "yttm"], required=True, type=str)
+    parser.add_argument("--tokenizer_file", type=str)
     parser.add_argument("--random_seed", default=None, type=float)
     parser.add_argument('--encoder_checkpoint', default=None, type=str)
     parser.add_argument('--decoder_checkpoint', default=None, type=str)
@@ -60,8 +61,12 @@ def parse_args():
     parser.add_argument('--log_freq', default=250, type=int)
     parser.add_argument('--add_time_dir', action="store_true")
     parser.add_argument('--debug', action="store_true")
+    parser.add_argument('--decoder_d_model', type=int, default=512)
+    parser.add_argument('--decoder_attn_heads', type=int, default=8)
     parser.add_argument('--decoder_layers', type=int, default=6)
     parser.add_argument('--decoder_d_inner', type=int, default=2048)
+    parser.add_argument('--max_seq_length', type=int, default=196)
+    parser.add_argument('--decoder_hidden_act', choices=["relu", "gelu"], default="relu")
     parser.add_argument('--scale', action="store_true")
 
     args = parser.parse_args()
@@ -97,9 +102,14 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     cpu_per_traindl = max(int(total_cpus / neural_factory.world_size), 1)
 
     # Defining nodes
-    tokenizer = nemo_nlp.YouTokenToMeTokenizer(model_path=args.tokenizer_file)
-    # tokenizer = nemo_nlp.NemoBertTokenizer(
-    #     pretrained_model="bert-base-uncased")  # + "-vocab.txt")
+    if args.tokenizer == "yttm":
+        if not args.tokenizer_file:
+            raise ValueError("tokenizer file")
+        tokenizer = nemo_nlp.YouTokenToMeTokenizer(model_path=args.tokenizer_file)
+    elif args.tokenizer == "nemobert":
+        tokenizer = nemo_nlp.NemoBertTokenizer(pretrained_model="bert-base-uncased")  # + "-vocab.txt")
+    else:
+        raise ValueError("tokenizer")
     assert tokenizer.pad_id() == 0, f"{tokenizer.pad_id}"
     if args.debug:
         garnet_params['AudioToTextDataLayer']['train']['normalize_transcripts'] = False
@@ -128,18 +138,19 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         in_channels=garnet_params['JasperEncoder']['jasper'][-1]['filters'], out_channels=512, scale=scale
     )
     decoder = nemo_nlp.TransformerDecoderNM(
-        d_model=512,
+        d_model=args.decoder_d_model,
         d_inner=args.decoder_d_inner,
         num_layers=args.decoder_layers,
-        num_attn_heads=8,
+        num_attn_heads=args.decoder_attn_heads,
         ffn_dropout=0.1,
         vocab_size=vocab_size,
-        max_seq_length=196,
+        max_seq_length=args.max_seq_length,
         embedding_dropout=0.1,
         learn_positional_encodings=True,
         first_sub_layer="self_attention",
         attn_score_dropout=0.1,
         attn_layer_dropout=0.1,
+        hidden_act=args.decoder_hidden_act,
     )
     t_log_softmax = nemo_nlp.TransformerLogSoftmaxNM(vocab_size=vocab_size, d_model=512)
 
@@ -184,7 +195,7 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     beam_translator = nemo_nlp.BeamSearchTranslatorNM(
         decoder=decoder,
         log_softmax=t_log_softmax,
-        max_seq_length=196,
+        max_seq_length=args.max_seq_length,
         beam_size=args.beam_size,
         length_penalty=0.0,
         bos_token=tokenizer.bos_id(),
