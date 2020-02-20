@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--tokenizer_file", type=str)
     parser.add_argument("--random_seed", default=None, type=float)
     parser.add_argument('--encoder_checkpoint', default=None, type=str)
+    parser.add_argument('--ctcdecoder_checkpoint', default=None, type=str)
     parser.add_argument('--decoder_checkpoint', default=None, type=str)
     parser.add_argument('--beam_size', default=1, type=int)
     parser.add_argument('--enable_ctc_loss', action="store_true")
@@ -126,9 +127,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     if args.encoder_checkpoint is not None and os.path.exists(args.encoder_checkpoint):
         encoder.restore_from(args.encoder_checkpoint, args.local_rank)
         logger.info(f'Loaded weights for encoder' f' from {args.encoder_checkpoint}')
-        if garnet_params['JasperEncoder']['freeze']:
-            encoder.freeze()
-            logger.info(f'Freeze encoder weights')
+        # if garnet_params['JasperEncoder']['freeze']:
+        #     encoder.freeze()
+        #     logger.info(f'Freeze encoder weights')
     vocab_size = 8 * math.ceil(tokenizer.vocab_size / 8)
 
     scale = False
@@ -237,6 +238,9 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         ctc_decoder = nemo_asr.JasperDecoderForCTC(
             feat_in=garnet_params["JasperEncoder"]["jasper"][-1]["filters"], num_classes=len(char_labels)
         )
+        if args.ctcdecoder_checkpoint is not None and os.path.exists(args.ctcdecoder_checkpoint):
+            ctc_decoder.restore_from(args.ctcdecoder_checkpoint, args.local_rank)
+            logger.info(f'Loaded weights for ctc_decoder' f' from {args.ctcdecoder_checkpoint}')
         ctc_loss = nemo_asr.CTCLossNM(num_classes=len(char_labels))
         greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
