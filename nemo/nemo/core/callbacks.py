@@ -1,6 +1,7 @@
 # Copyright (c) 2019 NVIDIA Corporation
 from abc import ABC, abstractmethod
 from collections import namedtuple
+import datetime
 import glob
 import os
 import sys
@@ -168,7 +169,8 @@ class SimpleLossLoggerCallback(ActionCallback):
         if self.global_rank is None or self.global_rank == 0:
             if self._swriter is not None:
                 self._swriter.close()
-            nemo.logging.info(f"Done in {time.time() - self._start_time}")
+            delta = datetime.timedelta(seconds=(time.time() - self._start_time))
+            nemo.logging.info(f"Done in {delta}")
 
     def on_epoch_start(self):
         if self.global_rank is None or self.global_rank == 0:
