@@ -195,16 +195,16 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         #             print(f'Unfreeze decoder attn weights')
 
     loss = nemo_nlp.PaddedSmoothedCrossEntropyLossNM(pad_id=tokenizer.pad_id(), label_smoothing=0.1)
-    beam_translator = nemo_nlp.BeamSearchTranslatorNM(
-        decoder=decoder,
-        log_softmax=t_log_softmax,
-        max_seq_length=args.max_seq_length,
-        beam_size=args.beam_size,
-        length_penalty=0.0,
-        bos_token=tokenizer.bos_id(),
-        pad_token=tokenizer.pad_id(),
-        eos_token=tokenizer.eos_id(),
-    )
+    # beam_translator = nemo_nlp.BeamSearchTranslatorNM(
+    #     decoder=decoder,
+    #     log_softmax=t_log_softmax,
+    #     max_seq_length=args.max_seq_length,
+    #     beam_size=args.beam_size,
+    #     length_penalty=0.0,
+    #     bos_token=tokenizer.bos_id(),
+    #     pad_token=tokenizer.pad_id(),
+    #     eos_token=tokenizer.eos_id(),
+    # )
     int_to_seq = nemo_asr.IntToSeq()
     int_to_seq2 = nemo_asr.IntToSeq2()
 
@@ -283,9 +283,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
             )
             log_probs = t_log_softmax(hidden_states=logits)
             eval_loss = loss(logits=log_probs, target_ids=decoder_out)
-            beam_trans = beam_translator(hidden_states_src=connected_encoded, input_mask_src=enc_length)
+            # beam_trans = beam_translator(hidden_states_src=connected_encoded, input_mask_src=enc_length)
+            seq_predictions = greedy_decoder(log_probs=log_probs)
 
-            tensors = [eval_loss, decoder_out, beam_trans]
+            # tensors = [eval_loss, decoder_out, beam_trans]
+            tensors = [eval_loss, decoder_out, seq_predictions]
 
             if args.enable_ctc_loss:
                 ctc_log_probs = ctc_decoder(encoder_output=encoded)
