@@ -180,8 +180,6 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     #     d_model=768
     # )
 
-    assert t_log_softmax.mlp.last_linear_layer.weight.shape == decoder.embedding_layer.token_embedding.weight.shape
-    t_log_softmax.mlp.last_linear_layer.weight = decoder.embedding_layer.token_embedding.weight
     if args.decoder_checkpoint is not None and os.path.exists(args.decoder_checkpoint):
         decoder.restore_from(args.decoder_checkpoint, args.local_rank)
         logger.info(f'Loaded weights for decoder' f' from {args.decoder_checkpoint}')
@@ -194,6 +192,8 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
         #             param.requires_grad = True
         #         if VERBOSE:
         #             print(f'Unfreeze decoder attn weights')
+    assert t_log_softmax.mlp.last_linear_layer.weight.shape == decoder.embedding_layer.token_embedding.weight.shape
+    t_log_softmax.mlp.last_linear_layer.weight = torch.nn.Parameter(decoder.embedding_layer.token_embedding.weight)
 
     loss = nemo_nlp.PaddedSmoothedCrossEntropyLossNM(pad_id=tokenizer.pad_id(), label_smoothing=0.1)
     # beam_translator = nemo_nlp.BeamSearchTranslatorNM(
