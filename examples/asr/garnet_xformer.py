@@ -57,6 +57,9 @@ def parse_args():
     parser.add_argument('--encoder_checkpoint', default=None, type=str)
     parser.add_argument('--ctcdecoder_checkpoint', default=None, type=str)
     parser.add_argument('--decoder_checkpoint', default=None, type=str)
+    parser.add_argument(
+        '--decoder_load_option', choices=["all", "first_layer", "all_self_attention"], default="all", type=str
+    )
     parser.add_argument('--beam_size', default=1, type=int)
     parser.add_argument('--enable_ctc_loss', action="store_true")
     parser.add_argument('--log_freq', default=250, type=int)
@@ -181,7 +184,32 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
     # )
 
     if args.decoder_checkpoint is not None and os.path.exists(args.decoder_checkpoint):
-        decoder.restore_from(args.decoder_checkpoint, args.local_rank)
+        if args.local_rank:
+            load_device = f"cuda:{args.local_rank}"
+        else:
+            load_device = "cuda"
+        state_dict = torch.load(args.decoder_checkpoint, map_location=load_device)
+
+        if args.decoder_load_option == "first_layer":
+            for k in state_dict:
+                if not k.startswith("decoder.layers.0.first_sub_layer"):
+                    state_dict.pop(k)
+            logger.info(f'Loading only the first layer self_attention')
+        elif args.decoder_load_option == "all_self_attention":
+            for k in state_dict:
+                if k.startswith("decoder.layers") and "first_sub_layer" not in k:
+                    state_dict.pop(k)
+            raise NotImplementedError
+            logger.info(f'Loading all self_attention')
+        elif args.decoder_load_option == "all":
+            logger.info(f'Loading entire model')
+            state_dict = state_dict
+        else:
+            raise NotImplementedError
+
+        logger.info(state_dict)
+
+        decoder.load_state_dict(state_dict)
         logger.info(f'Loaded weights for decoder' f' from {args.decoder_checkpoint}')
         # if cfg['DecoderRNN']['freeze']:
         #     decoder.freeze()
