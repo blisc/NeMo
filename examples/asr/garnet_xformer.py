@@ -190,26 +190,27 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
             load_device = "cuda"
         state_dict = torch.load(args.decoder_checkpoint, map_location=load_device)
 
+        keys_to_remove = []
         if args.decoder_load_option == "first_layer":
             for k in state_dict:
                 if not k.startswith("decoder.layers.0.first_sub_layer"):
-                    state_dict.pop(k)
+                    keys_to_remove.append(k)
             logger.info(f'Loading only the first layer self_attention')
         elif args.decoder_load_option == "all_self_attention":
             for k in state_dict:
                 if k.startswith("decoder.layers") and "first_sub_layer" not in k:
-                    state_dict.pop(k)
-            raise NotImplementedError
+                    keys_to_remove.append(k)
             logger.info(f'Loading all self_attention')
         elif args.decoder_load_option == "all":
             logger.info(f'Loading entire model')
-            state_dict = state_dict
         else:
             raise NotImplementedError
 
-        logger.info(state_dict)
+        for k in keys_to_remove:
+            state_dict.pop(k)
+        logger.info(state_dict.keys())
 
-        decoder.load_state_dict(state_dict)
+        decoder.load_state_dict(state_dict, strict=False)
         logger.info(f'Loaded weights for decoder' f' from {args.decoder_checkpoint}')
         # if cfg['DecoderRNN']['freeze']:
         #     decoder.freeze()
