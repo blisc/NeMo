@@ -203,6 +203,11 @@ def create_dag_and_callbacks(args, garnet_params, neural_factory):
             logger.info(f'Loading all self_attention')
         elif args.decoder_load_option == "all":
             logger.info(f'Loading entire model')
+        elif args.decoder_load_option == "not_enc_dec_att":
+            logger.info(f'Loading everything except for enc-dec-attn parts')
+            for k in state_dict:
+                if k.startswith("decoder.layers") and "second_sub_layer" in k:
+                    keys_to_remove.append(k)
         else:
             raise NotImplementedError
 
