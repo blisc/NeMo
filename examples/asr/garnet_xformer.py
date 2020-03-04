@@ -58,7 +58,10 @@ def parse_args():
     parser.add_argument('--ctcdecoder_checkpoint', default=None, type=str)
     parser.add_argument('--decoder_checkpoint', default=None, type=str)
     parser.add_argument(
-        '--decoder_load_option', choices=["all", "first_layer", "all_self_attention"], default="all", type=str
+        '--decoder_load_option',
+        choices=["all", "first_layer", "all_self_attention", "not_enc_dec_att"],
+        default="all",
+        type=str,
     )
     parser.add_argument('--beam_size', default=1, type=int)
     parser.add_argument('--enable_ctc_loss', action="store_true")
