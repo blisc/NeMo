@@ -165,6 +165,75 @@ def process_evaluation_epoch_xf(global_vars, calc_wer=True, logger=None, mode='e
     return return_dict
 
 
+def process_evaluation_batch_bpe_jasper(tensors, global_vars, tokenizer):
+    transcript_texts = []
+    prediction_texts = []
+    global_vars.setdefault('loss', [])
+    global_vars.setdefault('transcript_texts', [])
+    global_vars.setdefault('prediction_texts', [])
+    tensor_list = list(tensors.values())[1:]  # Ignore IS_FROM_DIST_EVAL
+    global_vars['loss'].extend(tensor_list[0])
+
+    for t in tensor_list[1]:
+        t = t.cpu().numpy().tolist()
+        for sentence in t:
+            transcript_texts.append(tokenizer.ids_to_text(sentence))
+
+    def __ctc_decode(tensor, tokenizer):
+        """
+        Decodes a sequence of labels to words
+        """
+        blank_id = tokenizer.mask_id()
+        hypotheses = []
+        # labels_map = dict([(i, labels[i]) for i in range(len(labels))])
+        prediction_cpu_tensor = tensor.long().cpu()
+        # iterate over batch
+        for ind in range(prediction_cpu_tensor.shape[0]):
+            prediction = prediction_cpu_tensor[ind].numpy().tolist()
+            # CTC decoding procedure
+            decoded_prediction = []
+            previous = blank_id  # id of a blank symbol
+            for p in prediction:
+                if (p != previous or previous == blank_id) and p != blank_id:
+                    decoded_prediction.append(p)
+                previous = p
+            hypothesis = tokenizer.ids_to_text(decoded_prediction)
+            hypotheses.append(hypothesis)
+        return hypotheses
+
+    for t in tensor_list[2]:
+        prediction_texts = __ctc_decode(t, tokenizer)
+    global_vars['transcript_texts'].extend(transcript_texts)
+    global_vars['prediction_texts'].extend(prediction_texts)
+    # global_vars['prediction_texts'] += __gather_predictions(tensor_list[2], labels=labels)
+
+
+def process_evaluation_epoch_bpe_jasper(global_vars, calc_wer=True, logger=None, mode='eval', tag='none', n_print=10):
+    tag = '_'.join(tag.lower().strip().split())
+    return_dict = {}
+    value = torch.mean(torch.stack(global_vars["loss"])).item()
+    return_dict[f'Evaluation_Loss_{tag}'] = value
+
+    if calc_wer:
+        transcripts = global_vars['transcript_texts']
+        predictions = global_vars['prediction_texts']
+
+        wer = word_error_rate(hypotheses=predictions, references=transcripts)
+        return_dict[f'Evaluation_WER_{tag}'] = wer
+
+        if logger:
+            choices = np.random.randint(len(transcripts), size=n_print)
+            pstring = "Ten examples (transcripts and predictions)\n"
+            pexamples = [f"{i}:\nseq t:{transcripts[c]}\nseq p:{predictions[c]}\n" for i, c in enumerate(choices)]
+
+        if logger:
+            logger.info(pstring + "".join(pexamples).strip())
+
+    if logger:
+        logger.info("\n" + pformat(return_dict))
+
+    return return_dict
+
 def __decode(tensors_list, labels, specials):
     labels_map = dict([(i, labels[i]) for i in range(len(labels)) if i not in set(specials.values())])
     results = []

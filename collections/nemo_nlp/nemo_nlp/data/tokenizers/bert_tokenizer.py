@@ -96,3 +96,6 @@ class NemoBertTokenizer(TokenizerSpec):
 
     def eos_id(self):
         return self.tokens_to_ids(["[SEP]"])[0]
+
+    def mask_id(self):
+        return self.tokens_to_ids(["[MASK]"])[0]

@@ -53,11 +53,11 @@ class CTCLossNM(LossNM):
         """
         return {"loss": NeuralType(None)}
 
-    def __init__(self, *, num_classes, **kwargs):
+    def __init__(self, *, blank_id, **kwargs):
         LossNM.__init__(self, **kwargs)
 
         # self._blank = self.local_parameters.get('blank', 0)
-        self._blank = num_classes
+        self._blank = blank_id
         self._criterion = nn.CTCLoss(blank=self._blank, reduction='mean')
 
     def _loss(self, log_probs, targets, input_length, target_length):

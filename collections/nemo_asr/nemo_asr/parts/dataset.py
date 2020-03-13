@@ -203,6 +203,7 @@ class TFAudioDataset(Dataset):
         tokenizer=None,
         mlm_prob=0,
         tokenizer_vocab_size=None,
+        drop_bos_eos=False,
     ):
         """
         Dataset that loads tensors via a json file containing paths to audio
@@ -251,6 +252,7 @@ class TFAudioDataset(Dataset):
         self.vocab_size = tokenizer_vocab_size
         self.load_audio = load_audio
         self.mlm_prob = mlm_prob
+        self.drop_bos_eos = drop_bos_eos
         if logger:
             logger.info(
                 "Dataset loaded with {0:.2f} hours. Filtered {1:.2f} "
@@ -278,6 +280,10 @@ class TFAudioDataset(Dataset):
             # tl are now the masks
             decoder_outputs = t
             decoder_inputs, tl = self.mask_ids(t)
+        elif self.drop_bos_eos:
+            decoder_outputs = t[1:-1]
+            decoder_inputs = decoder_outputs
+            tl -= 1
         else:
             decoder_outputs = t[1:]
             decoder_inputs = t[:-1]

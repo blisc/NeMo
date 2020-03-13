@@ -540,6 +540,7 @@ transcript_n}
         shuffle=True,
         num_workers=0,
         tokenizer=None,
+        drop_bos_eos=False,
         # perturb_config=None,
         **kwargs,
     ):
@@ -557,6 +558,7 @@ transcript_n}
             logger=self._logger,
             load_audio=load_audio,
             tokenizer=tokenizer,
+            drop_bos_eos=drop_bos_eos,
         )
 
         if self._placement == DeviceType.AllGpu:

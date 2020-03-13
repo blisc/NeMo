@@ -11,7 +11,9 @@ import nemo
 from nemo.utils.lr_policies import CosineAnnealing
 import nemo.utils.argparse as nm_argparse
 import nemo_asr
+import nemo_nlp
 from nemo_asr.helpers import monitor_asr_train_progress, process_evaluation_batch, process_evaluation_epoch
+from nemo_asr.las.helpers import process_evaluation_batch_bpe_jasper, process_evaluation_epoch_bpe_jasper
 
 
 def parse_args():
@@ -39,6 +41,9 @@ def parse_args():
     parser.add_argument("--beta2", default=0.25, type=float)
     parser.add_argument("--warmup_steps", default=0, type=int)
     parser.add_argument("--load_dir", default=None, type=str, help="directory with pre-trained checkpoint")
+    parser.add_argument("--label_unit", choices=["BPE", "char"], default="char", type=str)
+    parser.add_argument("--tokenizer", choices=["nemobert", "yttm"], type=str)
+    parser.add_argument("--tokenizer_file", type=str)
 
     args = parser.parse_args()
 
@@ -63,7 +68,6 @@ def create_all_dags(args, neural_factory):
     yaml = YAML(typ="safe")
     with open(args.model_config) as f:
         jasper_params = yaml.load(f)
-    vocab = jasper_params['labels']
     sample_rate = jasper_params['sample_rate']
 
     # Calculate num_workers for dataloader
@@ -77,15 +81,43 @@ def create_all_dags(args, neural_factory):
     del train_dl_params["eval"]
     # del train_dl_params["normalize_transcripts"]
 
-    data_layer = nemo_asr.AudioToTextDataLayer(
-        manifest_filepath=args.train_dataset,
-        sample_rate=sample_rate,
-        labels=vocab,
-        batch_size=args.batch_size,
-        num_workers=1,
-        **train_dl_params,
-        # normalize_transcripts=False
-    )
+    num_classes = -1
+    vocab = jasper_params['labels']
+    if args.label_unit == "char":
+        data_layer = nemo_asr.AudioToTextDataLayer(
+            manifest_filepath=args.train_dataset,
+            sample_rate=sample_rate,
+            labels=vocab,
+            batch_size=args.batch_size,
+            num_workers=1,
+            **train_dl_params,
+            # normalize_transcripts=False
+        )
+        num_classes = len(vocab)
+        blank_id = num_classes
+    elif args.label_unit == "BPE":
+        # Defining nodes
+        if args.tokenizer == "yttm":
+            if not args.tokenizer_file:
+                raise ValueError("tokenizer file")
+            tokenizer = nemo_nlp.YouTokenToMeTokenizer(model_path=args.tokenizer_file)
+        elif args.tokenizer == "nemobert":
+            tokenizer = nemo_nlp.NemoBertTokenizer(pretrained_model="bert-base-uncased")  # + "-vocab.txt")
+            # Here use mask_id as blank_id
+            blank_id = tokenizer.mask_id()
+        else:
+            raise ValueError("tokenizer")
+        assert tokenizer.pad_id() == 0, f"{tokenizer.pad_id}"
+        data_layer = nemo_asr.TFAudioToTextDataLayer(
+            manifest_filepath=args.train_dataset,
+            labels=vocab,
+            batch_size=args.batch_size,
+            num_workers=0,
+            tokenizer=tokenizer,
+            drop_bos_eos=True,
+            **train_dl_params,
+        )
+        num_classes = tokenizer.vocab_size - 1  # Minus 1 for "blank token"
 
     N = len(data_layer)
     steps_per_epoch = math.ceil(N / (args.batch_size * args.iter_per_step * args.num_gpus))
@@ -111,14 +143,25 @@ def create_all_dags(args, neural_factory):
 
     if args.eval_datasets:
         for eval_datasets in args.eval_datasets:
-            data_layer_eval = nemo_asr.AudioToTextDataLayer(
-                manifest_filepath=eval_datasets,
-                sample_rate=sample_rate,
-                labels=vocab,
-                batch_size=args.eval_batch_size,
-                num_workers=1,
-                **eval_dl_params,
-            )
+            if args.label_unit == "char":
+                data_layer_eval = nemo_asr.AudioToTextDataLayer(
+                    manifest_filepath=eval_datasets,
+                    sample_rate=sample_rate,
+                    labels=vocab,
+                    batch_size=args.eval_batch_size,
+                    num_workers=1,
+                    **eval_dl_params,
+                )
+            elif args.label_unit == "BPE":
+                data_layer_eval = nemo_asr.TFAudioToTextDataLayer(
+                    manifest_filepath=args.train_dataset,
+                    labels=vocab,
+                    batch_size=args.batch_size,
+                    num_workers=0,
+                    tokenizer=tokenizer,
+                    drop_bos_eos=True,
+                    **eval_dl_params,
+                )
 
             data_layers_eval.append(data_layer_eval)
     else:
@@ -129,10 +172,10 @@ def create_all_dags(args, neural_factory):
     )
 
     jasper_decoder = nemo_asr.JasperDecoderForCTC(
-        feat_in=jasper_params["JasperEncoder"]["jasper"][-1]["filters"], num_classes=len(vocab), factory=neural_factory
+        feat_in=jasper_params["JasperEncoder"]["jasper"][-1]["filters"], num_classes=num_classes, factory=neural_factory
     )
 
-    ctc_loss = nemo_asr.CTCLossNM(num_classes=len(vocab))
+    ctc_loss = nemo_asr.CTCLossNM(blank_id=blank_id)
 
     greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
@@ -143,7 +186,10 @@ def create_all_dags(args, neural_factory):
     logger.info('================================')
 
     # Train DAG
-    audio_signal_t, a_sig_length_t, transcript_t, transcript_len_t = data_layer()
+    if args.label_unit == "char":
+        audio_signal_t, a_sig_length_t, transcript_t, transcript_len_t = data_layer()
+    elif args.label_unit == "BPE":
+        audio_signal_t, a_sig_length_t, _, transcript_t, transcript_len_t, _, _ = data_layer()
     processed_signal_t, p_length_t = data_preprocessor(input_signal=audio_signal_t, length=a_sig_length_t)
 
     if multiply_batch_config:
@@ -164,7 +210,7 @@ def create_all_dags(args, neural_factory):
     # Callbacks needed to print info to console and Tensorboard
     train_callback = nemo.core.SimpleLossLoggerCallback(
         tensors=[loss_t, predictions_t, transcript_t, transcript_len_t],
-        print_func=partial(monitor_asr_train_progress, labels=vocab, logger=logger),
+        print_func=lambda x: logger.info("loss %f", x[0]),
         get_tb_values=lambda x: [("loss", x[0])],
         tb_writer=neural_factory.tb_writer,
     )
@@ -177,7 +223,10 @@ def create_all_dags(args, neural_factory):
 
     # assemble eval DAGs
     for i, eval_dl in enumerate(data_layers_eval):
-        audio_signal_e, a_sig_length_e, transcript_e, transcript_len_e = eval_dl()
+        if args.label_unit == "char":
+            audio_signal_e, a_sig_length_e, transcript_e, transcript_len_e = eval_dl()
+        elif args.label_unit == "BPE":
+            audio_signal_e, a_sig_length_e, _, transcript_e, transcript_len_e, _, _ = eval_dl()
         processed_signal_e, p_length_e = data_preprocessor(input_signal=audio_signal_e, length=a_sig_length_e)
         encoded_e, encoded_len_e = jasper_encoder(audio_signal=processed_signal_e, length=p_length_e)
         log_probs_e = jasper_decoder(encoder_output=encoded_e)
@@ -188,13 +237,24 @@ def create_all_dags(args, neural_factory):
 
         # create corresponding eval callback
         tagname = os.path.basename(args.eval_datasets[i]).split(".")[0]
-        eval_callback = nemo.core.EvaluatorCallback(
-            eval_tensors=[loss_e, predictions_e, transcript_e, transcript_len_e],
-            user_iter_callback=partial(process_evaluation_batch, labels=vocab),
-            user_epochs_done_callback=partial(process_evaluation_epoch, tag=tagname, logger=logger),
-            eval_step=args.eval_freq,
-            tb_writer=neural_factory.tb_writer,
-        )
+        if args.label_unit == "char":
+            eval_callback = nemo.core.EvaluatorCallback(
+                eval_tensors=[loss_e, predictions_e, transcript_e, transcript_len_e],
+                user_iter_callback=partial(process_evaluation_batch, labels=vocab),
+                user_epochs_done_callback=partial(process_evaluation_epoch, tag=tagname, logger=logger),
+                eval_step=args.eval_freq,
+                tb_writer=neural_factory.tb_writer,
+            )
+        elif args.label_unit == "BPE":
+            eval_callback = nemo.core.EvaluatorCallback(
+                eval_tensors=[loss_e, transcript_e, predictions_e, transcript_len_e],
+                user_iter_callback=partial(process_evaluation_batch_bpe_jasper, tokenizer=tokenizer),
+                user_epochs_done_callback=partial(
+                    process_evaluation_epoch_bpe_jasper, tag=tagname, calc_wer=True, logger=logger
+                ),
+                eval_step=args.eval_freq,
+                tb_writer=neural_factory.tb_writer,
+            )
 
         callbacks.append(eval_callback)
     return loss_t, callbacks, steps_per_epoch
