@@ -202,7 +202,7 @@ def process_evaluation_batch_bpe_jasper(tensors, global_vars, tokenizer):
         return hypotheses
 
     for t in tensor_list[2]:
-        prediction_texts = __ctc_decode(t, tokenizer)
+        prediction_texts.extend(__ctc_decode(t, tokenizer))
     global_vars['transcript_texts'].extend(transcript_texts)
     global_vars['prediction_texts'].extend(prediction_texts)
     # global_vars['prediction_texts'] += __gather_predictions(tensor_list[2], labels=labels)
