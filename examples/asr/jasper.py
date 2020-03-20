@@ -154,9 +154,9 @@ def create_all_dags(args, neural_factory):
                 )
             elif args.label_unit == "BPE":
                 data_layer_eval = nemo_asr.TFAudioToTextDataLayer(
-                    manifest_filepath=args.train_dataset,
+                    manifest_filepath=eval_datasets,
                     labels=vocab,
-                    batch_size=args.batch_size,
+                    batch_size=args.eval_batch_size,
                     num_workers=0,
                     tokenizer=tokenizer,
                     drop_bos_eos=True,
