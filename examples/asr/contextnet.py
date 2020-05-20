@@ -1,4 +1,17 @@
-# Copyright (c) 2019 NVIDIA Corporation
+# Copyright (C) NVIDIA CORPORATION. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.****
+
 import argparse
 import copy
 import os
@@ -16,7 +29,7 @@ from nemo.utils.lr_policies import CosineAnnealing
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        parents=[nm_argparse.NemoArgParser()], description='QuartzNet', conflict_handler='resolve',
+        parents=[nm_argparse.NemoArgParser()], description='ContextNet', conflict_handler='resolve',
     )
     parser.set_defaults(
         checkpoint_dir=None,
@@ -42,23 +55,31 @@ def parse_args():
     )
 
     # Create new args
-    parser.add_argument("--exp_name", default="QuartzNet", type=str)
+    parser.add_argument("--exp_name", default="ContextNet", type=str)
+    parser.add_argument("--project", default=None, type=str)
     parser.add_argument("--beta1", default=0.95, type=float)
     parser.add_argument("--beta2", default=0.5, type=float)
     parser.add_argument("--warmup_steps", default=1000, type=int)
+    parser.add_argument("--warmup_ratio", default=None, type=float)
+    parser.add_argument('--min_lr', default=1e-5, type=float)
     parser.add_argument("--load_dir", default=None, type=str)
     parser.add_argument("--synced_bn", action='store_true', help="Use synchronized batch norm")
     parser.add_argument("--synced_bn_groupsize", default=0, type=int)
+    parser.add_argument("--update_freq", default=50, type=int, help="Metrics update freq")
+    parser.add_argument("--eval_freq", default=1000, type=int, help="Evaluation frequency")
+    parser.add_argument('--kernel_size_factor', default=1.0, type=float)
 
     args = parser.parse_args()
     if args.max_steps is not None:
-        raise ValueError("QuartzNet uses num_epochs instead of max_steps")
+        raise ValueError("ContextNet uses num_epochs instead of max_steps")
 
     return args
 
 
-def construct_name(name, lr, batch_size, num_epochs, wd, optimizer):
-    return "{0}-lr_{1}-bs_{2}-e_{3}-wd_{4}-opt_{5}".format(name, lr, batch_size, num_epochs, wd, optimizer)
+def construct_name(name, lr, batch_size, num_epochs, wd, optimizer, kernel_size_factor):
+    return "{0}-lr_{1}-bs_{2}-e_{3}-wd_{4}-opt_{5}-kf_{6}".format(
+        name, lr, batch_size, num_epochs, wd, optimizer, kernel_size_factor
+    )
 
 
 def create_all_dags(args, neural_factory):
@@ -69,18 +90,18 @@ def create_all_dags(args, neural_factory):
     # parse the config files
     yaml = YAML(typ="safe")
     with open(args.model_config) as f:
-        quartz_params = yaml.load(f)
+        contextnet_params = yaml.load(f)
 
-    vocab = quartz_params['labels']
-    sample_rate = quartz_params['sample_rate']
+    vocab = contextnet_params['labels']
+    sample_rate = contextnet_params['sample_rate']
 
     # Calculate num_workers for dataloader
     total_cpus = os.cpu_count()
     cpu_per_traindl = max(int(total_cpus / neural_factory.world_size), 1)
 
     # create data layer for training
-    train_dl_params = copy.deepcopy(quartz_params["AudioToTextDataLayer"])
-    train_dl_params.update(quartz_params["AudioToTextDataLayer"]["train"])
+    train_dl_params = copy.deepcopy(contextnet_params["AudioToTextDataLayer"])
+    train_dl_params.update(contextnet_params["AudioToTextDataLayer"]["train"])
     del train_dl_params["train"]
     del train_dl_params["eval"]
     # del train_dl_params["normalize_transcripts"]
@@ -92,7 +113,6 @@ def create_all_dags(args, neural_factory):
         batch_size=args.batch_size,
         num_workers=cpu_per_traindl,
         **train_dl_params,
-        # normalize_transcripts=False
     )
 
     N = len(data_layer_train)
@@ -102,8 +122,8 @@ def create_all_dags(args, neural_factory):
     # we need separate eval dags for separate eval datasets
     # but all other modules in these dags will be shared
 
-    eval_dl_params = copy.deepcopy(quartz_params["AudioToTextDataLayer"])
-    eval_dl_params.update(quartz_params["AudioToTextDataLayer"]["eval"])
+    eval_dl_params = copy.deepcopy(contextnet_params["AudioToTextDataLayer"])
+    eval_dl_params.update(contextnet_params["AudioToTextDataLayer"]["eval"])
     del eval_dl_params["train"]
     del eval_dl_params["eval"]
 
@@ -126,30 +146,36 @@ def create_all_dags(args, neural_factory):
     # create shared modules
 
     data_preprocessor = nemo_asr.AudioToMelSpectrogramPreprocessor(
-        sample_rate=sample_rate, **quartz_params["AudioToMelSpectrogramPreprocessor"],
+        sample_rate=sample_rate, **contextnet_params["AudioToMelSpectrogramPreprocessor"],
     )
 
-    # (QuartzNet uses the Jasper baseline encoder and decoder)
-    encoder = nemo_asr.JasperEncoder(
-        feat_in=quartz_params["AudioToMelSpectrogramPreprocessor"]["features"], **quartz_params["JasperEncoder"],
+    # Inject the `kernel_size_factor` kwarg to the ContextNet config
+    # Skip the last layer  as that must be a pointwise kernel
+    for idx in range(len(contextnet_params["ContextNetEncoder"]["jasper"]) - 1):
+        contextnet_params["ContextNetEncoder"]["jasper"][idx]["kernel_size_factor"] = args.kernel_size_factor
+
+    # (ContextNet uses the Jasper baseline encoder and decoder)
+    encoder = nemo_asr.ContextNetEncoder(
+        feat_in=contextnet_params["AudioToMelSpectrogramPreprocessor"]["features"],
+        **contextnet_params["ContextNetEncoder"],
     )
 
     decoder = nemo_asr.JasperDecoderForCTC(
-        feat_in=quartz_params["JasperEncoder"]["jasper"][-1]["filters"], num_classes=len(vocab),
+        feat_in=contextnet_params["ContextNetEncoder"]["jasper"][-1]["filters"], num_classes=len(vocab),
     )
 
-    ctc_loss = nemo_asr.CTCLossNM(num_classes=len(vocab))
+    ctc_loss = nemo_asr.CTCLossNM(num_classes=len(vocab), zero_infinity=True)
 
     greedy_decoder = nemo_asr.GreedyCTCDecoder()
 
     # create augmentation modules (only used for training) if their configs
     # are present
 
-    multiply_batch_config = quartz_params.get('MultiplyBatch', None)
+    multiply_batch_config = contextnet_params.get('MultiplyBatch', None)
     if multiply_batch_config:
         multiply_batch = nemo_asr.MultiplyBatch(**multiply_batch_config)
 
-    spectr_augment_config = quartz_params.get('SpectrogramAugmentation', None)
+    spectr_augment_config = contextnet_params.get('SpectrogramAugmentation', None)
     if spectr_augment_config:
         data_spectr_augmentation = nemo_asr.SpectrogramAugmentation(**spectr_augment_config)
 
@@ -180,6 +206,7 @@ def create_all_dags(args, neural_factory):
         print_func=partial(monitor_asr_train_progress, labels=vocab),
         get_tb_values=lambda x: [["loss", x[0]]],
         tb_writer=neural_factory.tb_writer,
+        step_freq=args.update_freq,
     )
 
     callbacks = [train_callback]
@@ -190,6 +217,17 @@ def create_all_dags(args, neural_factory):
         )
 
         callbacks.append(chpt_callback)
+
+    # Log training metrics to wandb
+    if args.project is not None:
+        wand_callback = nemo.core.WandbCallback(
+            train_tensors=[loss_t],
+            wandb_name=args.exp_name,
+            wandb_project=args.project,
+            update_freq=args.update_freq,
+            args=args,
+        )
+        callbacks.append(wand_callback)
 
     # assemble eval DAGs
     for i, eval_dl in enumerate(data_layers_eval):
@@ -221,7 +259,15 @@ def create_all_dags(args, neural_factory):
 def main():
     args = parse_args()
 
-    name = construct_name(args.exp_name, args.lr, args.batch_size, args.num_epochs, args.weight_decay, args.optimizer,)
+    name = construct_name(
+        args.exp_name,
+        args.lr,
+        args.batch_size,
+        args.num_epochs,
+        args.weight_decay,
+        args.optimizer,
+        args.kernel_size_factor,
+    )
     work_dir = name
     if args.work_dir:
         work_dir = os.path.join(args.work_dir, name)
@@ -252,7 +298,12 @@ def main():
     neural_factory.train(
         tensors_to_optimize=[train_loss],
         callbacks=callbacks,
-        lr_policy=CosineAnnealing(args.num_epochs * steps_per_epoch, warmup_steps=args.warmup_steps),
+        lr_policy=CosineAnnealing(
+            args.num_epochs * steps_per_epoch,
+            warmup_steps=args.warmup_steps,
+            warmup_ratio=args.warmup_ratio,
+            min_lr=args.min_lr,
+        ),
         optimizer=args.optimizer,
         optimization_params={
             "num_epochs": args.num_epochs,
@@ -260,6 +311,7 @@ def main():
             "betas": (args.beta1, args.beta2),
             "weight_decay": args.weight_decay,
             "grad_norm_clip": None,
+            "amp_min_loss_scale": 1e-4,
         },
         batches_per_step=args.iter_per_step,
         synced_batchnorm=args.synced_bn,
