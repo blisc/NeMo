@@ -468,6 +468,8 @@ class Decoder(nn.Module):
             mel_lengths = mel_lengths.cuda()
             not_finished = not_finished.cuda()
 
+        stepped = False
+
         mel_outputs, gate_outputs, alignments = [], [], []
         while True:
             decoder_input = self.prenet(decoder_input, inference=True)
@@ -478,9 +480,10 @@ class Decoder(nn.Module):
             not_finished = not_finished * dec
             mel_lengths += not_finished
 
-            if self.early_stopping and torch.sum(not_finished) == 0:
+            if self.early_stopping and torch.sum(not_finished) == 0 and stepped:
                 break
 
+            stepped = True
             mel_outputs += [mel_output.squeeze(1)]
             gate_outputs += [gate_output]
             alignments += [alignment]
