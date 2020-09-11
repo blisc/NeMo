@@ -30,13 +30,13 @@ from nemo.core.neural_types.neural_type import NeuralType
 from nemo.utils import logging
 from nemo.utils.decorators import experimental
 
-_NATIVE_AMP = False
-try:
-    from torch.cuda.amp import autocast
+# _NATIVE_AMP = False
+# try:
+#     from torch.cuda.amp import autocast
 
-    _NATIVE_AMP = True
-except ImportError:
-    pass
+#     _NATIVE_AMP = True
+# except ImportError:
+#     pass
 
 
 @experimental  # TODO: Implement save_to() and restore_from()
@@ -104,8 +104,8 @@ class Encoder(NeuralModule):
 
         self.lstm.flatten_parameters()
         # TODO: Pytorch 1.6 has issues with rnns and amp, so cast to float until fixed
-        if _NATIVE_AMP:
-            token_embedding = token_embedding.float()
+        # if _NATIVE_AMP:
+        # token_embedding = token_embedding.float()
         outputs, _ = self.lstm(token_embedding)
 
         outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs, batch_first=True)
@@ -280,15 +280,18 @@ class Decoder(NeuralModule):
         cell_input = torch.cat((decoder_input, self.attention_context), -1)
 
         # TODO: Pytorch 1.6 has issues with rnns and amp, so cast to float until fixed
-        if _NATIVE_AMP:
-            with autocast(enabled=False):
-                self.attention_hidden, self.attention_cell = self.attention_rnn(
-                    cell_input.float(), (self.attention_hidden, self.attention_cell)
-                )
-        else:
-            self.attention_hidden, self.attention_cell = self.attention_rnn(
-                cell_input, (self.attention_hidden, self.attention_cell)
-            )
+        # if _NATIVE_AMP:
+        #     with autocast(enabled=False):
+        #         self.attention_hidden, self.attention_cell = self.attention_rnn(
+        #             cell_input.float(), (self.attention_hidden, self.attention_cell)
+        #         )
+        # else:
+        #     self.attention_hidden, self.attention_cell = self.attention_rnn(
+        #         cell_input, (self.attention_hidden, self.attention_cell)
+        #     )
+        self.attention_hidden, self.attention_cell = self.attention_rnn(
+            cell_input, (self.attention_hidden, self.attention_cell)
+        )
         self.attention_hidden = F.dropout(self.attention_hidden, self.p_attention_dropout, self.training)
 
         attention_weights_cat = torch.cat(
@@ -302,15 +305,18 @@ class Decoder(NeuralModule):
         decoder_input = torch.cat((self.attention_hidden, self.attention_context), -1)
 
         # TODO: Pytorch 1.6 has issues with rnns and amp, so cast to float until fixed
-        if _NATIVE_AMP:
-            with autocast(enabled=False):
-                self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
-                    decoder_input, (self.decoder_hidden, self.decoder_cell)
-                )
-        else:
-            self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
-                decoder_input, (self.decoder_hidden, self.decoder_cell)
-            )
+        # if _NATIVE_AMP:
+        #     with autocast(enabled=False):
+        #         self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
+        #             decoder_input, (self.decoder_hidden, self.decoder_cell)
+        #         )
+        # else:
+        #     self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
+        #         decoder_input, (self.decoder_hidden, self.decoder_cell)
+        #     )
+        self.decoder_hidden, self.decoder_cell = self.decoder_rnn(
+            decoder_input, (self.decoder_hidden, self.decoder_cell)
+        )
         self.decoder_hidden = F.dropout(self.decoder_hidden, self.p_decoder_dropout, self.training)
 
         decoder_hidden_attention_context = torch.cat((self.decoder_hidden, self.attention_context), dim=1)
