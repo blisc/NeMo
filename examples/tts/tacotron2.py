@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import pytorch_lightning as pl
-
+import torch
 from nemo.collections.common.callbacks import LogEpochTimeCallback
 from nemo.collections.tts.models import Tacotron2Model
 from nemo.core.config import hydra_runner
@@ -22,13 +22,29 @@ from nemo.utils.exp_manager import exp_manager
 
 @hydra_runner(config_path="conf", config_name="tacotron2")
 def main(cfg):
-    trainer = pl.Trainer(**cfg.trainer)
-    exp_manager(trainer, cfg.get("exp_manager", None))
-    model = Tacotron2Model(cfg=cfg.model, trainer=trainer)
-    lr_logger = pl.callbacks.LearningRateLogger()
-    epoch_time_logger = LogEpochTimeCallback()
-    trainer.callbacks.extend([lr_logger, epoch_time_logger])
-    trainer.fit(model)
+    # trainer = pl.Trainer(**cfg.trainer)
+    # exp_manager(trainer, cfg.get("exp_manager", None))
+    # model = Tacotron2Model(cfg=cfg.model, trainer=trainer)
+    # lr_logger = pl.callbacks.LearningRateLogger()
+    # epoch_time_logger = LogEpochTimeCallback()
+    # trainer.callbacks.extend([lr_logger, epoch_time_logger])
+    # trainer.fit(model)
+    model = Tacotron2Model(cfg=cfg.model)
+    model = model.cuda()
+    model.load_from_checkpoint(
+        "/NeMo/examples/tts/experiments/1441344-Tacotron_O1_LJS_V1b/Tacotron2/2020-09-12_00-05-20/checkpoints/Tacotron2--last.ckpt"
+    )
+    model.eval()
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            input_ = model.parse(str_input="this is a test.")
+            spec = model.generate_spectrogram(tokens=input_)
+
+    from matplotlib import pyplot as plt
+
+    fig, (ax1, ax2) = plt.subplots(2, 1)
+    ax1.imshow(spec[0].cpu().numpy().astype(float), origin="lower")
+    plt.savefig("spec")
 
 
 if __name__ == '__main__':

@@ -175,7 +175,9 @@ class Tacotron2Model(SpectrogramGenerator):
         if audio is not None and audio_len is not None:
             spec_target, spec_target_len = self.audio_to_melspec_precessor(audio, audio_len)
         token_embedding = self.text_embedding(tokens).transpose(1, 2)
+        print(torch.isnan(token_embedding).any())
         encoder_embedding = self.encoder(token_embedding=token_embedding, token_len=token_len)
+        print(torch.isnan(encoder_embedding).any())
         if self.training:
             spec_pred_dec, gate_pred, alignments = self.decoder(
                 memory=encoder_embedding, decoder_inputs=spec_target, memory_lengths=token_len
@@ -184,7 +186,9 @@ class Tacotron2Model(SpectrogramGenerator):
             spec_pred_dec, gate_pred, alignments, pred_length = self.decoder(
                 memory=encoder_embedding, memory_lengths=token_len
             )
+        print(torch.isnan(spec_pred_dec).any())
         spec_pred_postnet = self.postnet(mel_spec=spec_pred_dec)
+        print(torch.isnan(spec_pred_postnet).any())
 
         if not self.calculate_loss:
             return spec_pred_dec, spec_pred_postnet, gate_pred, alignments, pred_length
@@ -200,6 +204,7 @@ class Tacotron2Model(SpectrogramGenerator):
         token_len = torch.tensor([len(i) for i in tokens]).to(self.device)
         tensors = self(tokens=tokens, token_len=token_len)
         spectrogram_pred = tensors[1]
+        print(torch.isnan(spectrogram_pred).any())
 
         if spectrogram_pred.shape[0] > 1:
             # Silence all frames past the predicted end
@@ -208,6 +213,7 @@ class Tacotron2Model(SpectrogramGenerator):
             mask = mask.permute(1, 0, 2)
             spectrogram_pred.data.masked_fill_(mask, self.pad_value)
 
+        print(torch.isnan(spectrogram_pred).any())
         return spectrogram_pred
 
     def training_step(self, batch, batch_idx):
