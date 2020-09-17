@@ -39,14 +39,9 @@ from nemo.utils import logging
 
 
 @dataclass
-class PreprocessorParams:
-    pad_value: float = MISSING
-
-
-@dataclass
 class Preprocessor:
-    cls: str = MISSING
-    params: PreprocessorParams = PreprocessorParams()
+    _target_: str = MISSING
+    pad_value: float = MISSING
 
 
 @dataclass
@@ -63,7 +58,6 @@ class Tacotron2Config:
 class Tacotron2Model(SpectrogramGenerator):
     """Tacotron 2 Model that is used to generate mel spectrograms from text"""
 
-    # TODO: tensorboard for training
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         if isinstance(cfg, dict):
             cfg = OmegaConf.create(cfg)
@@ -78,7 +72,7 @@ class Tacotron2Model(SpectrogramGenerator):
         # Ensure passed cfg is compliant with schema
         OmegaConf.merge(cfg, schema)
 
-        self.pad_value = self._cfg.preprocessor.params.pad_value
+        self.pad_value = self._cfg.preprocessor.pad_value
         self._parser = None
         self.audio_to_melspec_precessor = instantiate(self._cfg.preprocessor)
         self.text_embedding = nn.Embedding(len(cfg.labels) + 3, 512)
@@ -103,24 +97,24 @@ class Tacotron2Model(SpectrogramGenerator):
         # Try to get params from validation, test, and then train
         params = {}
         try:
-            params = self._cfg.validation_ds.dataset.params
+            params = self._cfg.validation_ds.dataset
         except ConfigAttributeError:
             pass
         if params == {}:
             try:
-                params = self._cfg.test_ds.dataset.params
+                params = self._cfg.test_ds.dataset
             except ConfigAttributeError:
                 pass
         if params == {}:
             try:
-                params = self._cfg.train_ds.dataset.params
+                params = self._cfg.train_ds.dataset
             except ConfigAttributeError:
                 pass
 
-        name = params.get('parser', None) or params.get('parser', None) or 'en'
-        unk_id = params.get('unk_index', None) or params.get('unk_index', None) or -1
-        blank_id = params.get('blank_index', None) or params.get('blank_index', None) or -1
-        do_normalize = params.get('normalize', None) or params.get('normalize', None) or False
+        name = params.get('parser', None) or 'en'
+        unk_id = params.get('unk_index', None) or -1
+        blank_id = params.get('blank_index', None) or -1
+        do_normalize = params.get('normalize', None) or False
         self._parser = parsers.make_parser(
             labels=self._cfg.labels, name=name, unk_id=unk_id, blank_id=blank_id, do_normalize=do_normalize,
         )
@@ -175,9 +169,7 @@ class Tacotron2Model(SpectrogramGenerator):
         if audio is not None and audio_len is not None:
             spec_target, spec_target_len = self.audio_to_melspec_precessor(audio, audio_len)
         token_embedding = self.text_embedding(tokens).transpose(1, 2)
-        print(torch.isnan(token_embedding).any())
         encoder_embedding = self.encoder(token_embedding=token_embedding, token_len=token_len)
-        print(torch.isnan(encoder_embedding).any())
         if self.training:
             spec_pred_dec, gate_pred, alignments = self.decoder(
                 memory=encoder_embedding, decoder_inputs=spec_target, memory_lengths=token_len
@@ -186,9 +178,12 @@ class Tacotron2Model(SpectrogramGenerator):
             spec_pred_dec, gate_pred, alignments, pred_length = self.decoder(
                 memory=encoder_embedding, memory_lengths=token_len
             )
-        print(torch.isnan(spec_pred_dec).any())
         spec_pred_postnet = self.postnet(mel_spec=spec_pred_dec)
-        print(torch.isnan(spec_pred_postnet).any())
+        if not self.training:
+            logging.debug(torch.isnan(token_embedding).any())
+            logging.debug(torch.isnan(encoder_embedding).any())
+            logging.debug(torch.isnan(spec_pred_dec).any())
+            logging.debug(torch.isnan(spec_pred_postnet).any())
 
         if not self.calculate_loss:
             return spec_pred_dec, spec_pred_postnet, gate_pred, alignments, pred_length
@@ -204,7 +199,6 @@ class Tacotron2Model(SpectrogramGenerator):
         token_len = torch.tensor([len(i) for i in tokens]).to(self.device)
         tensors = self(tokens=tokens, token_len=token_len)
         spectrogram_pred = tensors[1]
-        print(torch.isnan(spectrogram_pred).any())
 
         if spectrogram_pred.shape[0] > 1:
             # Silence all frames past the predicted end
@@ -213,7 +207,6 @@ class Tacotron2Model(SpectrogramGenerator):
             mask = mask.permute(1, 0, 2)
             spectrogram_pred.data.masked_fill_(mask, self.pad_value)
 
-        print(torch.isnan(spectrogram_pred).any())
         return spectrogram_pred
 
     def training_step(self, batch, batch_idx):
@@ -230,6 +223,9 @@ class Tacotron2Model(SpectrogramGenerator):
             spec_target_len=spec_target_len,
             pad_value=self.pad_value,
         )
+
+        if self.global_step % 500 == 0:
+            self.logger.experiment.add_scalar("loss", loss, self.global_step)
 
         output = {
             'loss': loss,
@@ -293,7 +289,7 @@ class Tacotron2Model(SpectrogramGenerator):
         elif not shuffle_should_be and cfg.dataloader_params.shuffle:
             logging.error(f"The {name} dataloader for {self} has shuffle set to True!!!")
 
-        labels = cfg.dataset.params.labels
+        labels = cfg.dataset.labels
 
         dataset = instantiate(cfg.dataset, bos_id=len(labels), eos_id=len(labels) + 1, pad_id=len(labels) + 2)
         return torch.utils.data.DataLoader(dataset, collate_fn=dataset.collate_fn, **cfg.dataloader_params)
