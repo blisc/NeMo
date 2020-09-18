@@ -180,10 +180,10 @@ class Tacotron2Model(SpectrogramGenerator):
             )
         spec_pred_postnet = self.postnet(mel_spec=spec_pred_dec)
         if not self.training:
-            logging.debug(torch.isnan(token_embedding).any())
-            logging.debug(torch.isnan(encoder_embedding).any())
-            logging.debug(torch.isnan(spec_pred_dec).any())
-            logging.debug(torch.isnan(spec_pred_postnet).any())
+            logging.debug(f"enc: {torch.isnan(encoder_embedding).any()}"")
+            logging.debug(f"token: {torch.isnan(token_embedding).any()}"")
+            logging.debug(f"rnn out: {torch.isnan(spec_pred_dec).any()}"")
+            logging.debug(f"postnet out: {torch.isnan(spec_pred_postnet).any()}"")
 
         if not self.calculate_loss:
             return spec_pred_dec, spec_pred_postnet, gate_pred, alignments, pred_length
