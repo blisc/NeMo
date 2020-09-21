@@ -483,14 +483,16 @@ class Postnet(NeuralModule):
 
     @typecheck()
     def forward(self, *, mel_spec):
-        mel_spec_out = mel_spec
-        for i in range(len(self.convolutions) - 1):
-            mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
-        mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
-        if not self.training:
-            logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
+        with torch.cuda.amp.autocast(enabled=False):
+            mel_spec_out = mel_spec
+            for i in range(len(self.convolutions) - 1):
+                mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
+            mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
+            if not self.training:
+                logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
+            mel_spec_out = mel_spec_out + mel_spec
 
-        return mel_spec + mel_spec_out
+        return mel_spec_out
 
     def save_to(self, save_path: str):
         # TODO: Implement me!
