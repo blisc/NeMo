@@ -376,10 +376,7 @@ class Model(Typing, Serialization, FileIO):
             for pretrained_model_info in cls.list_available_models():
                 if pretrained_model_info.pretrained_model_name == model_name:
                     location_in_the_cloud = pretrained_model_info.location
-<<<<<<< HEAD
-=======
                     description = pretrained_model_info.description
->>>>>>> nvidia/main
                     class_ = pretrained_model_info.class_
         if location_in_the_cloud is None:
             raise FileNotFoundError(
@@ -398,11 +395,7 @@ class Model(Typing, Serialization, FileIO):
         if class_ is None:
             class_ = cls
         instance = class_.restore_from(
-<<<<<<< HEAD
-            restore_path=nemo_model_file_in_cache, override_config_path=override_config_path
-=======
             restore_path=nemo_model_file_in_cache, override_config_path=override_config_path, map_location=map_location
->>>>>>> nvidia/main
         )
         return instance
 
