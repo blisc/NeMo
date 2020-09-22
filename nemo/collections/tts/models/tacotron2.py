@@ -167,7 +167,8 @@ class Tacotron2Model(SpectrogramGenerator):
     @typecheck()
     def forward(self, *, tokens, token_len, audio=None, audio_len=None):
         if audio is not None and audio_len is not None:
-            spec_target, spec_target_len = self.audio_to_melspec_precessor(audio, audio_len)
+            with torch.cuda.amp.autocast(enabled=False):
+                spec_target, spec_target_len = self.audio_to_melspec_precessor(audio, audio_len)
         token_embedding = self.text_embedding(tokens).transpose(1, 2)
         encoder_embedding = self.encoder(token_embedding=token_embedding, token_len=token_len)
         if self.training:

@@ -73,7 +73,7 @@ model:
     n_window_size: 1024
     n_window_stride: ${n_stride}
     normalize: null
-    pad_to: 16
+    pad_to: 8
     pad_value: ${pad_value}
     preemph: null
     sample_rate: ${sample_rate}
