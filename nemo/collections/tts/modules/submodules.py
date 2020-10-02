@@ -141,13 +141,11 @@ class Attention(torch.nn.Module):
         #     processed_memory = processed_memory.float()
         #     attention_weights_cat = attention_weights_cat.float()
         #     memory = memory.float()
-        with torch.cuda.amp.autocast(enabled=False):
-            alignment = self.get_alignment_energies(
-                attention_hidden_state.float(), processed_memory, attention_weights_cat.float()
-            )
+        # with torch.cuda.amp.autocast(enabled=False):
+        alignment = self.get_alignment_energies(attention_hidden_state, processed_memory, attention_weights_cat)
 
-            if mask is not None:
-                alignment.data.masked_fill_(mask, self.score_mask_value)
+        if mask is not None:
+            alignment.data.masked_fill_(mask, self.score_mask_value)
 
         attention_weights = F.softmax(alignment, dim=1)
         attention_context = torch.bmm(attention_weights.unsqueeze(1), memory)
