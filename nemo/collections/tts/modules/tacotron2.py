@@ -243,7 +243,7 @@ class Decoder(NeuralModule):
         self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
 
         self.memory = memory
-        self.processed_memory = self.attention_layer.memory_layer(memory)
+        self.processed_memory = self.attention_layer.memory_layer(memory).float()
         self.mask = mask
 
     def parse_decoder_inputs(self, decoder_inputs):
