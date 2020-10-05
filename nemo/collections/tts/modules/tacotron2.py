@@ -242,9 +242,9 @@ class Decoder(NeuralModule):
         self.attention_weights_cum = Variable(memory.data.new(B, MAX_TIME).zero_())
         self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
 
-        self.memory = memory
         with torch.cuda.amp.autocast(enabled=False):
-            self.processed_memory = self.attention_layer.memory_layer(memory.float())
+            self.memory = memory.float()
+            self.processed_memory = self.attention_layer.memory_layer(self.memory)
         self.mask = mask
 
     def parse_decoder_inputs(self, decoder_inputs):
