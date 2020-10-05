@@ -243,8 +243,8 @@ class Decoder(NeuralModule):
         self.attention_context = Variable(memory.data.new(B, self.encoder_embedding_dim).zero_())
 
         self.memory = memory
-        self.processed_memory = self.attention_layer.memory_layer(memory)
-        self.processed_memory = self.processed_memory.float()
+        with torch.cuda.amp.autocast(enabled=False):
+            self.processed_memory = self.attention_layer.memory_layer(memory)
         self.mask = mask
 
     def parse_decoder_inputs(self, decoder_inputs):
@@ -484,22 +484,22 @@ class Postnet(NeuralModule):
 
     @typecheck()
     def forward(self, *, mel_spec):
-        # with torch.cuda.amp.autocast(enabled=False):
-        #     mel_spec = mel_spec.float()
-        #     mel_spec_out = mel_spec
-        #     for i in range(len(self.convolutions) - 1):
-        #         mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
-        #     mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
-        #     if not self.training:
-        #         logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
-        #     mel_spec_out = mel_spec_out + mel_spec
-        mel_spec_out = mel_spec
-        for i in range(len(self.convolutions) - 1):
-            mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
-        mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
-        if not self.training:
-            logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
-        mel_spec_out = mel_spec_out + mel_spec
+        with torch.cuda.amp.autocast(enabled=False):
+            mel_spec = mel_spec.float()
+            mel_spec_out = mel_spec
+            for i in range(len(self.convolutions) - 1):
+                mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
+            mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
+            if not self.training:
+                logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
+            mel_spec_out = mel_spec_out + mel_spec
+        # mel_spec_out = mel_spec
+        # for i in range(len(self.convolutions) - 1):
+        #     mel_spec_out = F.dropout(torch.tanh(self.convolutions[i](mel_spec_out)), self.p_dropout, self.training)
+        # mel_spec_out = F.dropout(self.convolutions[-1](mel_spec_out), self.p_dropout, self.training)
+        # if not self.training:
+        #     logging.debug(f"postnet: {torch.isnan(mel_spec_out).any()}")
+        # mel_spec_out = mel_spec_out + mel_spec
 
         return mel_spec_out
 
