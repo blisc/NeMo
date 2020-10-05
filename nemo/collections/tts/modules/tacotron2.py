@@ -244,7 +244,7 @@ class Decoder(NeuralModule):
 
         self.memory = memory
         with torch.cuda.amp.autocast(enabled=False):
-            self.processed_memory = self.attention_layer.memory_layer(memory)
+            self.processed_memory = self.attention_layer.memory_layer(memory.float())
         self.mask = mask
 
     def parse_decoder_inputs(self, decoder_inputs):
