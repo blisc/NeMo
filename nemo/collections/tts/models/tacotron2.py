@@ -172,14 +172,18 @@ class Tacotron2Model(SpectrogramGenerator):
         token_embedding = self.text_embedding(tokens).transpose(1, 2)
         encoder_embedding = self.encoder(token_embedding=token_embedding, token_len=token_len)
         if self.training:
-            spec_pred_dec, gate_pred, alignments = self.decoder(
-                memory=encoder_embedding, decoder_inputs=spec_target, memory_lengths=token_len
-            )
+            with torch.cuda.amp.autocast(enabled=False):
+                spec_pred_dec, gate_pred, alignments = self.decoder(
+                    memory=encoder_embedding.float(),
+                    decoder_inputs=spec_target.float(),
+                    memory_lengths=token_len.float(),
+                )
         else:
             spec_pred_dec, gate_pred, alignments, pred_length = self.decoder(
                 memory=encoder_embedding, memory_lengths=token_len
             )
-        spec_pred_postnet = self.postnet(mel_spec=spec_pred_dec)
+        with torch.cuda.amp.autocast(enabled=False):
+            spec_pred_postnet = self.postnet(mel_spec=spec_pred_dec.float())
         if not self.training:
             logging.debug(f"enc: {torch.isnan(encoder_embedding).any()}")
             logging.debug(f"token: {torch.isnan(token_embedding).any()}")
