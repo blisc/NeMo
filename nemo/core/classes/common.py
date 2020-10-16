@@ -289,6 +289,7 @@ class FileIO(ABC):
         restore_path: str,
         override_config_path: Optional[str] = None,
         map_location: Optional['torch.device'] = None,
+        strict: bool = True,
     ):
         """Restores module/model with weights"""
         raise NotImplementedError()
@@ -356,17 +357,21 @@ class Model(Typing, Serialization, FileIO):
         refresh_cache: bool = False,
         override_config_path: Optional[str] = None,
         map_location: Optional['torch.device'] = None,
+        strict: bool = True,
     ):
         """
         Instantiates an instance of NeMo from NVIDIA NGC cloud
+        Use restore_from() to instantiate from a local .nemo file.
         Args:
-            model_name: string key which will be used to find the module. Could be path to local .nemo file.
+            model_name: string key which will be used to find the module.
             refresh_cache: If set to True, then when fetching from cloud, this will re-fetch the file
                 from cloud even if it is already found in a cache locally.
             override_config_path: path to a yaml config that will override the internal
                 config file
             map_location: Optional torch.device() to map the instantiated model to a device.
                 By default (None), it will select a GPU if available, falling back to CPU otherwise.
+            strict: Passed to torch.load_state_dict
+
         Returns:
             A model instance of a particular model class
         """
@@ -395,7 +400,10 @@ class Model(Typing, Serialization, FileIO):
         if class_ is None:
             class_ = cls
         instance = class_.restore_from(
-            restore_path=nemo_model_file_in_cache, override_config_path=override_config_path, map_location=map_location
+            restore_path=nemo_model_file_in_cache,
+            override_config_path=override_config_path,
+            map_location=map_location,
+            strict=strict,
         )
         return instance
 

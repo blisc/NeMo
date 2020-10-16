@@ -9,15 +9,14 @@ trainer:
   accumulate_grad_batches: 1 # accumulates grads every k batches
   amp_level: O2 # O1/O2 for mixed precision
   precision: 16 # Should be set to 16 for O1 and O2, default is 16 as PT ignores it when am_level is O0
-  distributed_backend: ddp
+  accelerator: ddp
   checkpoint_callback: False  # Provided by exp_manager
   logger: False  # Provided by exp_manager
-  row_log_interval: 1  # Interval of logging.
+  log_every_n_steps: 1  # Interval of logging.
   val_check_interval: 1.0  # Set to 0.25 to check 4 times per epoch, or an int for number of iterations
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
 
 model:
-
 
   language_model:
     tokenizer: word
@@ -42,6 +41,7 @@ model:
     num_workers: 2 # number of workers for data loaders
     drop_last: false # drops the last last batch if it is smaller than the batch size
     pin_memory: false # enables pin_memory feature of the data loaders
+    predict_last_k: 64 # number of last tokens to predict on evaluation
 
   train_ds:
     file_name: ??? # path to file with training data
@@ -54,7 +54,6 @@ model:
     batch_size: 32
     shuffle: false
     num_samples: -1 # number of samples to be considered, -1 means all the dataset
-    predict_last_k: 64
 
   optim:
     name: adam

@@ -24,7 +24,7 @@ from nemo.collections.asr.models.asr_model import ASRModel
 from nemo.collections.asr.parts.features import WaveformFeaturizer
 from nemo.collections.asr.parts.perturb import process_augmentations
 from nemo.collections.common.losses import CrossEntropyLoss
-from nemo.collections.common.metrics import TopKClassificationAccuracy, compute_topk_accuracy
+from nemo.collections.common.metrics import TopKClassificationAccuracy
 from nemo.core.classes.common import PretrainedModelInfo, typecheck
 from nemo.core.neural_types import *
 from nemo.utils import logging
@@ -37,6 +37,8 @@ class EncDecClassificationModel(ASRModel):
 
     def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         super().__init__(cfg=cfg, trainer=trainer)
+        self._update_decoder_config(self.cfg.decoder)
+
         self.preprocessor = EncDecClassificationModel.from_config_dict(self._cfg.preprocessor)
         self.encoder = EncDecClassificationModel.from_config_dict(self._cfg.encoder)
         self.decoder = EncDecClassificationModel.from_config_dict(self._cfg.decoder)
@@ -51,7 +53,7 @@ class EncDecClassificationModel(ASRModel):
             self.crop_or_pad = None
 
         # Setup metric objects
-        self._accuracy = TopKClassificationAccuracy()
+        self._accuracy = TopKClassificationAccuracy(dist_sync_on_step=True)
 
     def transcribe(self, paths2audio_files: str) -> str:
         raise NotImplementedError("Classification models do not transcribe audio.")
@@ -118,58 +120,50 @@ class EncDecClassificationModel(ASRModel):
         result = []
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x1x64-v1",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x1x64-v1.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v1, 30 classes) "
-            "which obtains 97.32% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x1x64-v1.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v1, 30 classes) which obtains 97.32% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x2x64-v1",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x2x64-v1.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v1, 30 classes) "
-            "which obtains 97.68% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x2x64-v1.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v1, 30 classes) which obtains 97.68% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x1x64-v2",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x1x64-v2.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 35 classes) "
-            "which obtains 97.12% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x1x64-v2.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 35 classes) which obtains 97.12% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x1x64-v2",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x2x64-v2.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 30 classes) "
-            "which obtains 97.29% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x1x64-v2.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 30 classes) which obtains 97.29% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x1x64-v2-subset-task",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x1x64-v2-subset-task.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 10+2 classes) "
-            "which obtains 98.2% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x1x64-v2-subset-task.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 10+2 classes) which obtains 98.2% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-3x2x64-v2-subset-task",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet-3x2x64-v2-subset-task.nemo",
-            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 10+2 classes) "
-            "which obtains 98.4% accuracy on test set.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet-3x2x64-v2-subset-task.nemo",
+            description="MatchboxNet model trained on Google Speech Commands dataset (v2, 10+2 classes) which obtains 98.4% accuracy on test set.",
         )
         result.append(model)
 
         model = PretrainedModelInfo(
             pretrained_model_name="MatchboxNet-VAD-3x2",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/MatchboxNet_VAD_3x2.nemo",
-            description="MatchboxNet VAD model trained on google speech command (v2) and freesound background data, "
-            "which obtains 0.992 accuracy on testset from same source and 0.852 TPR for FPR=0.315 "
-            "on testset (ALL) of AVA movie data",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemospeechmodels/versions/1.0.0a5/files/MatchboxNet_VAD_3x2.nemo",
+            description="Voice Activity Detection MatchboxNet model trained on google speech command (v2) and freesound background data, which obtains 0.992 accuracy on testset from same source and 0.852 TPR for FPR=0.315 on testset (ALL) of AVA movie data",
         )
         result.append(model)
         return result
@@ -218,14 +212,10 @@ class EncDecClassificationModel(ASRModel):
             'learning_rate': self._optimizer.param_groups[0]['lr'],
         }
 
-        correct_counts, total_counts = self._accuracy(logits=logits, labels=labels)
-
-        for ki in range(correct_counts.shape[-1]):
-            correct_count = correct_counts[ki]
-            total_count = total_counts[ki]
-            top_k = self._accuracy.top_k[ki]
-
-            tensorboard_logs['training_batch_accuracy_top@{}'.format(top_k)] = correct_count / float(total_count)
+        self._accuracy(logits=logits, labels=labels)
+        top_k = self._accuracy.compute()
+        for i, top_i in enumerate(top_k):
+            tensorboard_logs[f'training_batch_accuracy_top@{i}'] = top_i
 
         return {'loss': loss_value, 'log': tensorboard_logs}
 
@@ -233,22 +223,36 @@ class EncDecClassificationModel(ASRModel):
         audio_signal, audio_signal_len, labels, labels_len = batch
         logits = self.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
         loss_value = self.loss(logits=logits, labels=labels)
-        correct_counts, total_counts = self._accuracy(logits=logits, labels=labels)
-        return {'val_loss': loss_value, 'val_correct_counts': correct_counts, 'val_total_counts': total_counts}
+        acc = self._accuracy(logits=logits, labels=labels)
+        correct_counts, total_counts = self._accuracy.correct_counts_k, self._accuracy.total_counts_k
+        return {
+            'val_loss': loss_value,
+            'val_correct_counts': correct_counts,
+            'val_total_counts': total_counts,
+            'val_acc': acc,
+        }
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         audio_signal, audio_signal_len, labels, labels_len = batch
         logits = self.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
         loss_value = self.loss(logits=logits, labels=labels)
-        correct_counts, total_counts = self._accuracy(logits=logits, labels=labels)
-        return {'test_loss': loss_value, 'test_correct_counts': correct_counts, 'test_total_counts': total_counts}
+        acc = self._accuracy(logits=logits, labels=labels)
+        correct_counts, total_counts = self._accuracy.correct_counts_k, self._accuracy.total_counts_k
+        return {
+            'test_loss': loss_value,
+            'test_correct_counts': correct_counts,
+            'test_total_counts': total_counts,
+            'test_acc': acc,
+        }
 
     def multi_validation_epoch_end(self, outputs, dataloader_idx: int = 0):
         val_loss_mean = torch.stack([x['val_loss'] for x in outputs]).mean()
         correct_counts = torch.stack([x['val_correct_counts'] for x in outputs])
         total_counts = torch.stack([x['val_total_counts'] for x in outputs])
 
-        topk_scores = compute_topk_accuracy(correct_counts, total_counts)
+        self._accuracy.correct_counts_k = correct_counts
+        self._accuracy.total_counts_k = total_counts
+        topk_scores = self._accuracy.compute()
 
         tensorboard_log = {'val_loss': val_loss_mean}
         for top_k, score in zip(self._accuracy.top_k, topk_scores):
@@ -261,7 +265,9 @@ class EncDecClassificationModel(ASRModel):
         correct_counts = torch.stack([x['test_correct_counts'].unsqueeze(0) for x in outputs])
         total_counts = torch.stack([x['test_total_counts'].unsqueeze(0) for x in outputs])
 
-        topk_scores = compute_topk_accuracy(correct_counts, total_counts)
+        self._accuracy.correct_counts_k = correct_counts
+        self._accuracy.total_counts_k = total_counts
+        topk_scores = self._accuracy.compute()
 
         tensorboard_log = {'test_loss': test_loss_mean}
         for top_k, score in zip(self._accuracy.top_k, topk_scores):
@@ -296,14 +302,14 @@ class EncDecClassificationModel(ASRModel):
             if new_labels is None or len(new_labels) == 0:
                 raise ValueError(f'New labels must be non-empty list of labels. But I got: {new_labels}')
 
-            decoder_config = self.decoder.to_config_dict()
-            new_decoder_config = copy.deepcopy(decoder_config)
-            new_decoder_config['params']['num_classes'] = len(new_labels)
-            del self.decoder
-            self.decoder = EncDecClassificationModel.from_config_dict(new_decoder_config)
-
             # Update config
             self._cfg.labels = new_labels
+
+            decoder_config = self.decoder.to_config_dict()
+            new_decoder_config = copy.deepcopy(decoder_config)
+            self._update_decoder_config(new_decoder_config)
+            del self.decoder
+            self.decoder = EncDecClassificationModel.from_config_dict(new_decoder_config)
 
             OmegaConf.set_struct(self._cfg.decoder, False)
             self._cfg.decoder = new_decoder_config
@@ -319,6 +325,24 @@ class EncDecClassificationModel(ASRModel):
                 self._cfg.test_ds.labels = new_labels
 
             logging.info(f"Changed decoder output to {self.decoder.num_classes} labels.")
+
+    def _update_decoder_config(self, cfg):
+        """
+        Update the number of classes in the decoder based on labels provided.
+
+        Args:
+            cfg: The config of the decoder which will be updated.
+        """
+        OmegaConf.set_struct(cfg, False)
+
+        labels = self.cfg.labels
+
+        if 'params' in cfg:
+            cfg.params.num_classes = len(labels)
+        else:
+            cfg.num_classes = len(labels)
+
+        OmegaConf.set_struct(cfg, True)
 
 
 class MatchboxNet(EncDecClassificationModel):

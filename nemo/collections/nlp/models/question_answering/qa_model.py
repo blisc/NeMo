@@ -22,19 +22,19 @@ from torch.utils.data import DataLoader
 
 from nemo.collections.common.losses import SpanningLoss
 from nemo.collections.nlp.data import SquadDataset
+from nemo.collections.nlp.models.nlp_model import NLPModel
 from nemo.collections.nlp.modules.common import TokenClassifier
 from nemo.collections.nlp.modules.common.lm_utils import get_lm_model
 from nemo.collections.nlp.modules.common.tokenizer_utils import get_tokenizer
 from nemo.collections.nlp.parts.utils_funcs import tensor2list
 from nemo.core.classes.common import PretrainedModelInfo, typecheck
-from nemo.core.classes.modelPT import ModelPT
 from nemo.core.neural_types import NeuralType
 from nemo.utils import logging
 
 __all__ = ['QAModel']
 
 
-class QAModel(ModelPT):
+class QAModel(NLPModel):
     """
     BERT encoder with QA head training.
     """
@@ -82,8 +82,12 @@ class QAModel(ModelPT):
         logits = self.forward(input_ids=input_ids, token_type_ids=input_type_ids, attention_mask=input_mask)
         loss, _, _ = self.loss(logits=logits, start_positions=start_positions, end_positions=end_positions)
 
-        tensorboard_logs = {'train_loss': loss, 'lr': self._optimizer.param_groups[0]['lr']}
-        return {'loss': loss, 'log': tensorboard_logs}
+        self.log('loss', loss)
+        self.log('lr', self._optimizer.param_groups[0]['lr'])
+        # return {
+        #     'train_loss': loss,
+        #     'lr': self._optimizer.param_groups[0]['lr']
+        # }
 
     def validation_step(self, batch, batch_idx):
         input_ids, input_type_ids, input_mask, unique_ids, start_positions, end_positions = batch
@@ -97,6 +101,7 @@ class QAModel(ModelPT):
             'start_logits': start_logits,
             'end_logits': end_logits,
         }
+        self.log('val_loss', loss)
         return {'val_loss': loss, 'eval_tensors': eval_tensors}
 
     def test_step(self, batch, batch_idx):
@@ -166,9 +171,12 @@ class QAModel(ModelPT):
 
         logging.info(f"exact match {exact_match}")
         logging.info(f"f1 {f1}")
+        self.log('val_loss', avg_loss)
+        self.log('exact_match', exact_match)
+        self.log('f1', f1)
 
-        tensorboard_logs = {'val_loss': avg_loss, 'exact_match': exact_match, 'f1': f1}
-        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        # tensorboard_logs = {'val_loss': avg_loss, 'exact_match': exact_match, 'f1': f1}
+        # return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
     def test_epoch_end(self, outputs):
         unique_ids = tensor2list(torch.cat([x['test_tensors']['unique_ids'] for x in outputs]))
@@ -253,30 +261,26 @@ class QAModel(ModelPT):
         result = []
         model = PretrainedModelInfo(
             pretrained_model_name="BERTBaseUncasedSQuADv1.1",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/bert_base_uncased_squadv1.1.nemo",
-            description="Question answering model finetuned from NeMo BERT Base Uncased on SQuAD v1.1 dataset"
-            "which obtains an exact match (EM) score of 82.43% and an F1 score of 89.59%.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemonlpmodels/versions/1.0.0a5/files/BERTBaseUncasedSQuADv1.1.nemo",
+            description="Question answering model finetuned from NeMo BERT Base Uncased on SQuAD v1.1 dataset which obtains an exact match (EM) score of 82.43% and an F1 score of 89.59%.",
         )
         result.append(model)
         model = PretrainedModelInfo(
             pretrained_model_name="BERTBaseUncasedSQuADv2.0",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/bert_base_uncased_squadv2.0.nemo",
-            description="Question answering model finetuned from NeMo BERT Base Uncased on SQuAD v2.0 dataset"
-            "which obtains an exact match (EM) score of 73.35% and an F1 score of 76.44%.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemonlpmodels/versions/1.0.0a5/files/BERTBaseUncasedSQuADv2.0.nemo",
+            description="Question answering model finetuned from NeMo BERT Base Uncased on SQuAD v2.0 dataset which obtains an exact match (EM) score of 73.35% and an F1 score of 76.44%.",
         )
         result.append(model)
         model = PretrainedModelInfo(
             pretrained_model_name="BERTLargeUncasedSQuADv1.1",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/bert_large_uncased_squadv1.1.nemo",
-            description="Question answering model finetuned from NeMo BERT Large Uncased on SQuAD v1.1 dataset"
-            "which obtains an exact match (EM) score of 85.47% and an F1 score of 92.10%.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemonlpmodels/versions/1.0.0a5/files/BERTLargeUncasedSQuADv1.1.nemo",
+            description="Question answering model finetuned from NeMo BERT Large Uncased on SQuAD v1.1 dataset which obtains an exact match (EM) score of 85.47% and an F1 score of 92.10%.",
         )
         result.append(model)
         model = PretrainedModelInfo(
             pretrained_model_name="BERTLargeUncasedSQuADv2.0",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/bert_large_uncased_squadv2.0.nemo",
-            description="Question answering model finetuned from NeMo BERT Large Uncased on SQuAD v2.0 dataset"
-            "which obtains an exact match (EM) score of 78.8% and an F1 score of 81.85%.",
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemonlpmodels/versions/1.0.0a5/files/BERTLargeUncasedSQuADv2.0.nemo",
+            description="Question answering model finetuned from NeMo BERT Large Uncased on SQuAD v2.0 dataset which obtains an exact match (EM) score of 78.8% and an F1 score of 81.85%.",
         )
         result.append(model)
         return result

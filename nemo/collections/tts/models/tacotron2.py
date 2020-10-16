@@ -250,7 +250,7 @@ class Tacotron2Model(SpectrogramGenerator):
             pad_value=self.pad_value,
         )
         return {
-            "loss": loss,
+            "val_loss": loss,
             "mel_target": spec_target,
             "mel_postnet": spec_pred_postnet,
             "gate": gate_pred,
@@ -268,9 +268,8 @@ class Tacotron2Model(SpectrogramGenerator):
                 log_images=True,
                 add_audio=False,
             )
-        avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
-        tensorboard_logs = {'val_loss': avg_loss}
-        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+        self.log('val_loss', avg_loss)
 
     def __setup_dataloader_from_config(self, cfg, shuffle_should_be: bool = True, name: str = "train"):
         if "dataset" not in cfg or not isinstance(cfg.dataset, DictConfig):
@@ -311,11 +310,8 @@ class Tacotron2Model(SpectrogramGenerator):
         list_of_models = []
         model = PretrainedModelInfo(
             pretrained_model_name="Tacotron2-22050Hz",
-            location="https://nemo-public.s3.us-east-2.amazonaws.com/nemo-1.0.0alpha-tests/tacotron2.nemo",
-            description=(
-                "The model is trained on LJSpeech sampled at 22050Hz, and can be used to generate female "
-                "English voices with an American accent."
-            ),
+            location="https://api.ngc.nvidia.com/v2/models/nvidia/nemottsmodels/versions/1.0.0a5/files/Tacotron2-22050Hz.nemo",
+            description="This model is trained on LJSpeech sampled at 22050Hz, and can be used to generate female English voices with an American accent.",
             class_=cls,
         )
         list_of_models.append(model)

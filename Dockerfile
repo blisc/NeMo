@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:20.08-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:20.09-py3
 
 
 # build an image that includes only the nemo dependencies, ensures that dependencies
@@ -31,6 +31,13 @@ RUN apt-get update && \
     python-dev ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
+# build torchaudio (change latest release version to match pytorch)
+WORKDIR /tmp/torchaudio_build
+RUN git clone --depth 1 --branch release/0.6 https://github.com/pytorch/audio.git && \
+    cd audio && \
+    BUILD_SOX=1 python setup.py install && \
+    cd .. && rm -r audio
+
 # install nemo dependencies
 WORKDIR /tmp/nemo
 COPY requirements .
@@ -42,7 +49,7 @@ COPY . .
 
 # start building the final container
 FROM nemo-deps as nemo
-ARG NEMO_VERSION=1.0.0beta
+ARG NEMO_VERSION=1.0.0b1
 
 # Check that NEMO_VERSION is set. Build will fail without this. Expose NEMO and base container
 # version information as runtime environment variable for introspection purposes
@@ -56,6 +63,7 @@ WORKDIR /workspace/nemo
 COPY scripts /workspace/nemo/scripts
 COPY examples /workspace/nemo/examples
 COPY tests /workspace/nemo/tests
+COPY tutorials /workspace/nemo/tutorials
 # COPY README.rst LICENSE /workspace/nemo/
 
 RUN printf "#!/bin/bash\njupyter lab --no-browser --allow-root --ip=0.0.0.0" >> start-jupyter.sh && \
