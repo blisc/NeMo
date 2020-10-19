@@ -182,10 +182,7 @@ class EncDecSpeakerLabelModel(ModelPT):
         for i, top_i in enumerate(top_k):
             tensorboard_logs[f'training_batch_accuracy_top@{i}'] = top_i
 
-        # TODO: can't return anything?
-        # return {
-        #     'train_loss': self.loss_value
-        # }
+        return {'loss': self.loss_value, 'log': tensorboard_logs}
 
     def validation_step(self, batch, batch_idx, dataloader_idx: int = 0):
         audio_signal, audio_signal_len, labels, _ = batch
