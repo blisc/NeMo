@@ -27,8 +27,9 @@ from nemo.collections.tts.models.base import SpectrogramGenerator, TextToWavefor
 from nemo.core.classes.common import PretrainedModelInfo, typecheck
 from nemo.utils import logging
 from nemo.collections.tts.modules.fastspeech2 import Encoder, VarianceAdaptor, MelSpecDecoder
+from nemo.collections.nlp.modules.common.transformer import TransformerEncoder, TransformerEmbedding
 from nemo.collections.tts.losses.tacotron2loss import L2MelLoss
-from nemo.collections.tts.helpers.helpers import plot_spectrogram_to_numpy
+from nemo.collections.tts.helpers.helpers import plot_spectrogram_to_numpy, get_mask_from_lengths
 
 
 @dataclass
@@ -80,14 +81,35 @@ class FastSpeech2Model(SpectrogramGenerator):
         self.duration_coeff = cfg.duration_coeff
 
         self.audio_to_melspec_precessor = instantiate(self._cfg.preprocessor)
-        self.encoder = Encoder()
+        # self.encoder = Encoder()
+        self.phone_embedding = TransformerEmbedding(
+            vocab_size=84, hidden_size=256, max_sequence_length=256, padding_idx=83
+        )
+        self.encoder = TransformerEncoder(
+            num_layers=4,
+            hidden_size=256,
+            inner_size=1024,
+            num_attention_heads=2,
+            attn_layer_dropout=0.2,
+            ffn_dropout=0.2,
+        )
         self.variance_adapter = VarianceAdaptor(pitch=self.pitch, energy=self.energy)
-        self.mel_decoder = MelSpecDecoder()
+        # self.mel_decoder = MelSpecDecoder()
+        self.mel_decoder = TransformerEncoder(
+            num_layers=4,
+            hidden_size=256,
+            inner_size=1024,
+            num_attention_heads=2,
+            attn_layer_dropout=0.2,
+            ffn_dropout=0.2,
+        )
+        self.mel_linear = nn.Linear(256, 80)
         self.loss = L2MelLoss()
         self.mseloss = torch.nn.MSELoss()
         self.durationloss = DurationLoss()
 
         self.log_train_images = False
+        self.logged_real_samples = False
 
     # @property
     # def input_types(self):
@@ -101,28 +123,32 @@ class FastSpeech2Model(SpectrogramGenerator):
     @typecheck()
     def forward(self, *, spec_len, text, text_length, durations=None, pitch=None, energies=None):
         with typecheck.disable_checks():
-            encoded_text, encoded_text_mask = self.encoder(text=text, text_lengths=text_length)
+            embedded_tokens = self.phone_embedding(text)
+            encoded_text = self.encoder(encoder_states=embedded_tokens, encoder_mask=text_length)
             aligned_text, dur_preds, pitch_preds, energy_preds = self.variance_adapter(
                 x=encoded_text, dur_target=durations, pitch_target=pitch, energy_target=energies
             )
             # Need to get spec_len from predicted duration
             if not self.training:
                 spec_len = torch.sum(dur_preds, dim=1)
+            spec_mask = get_mask_from_lengths(spec_len)
             # else:
             #     assert spec_len == torch.sum(durations, dim=1)
-            mel = self.mel_decoder(decoder_input=aligned_text, lengths=spec_len)
-            return mel, dur_preds, pitch_preds, energy_preds, encoded_text_mask
+            mel = self.mel_decoder(encoder_states=aligned_text, encoder_mask=spec_mask)
+            mel = self.mel_linear(mel)
+            return mel, dur_preds, pitch_preds, energy_preds
 
     def training_step(self, batch, batch_idx):
         f, fl, t, tl, durations, pitch, energies = batch
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
-        mel, dur_preds, pitch_preds, energy_preds, encoded_text_mask = self(
-            spec_len=spec_len, text=t, text_length=tl, durations=durations, pitch=pitch, energies=energies
+        t_mask = get_mask_from_lengths(tl)
+        mel, dur_preds, pitch_preds, energy_preds = self(
+            spec_len=spec_len, text=t, text_length=t_mask, durations=durations, pitch=pitch, energies=energies
         )
         total_loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
         self.log(name="train_mel_loss", value=total_loss.clone().detach())
         if self.duration:
-            dur_loss = self.durationloss(dur_preds, durations.float(), encoded_text_mask)
+            dur_loss = self.durationloss(dur_preds, durations.float(), t_mask)
             dur_loss *= self.duration_coeff
             self.log(name="train_dur_loss", value=dur_loss)
             total_loss += dur_loss
@@ -169,8 +195,9 @@ class FastSpeech2Model(SpectrogramGenerator):
 
     def validation_step(self, batch, batch_idx):
         f, fl, t, tl, durations = batch
+        t_mask = get_mask_from_lengths(tl)
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
-        mel, dur_preds, _, _, _ = self(spec_len=spec_len, text=t, text_length=tl)
+        mel, _, _, _ = self(spec_len=spec_len, text=t, text_length=t_mask)
         loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
         return {
             "val_loss": loss,
@@ -187,12 +214,14 @@ class FastSpeech2Model(SpectrogramGenerator):
                         tb_logger = logger.experiment
                         break
             _, spec_target, spec_predict = outputs[0].values()
-            tb_logger.add_image(
-                "val_mel_target",
-                plot_spectrogram_to_numpy(spec_target[0].data.cpu().numpy()),
-                self.global_step,
-                dataformats="HWC",
-            )
+            if not self.logged_real_samples:
+                tb_logger.add_image(
+                    "val_mel_target",
+                    plot_spectrogram_to_numpy(spec_target[0].data.cpu().numpy()),
+                    self.global_step,
+                    dataformats="HWC",
+                )
+                self.logged_real_samples = True
             spec_predict = spec_predict[0].data.cpu().numpy()
             tb_logger.add_image(
                 "val_mel_predicted", plot_spectrogram_to_numpy(spec_predict.T), self.global_step, dataformats="HWC",
