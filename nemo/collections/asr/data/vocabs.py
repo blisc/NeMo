@@ -9,20 +9,20 @@ import nltk
 
 import nemo
 
-try:
-    nltk.data.find('taggers/averaged_perceptron_tagger.zip')
-except LookupError:
-    nltk.download('averaged_perceptron_tagger', quiet=True)
-try:
-    nltk.data.find('corpora/cmudict.zip')
-except LookupError:
-    nltk.download('cmudict', quiet=True)
+# try:
+#     nltk.data.find('taggers/averaged_perceptron_tagger.zip')
+# except LookupError:
+#     nltk.download('averaged_perceptron_tagger', quiet=True)
+# try:
+#     nltk.data.find('corpora/cmudict.zip')
+# except LookupError:
+#     nltk.download('cmudict', quiet=True)
 
 
-import g2p_en  # noqa
+# import g2p_en  # noqa
 
-_g2p = g2p_en.G2p()
-_g2p.variables = None
+# _g2p = g2p_en.G2p()
+# _g2p.variables = None
 
 
 class Base(abc.ABC):
