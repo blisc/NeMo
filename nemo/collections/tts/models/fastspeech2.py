@@ -59,6 +59,7 @@ class FastSpeech2Config:
 class DurationLoss(torch.nn.Module):
     def forward(self, duration_pred, duration_target, mask):
         duration_pred.masked_fill_(~mask.squeeze(), 0)
+        log_duration_target = torch.log(duration_target + 1)
         return torch.nn.functional.mse_loss(duration_pred, duration_target)
 
 
@@ -132,12 +133,12 @@ class FastSpeech2Model(SpectrogramGenerator):
             encoded_text = self.encoder(
                 encoder_states=embedded_tokens, encoder_mask=text_length, mask_inbetween_layers=True
             )
-            aligned_text, dur_preds, pitch_preds, energy_preds = self.variance_adapter(
+            aligned_text, log_dur_preds, pitch_preds, energy_preds = self.variance_adapter(
                 x=encoded_text, dur_target=durations, pitch_target=pitch, energy_target=energies
             )
             # Need to get spec_len from predicted duration
             if not self.training:
-                spec_len = torch.sum(dur_preds, dim=1)
+                spec_len = torch.sum(torch.clamp(torch.round(torch.exp(log_dur_preds) - 1), min=0, max=100), dim=1)
             spec_mask = get_mask_from_lengths(spec_len)
             # else:
             #     assert spec_len == torch.sum(durations, dim=1)
@@ -156,19 +157,19 @@ class FastSpeech2Model(SpectrogramGenerator):
                 encoder_states=mel_decoder_input, encoder_mask=spec_mask, mask_inbetween_layers=True
             )
             mel = self.mel_linear(mel)
-            return mel, dur_preds, pitch_preds, energy_preds
+            return mel, log_dur_preds, pitch_preds, energy_preds
 
     def training_step(self, batch, batch_idx):
         f, fl, t, tl, durations, pitch, energies = batch
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
         t_mask = get_mask_from_lengths(tl)
-        mel, dur_preds, pitch_preds, energy_preds = self(
+        mel, log_dur_preds, pitch_preds, energy_preds = self(
             spec_len=spec_len, text=t, text_length=t_mask, durations=durations, pitch=pitch, energies=energies
         )
         total_loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
         self.log(name="train_mel_loss", value=total_loss.clone().detach())
         if self.duration:
-            dur_loss = self.durationloss(dur_preds, durations.float(), t_mask)
+            dur_loss = self.durationloss(log_dur_preds, durations.float(), t_mask)
             dur_loss *= self.duration_coeff
             self.log(name="train_dur_loss", value=dur_loss)
             total_loss += dur_loss
