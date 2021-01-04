@@ -177,13 +177,13 @@ class VarianceAdaptor(NeuralModule):
 
         # Duration predictions (or ground truth) fed into Length Regulator to
         # expand the hidden states of the encoder embedding
-        dur_preds = self.duration_predictor(x.transpose(1, 2))
+        log_dur_preds = self.duration_predictor(x.transpose(1, 2))
         # Output is Batch, Time
         if self.training:
             dur_out = self.length_regulator(x, dur_target)
         else:
-            # dur_preds = torch.clamp(torch.round(torch.exp(dur_preds) - 1), min=0, max=self.max_duration)
-            dur_preds = torch.clamp(torch.round(dur_preds), min=0).int()
+            dur_preds = torch.clamp(torch.round(torch.exp(log_dur_preds) - 1), min=0, max=self.max_duration).long()
+            # dur_preds = torch.clamp(torch.round(dur_preds), min=0).int()
             if not torch.sum(dur_preds, dim=1).bool().all():
                 logging.error("Duration prediction failed on this batch. Settings to 1s")
                 dur_preds += 1
@@ -212,7 +212,7 @@ class VarianceAdaptor(NeuralModule):
                 energy_out = self.energy_lookup(torch.bucketize(energy_preds, self.energy_bins))
             out += energy_out
 
-        return out, dur_preds, pitch_preds, energy_preds
+        return out, log_dur_preds, pitch_preds, energy_preds
 
 
 @experimental
