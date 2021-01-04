@@ -27,7 +27,11 @@ from nemo.collections.tts.models.base import SpectrogramGenerator, TextToWavefor
 from nemo.core.classes.common import PretrainedModelInfo, typecheck
 from nemo.utils import logging
 from nemo.collections.tts.modules.fastspeech2 import Encoder, VarianceAdaptor, MelSpecDecoder
-from nemo.collections.nlp.modules.common.transformer import TransformerEncoder, TransformerEmbedding
+from nemo.collections.nlp.modules.common.transformer import (
+    TransformerEncoder,
+    TransformerEmbedding,
+    FixedPositionalEncoding,
+)
 from nemo.collections.tts.losses.tacotron2loss import L2MelLoss
 from nemo.collections.tts.helpers.helpers import plot_spectrogram_to_numpy, get_mask_from_lengths
 
@@ -95,6 +99,7 @@ class FastSpeech2Model(SpectrogramGenerator):
         )
         self.variance_adapter = VarianceAdaptor(pitch=self.pitch, energy=self.energy)
         # self.mel_decoder = MelSpecDecoder()
+        self.mel_embedding = FixedPositionalEncoding(hidden_size=256, max_sequence_length=2048)
         self.mel_decoder = TransformerEncoder(
             num_layers=4,
             hidden_size=256,
@@ -124,7 +129,9 @@ class FastSpeech2Model(SpectrogramGenerator):
     def forward(self, *, spec_len, text, text_length, durations=None, pitch=None, energies=None):
         with typecheck.disable_checks():
             embedded_tokens = self.phone_embedding(text)
-            encoded_text = self.encoder(encoder_states=embedded_tokens, encoder_mask=text_length)
+            encoded_text = self.encoder(
+                encoder_states=embedded_tokens, encoder_mask=text_length, mask_inbetween_layers=True
+            )
             aligned_text, dur_preds, pitch_preds, energy_preds = self.variance_adapter(
                 x=encoded_text, dur_target=durations, pitch_target=pitch, energy_target=energies
             )
@@ -134,7 +141,20 @@ class FastSpeech2Model(SpectrogramGenerator):
             spec_mask = get_mask_from_lengths(spec_len)
             # else:
             #     assert spec_len == torch.sum(durations, dim=1)
-            mel = self.mel_decoder(encoder_states=aligned_text, encoder_mask=spec_mask)
+            seq_length = aligned_text.size(1)
+            if seq_length > 2048:
+                raise ValueError(
+                    f"Input sequence is longer than maximum allowed sequence length for positional encoding. "
+                    f"Got {seq_length} and {2048}"
+                )
+            position_ids = torch.arange(start=0, end=0 + seq_length, dtype=torch.long, device=aligned_text.device)
+            position_ids = position_ids.unsqueeze(0).expand(aligned_text.size(0), -1)
+
+            position_embeddings = self.mel_embedding(position_ids)
+            mel_decoder_input = aligned_text + position_embeddings
+            mel = self.mel_decoder(
+                encoder_states=mel_decoder_input, encoder_mask=spec_mask, mask_inbetween_layers=True
+            )
             mel = self.mel_linear(mel)
             return mel, dur_preds, pitch_preds, energy_preds
 

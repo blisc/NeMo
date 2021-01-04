@@ -59,7 +59,7 @@ class TransformerEncoderBlock(nn.Module):
         self.layer_norm_2 = nn.LayerNorm(hidden_size, eps=1e-5)
         self.second_sub_layer = PositionWiseFF(hidden_size, inner_size, ffn_dropout, hidden_act)
 
-    def forward(self, encoder_query, encoder_mask, encoder_keys):
+    def forward(self, encoder_query, encoder_attn_mask, encoder_keys, mask_inbetween_layers=False, encoder_mask=None):
 
         # Pre-LN: LN -> Attn -> Drop -> Residual -> LN -> FFN
         # Post-LN: Attn -> Drop -> Residual -> LN -> FFN -> Residual -> LN
@@ -68,12 +68,18 @@ class TransformerEncoderBlock(nn.Module):
             encoder_query = self.layer_norm_1(encoder_query)
             encoder_keys = self.layer_norm_1(encoder_keys)
 
-        self_attn_output = self.first_sub_layer(encoder_query, encoder_keys, encoder_keys, encoder_mask)
+        self_attn_output = self.first_sub_layer(encoder_query, encoder_keys, encoder_keys, encoder_attn_mask)
         self_attn_output += encoder_query
+
+        if mask_inbetween_layers and encoder_mask is not None:
+            self_attn_output *= encoder_mask
 
         self_attn_output = self.layer_norm_2(self_attn_output) if self.pre_ln else self.layer_norm_1(self_attn_output)
 
         output_states = self.second_sub_layer(self_attn_output)
+
+        if mask_inbetween_layers and encoder_mask is not None:
+            output_states *= encoder_mask
 
         if not self.pre_ln:
             output_states = self.layer_norm_2(output_states + self_attn_output)
@@ -95,7 +101,9 @@ class TransformerEncoder(nn.Module):
             memory_states = encoder_states
         return memory_states
 
-    def forward(self, encoder_states, encoder_mask, encoder_mems_list=None, return_mems=False):
+    def forward(
+        self, encoder_states, encoder_mask, encoder_mems_list=None, return_mems=False, mask_inbetween_layers=False
+    ):
         """
         Args:
             encoder_states: output of the embedding_layer (B x L_enc x H)
@@ -113,7 +121,9 @@ class TransformerEncoder(nn.Module):
         cached_mems_list = [memory_states]
 
         for i, layer in enumerate(self.layers):
-            encoder_states = layer(encoder_states, encoder_attn_mask, memory_states)
+            encoder_states = layer(
+                encoder_states, encoder_attn_mask, memory_states, mask_inbetween_layers, encoder_mask.unsqueeze(-1)
+            )
             memory_states = self._get_memory_states(encoder_states, encoder_mems_list, i + 1)
             cached_mems_list.append(memory_states)
 

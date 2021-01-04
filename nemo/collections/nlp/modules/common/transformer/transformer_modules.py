@@ -20,7 +20,7 @@ import torch
 from torch import nn
 from torch.nn.functional import gelu
 
-__all__ = ["TransformerEmbedding"]
+__all__ = ["TransformerEmbedding", "FixedPositionalEncoding"]
 
 
 class FixedPositionalEncoding(nn.Module):
