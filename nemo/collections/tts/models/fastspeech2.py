@@ -133,20 +133,20 @@ class FastSpeech2Model(SpectrogramGenerator):
             encoded_text = self.encoder(
                 encoder_states=embedded_tokens, encoder_mask=text_length, mask_inbetween_layers=True
             )
-            aligned_text, log_dur_preds, pitch_preds, energy_preds = self.variance_adapter(
+            aligned_text, log_dur_preds, dur_pred, pitch_preds, energy_preds = self.variance_adapter(
                 x=encoded_text, dur_target=durations, pitch_target=pitch, energy_target=energies
             )
-            # Need to get spec_len from predicted duration
             if not self.training:
-                spec_len = torch.sum(torch.clamp(torch.round(torch.exp(log_dur_preds) - 1), min=0, max=100), dim=1)
+                spec_len = torch.sum(dur_pred, 1)
             spec_mask = get_mask_from_lengths(spec_len)
-            # else:
-            #     assert spec_len == torch.sum(durations, dim=1)
             seq_length = aligned_text.size(1)
             if seq_length > 2048:
+                logging.info(encoded_text.shape)
+                logging.info(durations)
+                logging.info(dur_pred)
                 raise ValueError(
                     f"Input sequence is longer than maximum allowed sequence length for positional encoding. "
-                    f"Got {seq_length} and {2048}"
+                    f"Got {aligned_text.shape} and {2048}"
                 )
             position_ids = torch.arange(start=0, end=0 + seq_length, dtype=torch.long, device=aligned_text.device)
             position_ids = position_ids.unsqueeze(0).expand(aligned_text.size(0), -1)
