@@ -187,6 +187,10 @@ class VarianceAdaptor(NeuralModule):
             if not torch.sum(dur_preds, dim=1).bool().all():
                 logging.error("Duration prediction failed on this batch. Settings to 1s")
                 dur_preds += 1
+            if torch.ge(torch.sum(dur_preds, dim=1), 2048).any():
+                logging.error("Duration prediction was too high this batch. Clamping further")
+                length = dur_preds.size(1)
+                dur_preds = torch.clamp(dur_preds, max=2048 // length)
             dur_out = self.length_regulator(x, dur_preds)
         out = dur_out
 
