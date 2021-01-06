@@ -19,6 +19,7 @@ import torch.nn as nn
 
 from nemo.collections.common.parts import form_attention_mask
 from nemo.collections.nlp.modules.common.transformer.transformer_modules import MultiHeadAttention, PositionWiseFF
+from nemo.collections.tts.modules.fastspeech2_submodules import PositionwiseConvFF
 
 __all__ = ["TransformerEncoder"]
 
@@ -57,7 +58,7 @@ class TransformerEncoderBlock(nn.Module):
             hidden_size, num_attention_heads, attn_score_dropout, attn_layer_dropout
         )
         self.layer_norm_2 = nn.LayerNorm(hidden_size, eps=1e-5)
-        self.second_sub_layer = PositionWiseFF(hidden_size, inner_size, ffn_dropout, hidden_act)
+        self.second_sub_layer = PositionwiseConvFF(hidden_size, inner_size, ffn_dropout, hidden_act)
 
     def forward(self, encoder_query, encoder_attn_mask, encoder_keys, mask_inbetween_layers=False, encoder_mask=None):
 
