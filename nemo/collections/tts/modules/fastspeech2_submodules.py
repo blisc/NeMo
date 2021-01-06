@@ -23,9 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from nemo.collections.tts.helpers.helpers import get_mask_from_lengths
-
-# from common.text.symbols import pad_idx, symbols
-
+from nemo.collections.nlp.modules.common.transformer import FixedPositionalEncoding
 from nemo.utils import logging
 
 
@@ -43,6 +41,19 @@ class PositionalEmbedding(nn.Module):
             return pos_emb[None, :, :].expand(bsz, -1, -1)
         else:
             return pos_emb[None, :, :]
+
+
+class NLPPatchFixedPositionalEncoding(FixedPositionalEncoding):
+    def forward(self, input_ids):
+        seq_length = input_ids.size(1)
+        if seq_length > self.max_sequence_length:
+            raise ValueError(
+                f"Input sequence is longer than maximum allowed sequence length for positional encoding. "
+                f"Got {seq_length} and {self.max_sequence_length}"
+            )
+        position_ids = torch.arange(start=0, end=0 + seq_length, dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        return super().forward(position_ids)
 
 
 class PositionwiseFF(nn.Module):
@@ -254,6 +265,7 @@ class TransformerLayer(nn.Module):
 class FFTransformer(nn.Module):
     def __init__(
         self,
+        max_sequence_length,
         n_layer,
         n_head,
         d_model,
@@ -278,7 +290,7 @@ class FFTransformer(nn.Module):
         else:
             self.word_emb = None
 
-        self.pos_emb = PositionalEmbedding(self.d_model)
+        self.pos_emb = NLPPatchFixedPositionalEncoding(self.d_model, max_sequence_length=max_sequence_length)
         self.drop = nn.Dropout(dropemb)
         self.layers = nn.ModuleList()
 
@@ -309,8 +321,7 @@ class FFTransformer(nn.Module):
             # TODO: remove hard code
             mask = (dec_inp != 83).unsqueeze(2)
 
-        pos_seq = torch.arange(inp.size(1), device=inp.device, dtype=inp.dtype)
-        pos_emb = self.pos_emb(pos_seq) * mask
+        pos_emb = self.pos_emb(dec_inp) * mask
         out = self.drop(inp + pos_emb)
 
         for layer in self.layers:

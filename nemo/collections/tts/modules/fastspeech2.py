@@ -62,10 +62,11 @@ class Encoder(NeuralModule):
         super().__init__()
 
         self.encoder = FFTransformer(
+            max_sequence_length=512,
             n_layer=4,
             n_head=2,
             d_model=256,
-            d_head=256,
+            d_head=64,
             d_inner=1024,
             kernel_size=(9, 1),
             dropout=0.2,
@@ -235,6 +236,7 @@ class MelSpecDecoder(NeuralModule):
 
         self.linear1 = nn.Linear(256, 384)  # Since input is 256
         self.decoder = FFTransformer(
+            max_sequence_length=2048,
             n_layer=4,
             n_head=2,
             d_model=384,  # Some paragraphs say 256, the table in the appendix says 384
