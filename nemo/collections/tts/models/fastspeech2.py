@@ -64,7 +64,7 @@ class DurationLoss(torch.nn.Module):
         log_duration_target = torch.log(duration_target + 1)
         # logging.debug(duration_pred)
         # logging.debug(log_duration_target)
-        return torch.nn.functional.mse_loss(duration_pred, duration_target)
+        return torch.nn.functional.mse_loss(duration_pred, log_duration_target)
 
 
 class FastSpeech2Model(SpectrogramGenerator):
