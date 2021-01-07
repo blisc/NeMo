@@ -62,6 +62,8 @@ class DurationLoss(torch.nn.Module):
     def forward(self, duration_pred, duration_target, mask):
         duration_pred.masked_fill_(~mask.squeeze(), 0)
         log_duration_target = torch.log(duration_target + 1)
+        # logging.debug(duration_pred)
+        # logging.debug(log_duration_target)
         return torch.nn.functional.mse_loss(duration_pred, duration_target)
 
 
@@ -217,7 +219,7 @@ class FastSpeech2Model(SpectrogramGenerator):
             output, mel_mask = self.mel_decoder(output, mel_length)
             ouput = self.mel_linear(output)
 
-            return ouput, d_prediction, p_prediction, e_prediction, encoded_text_mask
+            return ouput, d_prediction, p_prediction, e_prediction, encoded_text_mask, mel_mask
 
     def training_step(self, batch, batch_idx):
         f, fl, t, tl, durations, pitch, energies = batch
@@ -235,7 +237,7 @@ class FastSpeech2Model(SpectrogramGenerator):
         # )
 
         # V2
-        mel, log_dur_preds, pitch_preds, energy_preds, t_mask = self(
+        mel, log_dur_preds, pitch_preds, energy_preds, t_mask, mel_mask = self(
             spec_len=spec_len, text=t, text_length=tl, durations=durations, pitch=pitch, energies=energies
         )
 
@@ -247,12 +249,17 @@ class FastSpeech2Model(SpectrogramGenerator):
             dur_loss *= self.duration_coeff
             self.log(name="train_dur_loss", value=dur_loss)
             total_loss += dur_loss
+        mel_mask = mel_mask.squeeze(-1)
         if self.pitch:
-            pitch_loss = self.mseloss(pitch_preds, pitch)
+            # logging.debug(mel_mask.shape)
+            # logging.debug(pitch_preds.shape)
+            # logging.debug(pitch_preds.masked_select(mel_mask))
+            # logging.debug(pitch.masked_select(mel_mask))
+            pitch_loss = self.mseloss(pitch_preds.masked_select(mel_mask), pitch.masked_select(mel_mask))
             total_loss += pitch_loss
             self.log(name="train_pitch_loss", value=pitch_loss)
         if self.energy:
-            energy_loss = self.mseloss(energy_preds, energies)
+            energy_loss = self.mseloss(energy_preds.masked_select(mel_mask), energies.masked_select(mel_mask))
             total_loss += energy_loss
             self.log(name="train_energy_loss", value=energy_loss)
         self.log(name="train_loss", value=total_loss)
@@ -300,7 +307,7 @@ class FastSpeech2Model(SpectrogramGenerator):
         # mel, _, _, _, _ = self(spec_len=spec_len, text=t, text_length=tl)
 
         # V2
-        mel, log_dur_preds, pitch_preds, energy_preds, t_mask = self(spec_len=spec_len, text=t, text_length=tl)
+        mel, log_dur_preds, pitch_preds, energy_preds, t_mask, _ = self(spec_len=spec_len, text=t, text_length=tl)
         loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
         return {
             "val_loss": loss,
