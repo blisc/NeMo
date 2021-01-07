@@ -661,7 +661,7 @@ class FastSpeechWithDurs(Dataset):
                     dataitem(
                         audio_file=item["audio_filepath"],
                         duration=durations["token_duration"],
-                        pitches=torch.clamp(pitches['f0'], min=1e-5),
+                        pitches=pitches['f0'],
                         energies=energies,
                         text_tokens=text_tokens,
                     )

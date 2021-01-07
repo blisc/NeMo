@@ -138,7 +138,7 @@ class FastSpeech2Model(SpectrogramGenerator):
             encoder_hidden=256,
             variance_predictor_filter_size=256,
             variance_predictor_kernel_size=3,
-            variance_predictor_dropout=0.2,
+            variance_predictor_dropout=0.1,
         )
 
         self.mel_decoder = FFTBlocks(max_seq_len=2048, name="dec")
@@ -255,6 +255,9 @@ class FastSpeech2Model(SpectrogramGenerator):
             # logging.debug(pitch_preds.shape)
             # logging.debug(pitch_preds.masked_select(mel_mask))
             # logging.debug(pitch.masked_select(mel_mask))
+            # if (self.global_step + 1) % 200 == 0:
+            #     logging.debug(pitch_preds[0])
+            #     logging.debug(pitch[0])
             pitch_loss = self.mseloss(pitch_preds.masked_select(mel_mask), pitch.masked_select(mel_mask))
             total_loss += pitch_loss
             self.log(name="train_pitch_loss", value=pitch_loss)
