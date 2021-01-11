@@ -255,9 +255,9 @@ class FastSpeech2Model(SpectrogramGenerator):
             # logging.debug(pitch_preds.shape)
             # logging.debug(pitch_preds.masked_select(mel_mask))
             # logging.debug(pitch.masked_select(mel_mask))
-            # if (self.global_step + 1) % 200 == 0:
-            #     logging.debug(pitch_preds[0])
-            #     logging.debug(pitch[0])
+            if (self.global_step + 1) % 200 == 0:
+                logging.debug(pitch_preds[0])
+                logging.debug(pitch[0])
             pitch_loss = self.mseloss(pitch_preds.masked_select(mel_mask), pitch.masked_select(mel_mask))
             total_loss += pitch_loss
             self.log(name="train_pitch_loss", value=pitch_loss)

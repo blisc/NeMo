@@ -14,11 +14,14 @@
 import io
 import os
 from typing import Callable, Dict, List, Optional, Union
+from pathlib import Path
+import math
 
 import braceexpand
 import torch
 import webdataset as wd
 from torch.nn import functional as F
+import numpy as np
 
 from nemo.collections.asr.data import vocabs
 from nemo.collections.asr.parts import collections, parsers
@@ -27,6 +30,8 @@ from nemo.core.classes import Dataset, IterableDataset
 from nemo.core.neural_types import *
 from nemo.utils import logging
 from nemo.utils.decorators import experimental
+from scipy.stats import betabinom
+
 
 __all__ = [
     'AudioToCharDataset',
@@ -46,7 +51,7 @@ def _speech_collate_fn(batch, pad_id):
                encoded tokens, and encoded tokens length.  This collate func
                assumes the signals are 1d torch tensors (i.e. mono audio).
     """
-    _, audio_lengths, _, tokens_lengths = zip(*batch)
+    _, audio_lengths, _, tokens_lengths, _ = zip(*batch)
     max_audio_len = 0
     has_audio = audio_lengths[0] is not None
     if has_audio:
@@ -54,11 +59,23 @@ def _speech_collate_fn(batch, pad_id):
     max_tokens_len = max(tokens_lengths).item()
 
     audio_signal, tokens = [], []
-    for sig, sig_len, tokens_i, tokens_i_len in batch:
+    attn_prior_padded = torch.FloatTensor(len(batch), math.ceil(max_audio_len / 256), max_tokens_len)
+    attn_prior_padded.zero_()
+
+    i = 0
+    for sig, sig_len, tokens_i, tokens_i_len, attn_prior_i in batch:
+        # print(f"sig: {type(sig)}")
+        # print(f"sig: {sig.shape}")
+        # print(f"sig_len: {sig_len}")
+        # print(f"tokens_i: {tokens_i.shape}")
+        # print(f"tokens_i_len: {tokens_i_len}")
+        # print(f"attn_prior_i: {attn_prior_i.shape}")
         if has_audio:
             sig_len = sig_len.item()
             if sig_len < max_audio_len:
                 pad = (0, max_audio_len - sig_len)
+                # print(pad[1])
+                # print(sig.shape)
                 sig = torch.nn.functional.pad(sig, pad)
             audio_signal.append(sig)
         tokens_i_len = tokens_i_len.item()
@@ -66,6 +83,8 @@ def _speech_collate_fn(batch, pad_id):
             pad = (0, max_tokens_len - tokens_i_len)
             tokens_i = torch.nn.functional.pad(tokens_i, pad, value=pad_id)
         tokens.append(tokens_i)
+        attn_prior_padded[i, : attn_prior_i.shape[0], : attn_prior_i.shape[1]] = torch.tensor(attn_prior_i)
+        i += 1
 
     if has_audio:
         audio_signal = torch.stack(audio_signal)
@@ -75,7 +94,7 @@ def _speech_collate_fn(batch, pad_id):
     tokens = torch.stack(tokens)
     tokens_lengths = torch.stack(tokens_lengths)
 
-    return audio_signal, audio_lengths, tokens, tokens_lengths
+    return audio_signal, audio_lengths, tokens, tokens_lengths, attn_prior_padded
 
 
 class _AudioTextDataset(Dataset):
@@ -119,6 +138,7 @@ class _AudioTextDataset(Dataset):
             'a_sig_length': NeuralType(tuple('B'), LengthsType()),
             'transcripts': NeuralType(('B', 'T'), LabelsType()),
             'transcript_length': NeuralType(tuple('B'), LengthsType()),
+            # 'mask': NeuralType(('B', 'T', 'T'), VoidType()),
         }
 
     def __init__(
@@ -179,8 +199,27 @@ class _AudioTextDataset(Dataset):
             t = t + [self.eos_id]
             tl += 1
 
-        output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long()
+        LJ_id = sample.audio_file[-14:-4]
+        prior_file = f"/data/speech/LJSpeech/supplementary/{LJ_id}_attn_prior.npy"
+        if Path(prior_file).exists():
+            attn_prior = np.load(prior_file)
+        else:
+            scaling_factor = 0.05
+            P = tl
+            M = math.ceil(fl / 256)
+            x = np.arange(0, P)
+            mel_text_probs = []
+            for i in range(1, M + 1):
+                a, b = scaling_factor * i, scaling_factor * (M + 1 - i)
+                rv = betabinom(P, a, b)
+                mel_i_prob = rv.pmf(x)
+                mel_text_probs.append(mel_i_prob)
+            mel_text_probs = np.array(mel_text_probs)
+            with open(Path(prior_file), "wb") as not_f:
+                np.save(not_f, mel_text_probs)
+            attn_prior = mel_text_probs
 
+        output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), attn_prior
         if self._add_misc:
             misc = dict()
             misc['id'] = sample.id

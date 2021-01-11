@@ -177,7 +177,7 @@ class MultiHeadAttention(nn.Module):
         # output projection
         output_states = self.out_projection(context)
         output_states = self.layer_dropout(output_states)
-        return output_states
+        return output_states, attention_probs
 
 
 class PositionWiseFF(nn.Module):
