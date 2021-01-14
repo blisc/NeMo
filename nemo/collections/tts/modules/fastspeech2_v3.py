@@ -251,7 +251,9 @@ class SingleHeadAttention(nn.Module):
         if prior is not None:
             attention_scores = torch.log_softmax(attention_scores, dim=-1)
             attention_scores = attention_scores + torch.log(prior + 1e-8)
+        print(attention_scores.shape)
         soft_attn = torch.softmax(attention_scores, dim=-1)
+        print(soft_attn.shape)
         attention_probs = soft_attn
         if binarize:
             b_size = soft_attn.shape[0]

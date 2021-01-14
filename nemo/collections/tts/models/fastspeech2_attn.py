@@ -177,7 +177,7 @@ class FastSpeech2AttnModel(ModelPT):
         f, fl, t, tl, _ = batch
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
 
-        mel, attn = self(spec=spec, spec_len=spec_len, text=t, text_length=tl)
+        mel, _, _ = self(spec=spec, spec_len=spec_len, text=t, text_length=tl)
 
         # Loss
         loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
