@@ -17,7 +17,8 @@ from nemo.collections.tts.helpers.helpers import (
     get_mask_from_lengths,
     plot_alignment_to_numpy,
 )
-from nemo.collections.tts.modules.fastspeech2_submodules import VariancePredictor, LengthRegulator
+
+# from nemo.collections.tts.modules.fastspeech2_submodules import VariancePredictor, LengthRegulator
 from nemo.collections.tts.modules.fastspeech2_v2 import FFTBlocks, FFTBlocksWithEncDecAttn
 from nemo.collections.tts.modules.fastspeech2_v3 import ConvAttention, Loss2, ABLoss, SingleHeadAttention, mas, Loss3
 from nemo.core.classes import ModelPT
