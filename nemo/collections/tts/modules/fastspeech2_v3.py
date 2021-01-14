@@ -251,9 +251,7 @@ class SingleHeadAttention(nn.Module):
         if prior is not None:
             attention_scores = torch.log_softmax(attention_scores, dim=-1)
             attention_scores = attention_scores + torch.log(prior + 1e-8)
-        print(attention_scores.shape)
         soft_attn = torch.softmax(attention_scores, dim=-1)
-        print(soft_attn.shape)
         attention_probs = soft_attn
         if binarize:
             b_size = soft_attn.shape[0]
@@ -261,9 +259,9 @@ class SingleHeadAttention(nn.Module):
                 attn_cpu = soft_attn.data.cpu().numpy()
                 hard_attn = torch.zeros_like(soft_attn)
                 for ind in range(b_size):
-                    hard_attn = mas(attn_cpu[ind, : out_len[ind], : in_len[ind]], width=1)
+                    hard_attn_calc = mas(attn_cpu[ind, : out_len[ind], : in_len[ind]], width=1)
                     hard_attn[ind, : out_len[ind], : in_len[ind]] = torch.tensor(
-                        hard_attn, device=soft_attn.get_device()
+                        hard_attn_calc, device=soft_attn.get_device()
                     )
             attention_probs = hard_attn
         attention_probs = self.attn_dropout(attention_probs)
