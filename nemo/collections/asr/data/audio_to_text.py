@@ -200,7 +200,7 @@ class _AudioTextDataset(Dataset):
             tl += 1
 
         LJ_id = sample.audio_file[-14:-4]
-        prior_file = f"/data/speech/LJSpeech/supplementary/{LJ_id}_attn_prior.npy"
+        prior_file = Path(self.supplementary_dir) / f"{LJ_id}_attn_prior.npy"
         if Path(prior_file).exists():
             attn_prior = np.load(prior_file)
         else:
@@ -305,8 +305,10 @@ class AudioToCharDataset(_AudioTextDataset):
         load_audio: bool = True,
         parser: Union[str, Callable] = 'en',
         add_misc: bool = False,
+        supplementary_dir=None,
     ):
         self.labels = labels
+        self.supplementary_dir = supplementary_dir
 
         parser = parsers.make_parser(
             labels=labels, name=parser, unk_id=unk_index, blank_id=blank_index, do_normalize=normalize

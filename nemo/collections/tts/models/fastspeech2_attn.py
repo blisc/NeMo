@@ -17,6 +17,7 @@ from nemo.collections.tts.helpers.helpers import (
     get_mask_from_lengths,
     plot_alignment_to_numpy,
 )
+from nemo.collections.tts.modules.fastspeech2_submodules import VariancePredictor, LengthRegulator
 from nemo.collections.tts.modules.fastspeech2_v2 import FFTBlocks, FFTBlocksWithEncDecAttn
 from nemo.collections.tts.modules.fastspeech2_v3 import ConvAttention, Loss2, ABLoss, SingleHeadAttention, mas, Loss3
 from nemo.core.classes import ModelPT
@@ -43,7 +44,8 @@ class FastSpeech2AttnModel(ModelPT):
         self.phone_embedding = nn.Embedding(len(self._cfg.labels) + 1, 256, padding_idx=len(self._cfg.labels))
         self.encoder = FFTBlocks(max_seq_len=512, name="enc")
         # self.attention = ConvAttention()
-        self.attention = SingleHeadAttention(attn_layer_dropout=0.2)
+        # self.attention = SingleHeadAttention(attn_layer_dropout=self._cfg.attn_dropout)
+        # self.duration_predictor = VariancePredictor(d_model=256, d_inner=256, kernel_size=3, dropout=0.5)
         self.mel_decoder = FFTBlocks(max_seq_len=2048, name="dec")
         self.mel_linear = nn.Linear(256, 80, bias=True)
 
