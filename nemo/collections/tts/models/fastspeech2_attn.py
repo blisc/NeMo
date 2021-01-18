@@ -112,6 +112,7 @@ class FastSpeech2AttnModel(ModelPT):
             binarize=self.binarize_attention,
             in_len=text_length,
             out_len=spec_len,
+            parallel=self._cfg.model.parallelize_mas,
         )
 
         log_duration_prediction = None

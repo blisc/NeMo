@@ -239,7 +239,18 @@ class SingleHeadAttention(nn.Module):
     #     x = x.view(*new_x_shape)
     #     return x.permute(0, 2, 1, 3)
 
-    def forward(self, queries, keys, values, attention_mask, prior=None, binarize=False, in_len=None, out_len=None):
+    def forward(
+        self,
+        queries,
+        keys,
+        values,
+        attention_mask,
+        prior=None,
+        binarize=False,
+        in_len=None,
+        out_len=None,
+        parallel=False,
+    ):
         # Mel T1, Text T2, Text
         query = self.query_net(queries) / self.attn_scale
         key = self.key_net(keys) / self.attn_scale
@@ -258,23 +269,25 @@ class SingleHeadAttention(nn.Module):
             with torch.no_grad():
                 attn_cpu = soft_attn.data.cpu().numpy()
                 hard_attn = torch.zeros_like(soft_attn)
-                # Version 1
-                # 2.27s/it
-                for ind in range(b_size):
-                    hard_attn_calc = mas(attn_cpu[ind, : out_len[ind], : in_len[ind]], width=1)
-                    hard_attn[ind, : out_len[ind], : in_len[ind]] = torch.tensor(
-                        hard_attn_calc, device=soft_attn.get_device()
-                    )
-                # # Version 2: Parallel???
-                # # 2.70s/it
-                # attn_batch = mas_batch(attn_cpu, out_len.data.cpu().numpy(), in_len.data.cpu().numpy(), width=1)
-                # hard_attn[:, : torch.max(out_len), : torch.max(in_len)] = torch.tensor(
-                #     attn_batch, device=soft_attn.get_device()
-                # ).float()
-                # # for ind in range(b_size):
-                # #     # assert float(attn_batch[ind, out_len[ind], in_len[ind]]) != 0.0
-                # #     if out_len[ind] + 1 < attn_batch.shape[1] and in_len[ind] + 1 < attn_batch.shape[2]:
-                # #         assert float(attn_batch[ind, out_len[ind] + 1, in_len[ind] + 1]) == 0.0
+                if parallel:
+                    # Version 2: Parallel???
+                    # 2.70s/it
+                    attn_batch = mas_batch(attn_cpu, out_len.data.cpu().numpy(), in_len.data.cpu().numpy(), width=1)
+                    hard_attn[:, : torch.max(out_len), : torch.max(in_len)] = torch.tensor(
+                        attn_batch, device=soft_attn.get_device()
+                    ).float()
+                    # for ind in range(b_size):
+                    #     # assert float(attn_batch[ind, out_len[ind], in_len[ind]]) != 0.0
+                    #     if out_len[ind] + 1 < attn_batch.shape[1] and in_len[ind] + 1 < attn_batch.shape[2]:
+                    #         assert float(attn_batch[ind, out_len[ind] + 1, in_len[ind] + 1]) == 0.0
+                else:
+                    # Version 1
+                    # 2.27s/it
+                    for ind in range(b_size):
+                        hard_attn_calc = mas(attn_cpu[ind, : out_len[ind], : in_len[ind]], width=1)
+                        hard_attn[ind, : out_len[ind], : in_len[ind]] = torch.tensor(
+                            hard_attn_calc, device=soft_attn.get_device()
+                        )
             attention_probs = hard_attn
         attention_probs = self.attn_dropout(attention_probs)
         context = torch.matmul(attention_probs, value)  # B T1 T2 x B T2 H

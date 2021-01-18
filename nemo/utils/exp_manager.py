@@ -155,8 +155,8 @@ def exp_manager(trainer: 'pytorch_lightning.Trainer', cfg: Optional[Union[DictCo
     # Set numba num threads
     numba_num_threads = os.environ.get("NUMBA_NUM_THREADS", None)
     if numba_num_threads is None:
-        numba.set_num_threads(floor(os.cpu_count() / trainer.num_gpus) - 4)
-        logging.info(f"Set numba threads to {floor(os.cpu_count() / trainer.num_gpus)-4}")
+        numba.set_num_threads(floor(os.cpu_count() / trainer.num_gpus) - 2)
+        logging.info(f"Set numba threads to {floor(os.cpu_count() / trainer.num_gpus)-2}")
 
     # Ensure passed cfg is compliant with ExpManagerConfig
     schema = OmegaConf.structured(ExpManagerConfig)

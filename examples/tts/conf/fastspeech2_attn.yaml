@@ -17,6 +17,7 @@ model:
   add_loss2: True
   labels: ${labels}
   attn_dropout: 0.2
+  parallelize_mas: False
   train_ds:
     dataset:
       _target_: "nemo.collections.asr.data.audio_to_text.AudioToCharDataset"
