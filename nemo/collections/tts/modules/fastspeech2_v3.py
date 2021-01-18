@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.stats import betabinom
-from numba import jit, prange
+from numba import jit, prange, stencil
 
 
 class Invertible1x1ConvLUS(torch.nn.Module):
@@ -258,11 +258,23 @@ class SingleHeadAttention(nn.Module):
             with torch.no_grad():
                 attn_cpu = soft_attn.data.cpu().numpy()
                 hard_attn = torch.zeros_like(soft_attn)
+                # Version 1
+                # 2.27s/it
                 for ind in range(b_size):
                     hard_attn_calc = mas(attn_cpu[ind, : out_len[ind], : in_len[ind]], width=1)
                     hard_attn[ind, : out_len[ind], : in_len[ind]] = torch.tensor(
                         hard_attn_calc, device=soft_attn.get_device()
                     )
+                # # Version 2: Parallel???
+                # # 2.70s/it
+                # attn_batch = mas_batch(attn_cpu, out_len.data.cpu().numpy(), in_len.data.cpu().numpy(), width=1)
+                # hard_attn[:, : torch.max(out_len), : torch.max(in_len)] = torch.tensor(
+                #     attn_batch, device=soft_attn.get_device()
+                # ).float()
+                # # for ind in range(b_size):
+                # #     # assert float(attn_batch[ind, out_len[ind], in_len[ind]]) != 0.0
+                # #     if out_len[ind] + 1 < attn_batch.shape[1] and in_len[ind] + 1 < attn_batch.shape[2]:
+                # #         assert float(attn_batch[ind, out_len[ind] + 1, in_len[ind] + 1]) == 0.0
             attention_probs = hard_attn
         attention_probs = self.attn_dropout(attention_probs)
         context = torch.matmul(attention_probs, value)  # B T1 T2 x B T2 H
@@ -352,6 +364,39 @@ def mas(attn_map, width=1):
         curr_text_idx = prev_ind[i, curr_text_idx]
     opt[0, curr_text_idx] = 1
     return opt
+
+
+@jit(nopython=True, parallel=True)
+def mas_batch(attn_map_batch, out_len, in_len, width=1):
+    max_out = np.max(out_len)
+    max_in = np.max(in_len)
+    return_attn_map_batch = np.zeros((attn_map_batch.shape[0], max_out, max_in))
+    for ind in prange(len(attn_map_batch)):
+        # assumes mel x text
+        attn_map = attn_map_batch[ind, : out_len[ind], : in_len[ind]]
+        opt = np.zeros_like(attn_map)
+        attn_map = np.log(attn_map)
+        attn_map[0, 1:] = -np.inf
+        log_p = np.zeros_like(attn_map)
+        log_p[0, :] = attn_map[0, :]
+        prev_ind = np.zeros_like(attn_map, dtype=np.int64)
+        for i in range(1, attn_map.shape[0]):
+            for j in range(attn_map.shape[1]):  # for each text dim
+                prev_j = np.arange(max(0, j - width), j + 1)
+                prev_log = np.array([log_p[i - 1, prev_idx] for prev_idx in prev_j])
+
+                ind2 = np.argmax(prev_log)
+                log_p[i, j] = attn_map[i, j] + prev_log[ind2]
+                prev_ind[i, j] = prev_j[ind2]
+
+        # now backtrack
+        curr_text_idx = attn_map.shape[1] - 1
+        for i in range(attn_map.shape[0] - 1, -1, -1):
+            opt[i, curr_text_idx] = 1
+            curr_text_idx = prev_ind[i, curr_text_idx]
+        opt[0, curr_text_idx] = 1
+        return_attn_map_batch[ind, : out_len[ind], : in_len[ind]] = opt
+    return return_attn_map_batch
 
 
 class Loss3(torch.nn.Module):  # AttentionBinarizationLoss

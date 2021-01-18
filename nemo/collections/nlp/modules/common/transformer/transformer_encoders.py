@@ -19,7 +19,8 @@ import torch.nn as nn
 
 from nemo.collections.common.parts import form_attention_mask
 from nemo.collections.nlp.modules.common.transformer.transformer_modules import MultiHeadAttention, PositionWiseFF
-from nemo.collections.tts.modules.fastspeech2_submodules import PositionwiseConvFF
+
+# from nemo.collections.tts.modules.fastspeech2_submodules import PositionwiseConvFF
 
 __all__ = ["TransformerEncoder"]
 

@@ -18,10 +18,19 @@ from nemo.collections.tts.helpers.helpers import (
     plot_alignment_to_numpy,
 )
 
-# from nemo.collections.tts.modules.fastspeech2_submodules import VariancePredictor, LengthRegulator
+from nemo.collections.tts.modules.fastspeech2_submodules import VariancePredictor, LengthRegulator
 from nemo.collections.tts.modules.fastspeech2_v2 import FFTBlocks, FFTBlocksWithEncDecAttn
 from nemo.collections.tts.modules.fastspeech2_v3 import ConvAttention, Loss2, ABLoss, SingleHeadAttention, mas, Loss3
 from nemo.core.classes import ModelPT
+
+
+class DurationLoss(torch.nn.Module):
+    def forward(self, duration_pred, duration_target, mask):
+        duration_pred.masked_fill_(~mask.squeeze(), 0)
+        log_duration_target = torch.log(duration_target + 1)
+        # logging.debug(duration_pred)
+        # logging.debug(log_duration_target)
+        return torch.nn.functional.mse_loss(duration_pred, log_duration_target)
 
 
 class FastSpeech2AttnModel(ModelPT):
@@ -42,11 +51,12 @@ class FastSpeech2AttnModel(ModelPT):
         # OmegaConf.merge(cfg, schema)
 
         self.audio_to_melspec_precessor = instantiate(self._cfg.preprocessor)
-        self.phone_embedding = nn.Embedding(len(self._cfg.labels) + 1, 256, padding_idx=len(self._cfg.labels))
+        self.phone_embedding = nn.Embedding(len(self._cfg.labels) + 3, 256, padding_idx=len(self._cfg.labels) + 2)
         self.encoder = FFTBlocks(max_seq_len=512, name="enc")
         # self.attention = ConvAttention()
         self.attention = SingleHeadAttention(attn_layer_dropout=self._cfg.attn_dropout)
-        # self.duration_predictor = VariancePredictor(d_model=256, d_inner=256, kernel_size=3, dropout=0.5)
+        self.duration_predictor = VariancePredictor(d_model=256, d_inner=256, kernel_size=3, dropout=0.5)
+        self.length_regulator = LengthRegulator()
         self.mel_decoder = FFTBlocks(max_seq_len=2048, name="dec")
         self.mel_linear = nn.Linear(256, 80, bias=True)
 
@@ -55,11 +65,13 @@ class FastSpeech2AttnModel(ModelPT):
         if self._cfg.add_loss2:
             self.loss2 = Loss2()
         self.loss3 = Loss3()
+        self.durationloss = DurationLoss()
 
         self.log_train_images = False
         self.logged_real_samples = False
         self.binarize_attention = False
         self.train_duration_predictor = False
+        self.use_duration_predictor = False
         self._tb_logger = None
         typecheck.set_typecheck_enabled(enabled=False)
 
@@ -102,35 +114,54 @@ class FastSpeech2AttnModel(ModelPT):
             out_len=spec_len,
         )
 
+        log_duration_prediction = None
+        if self.train_duration_predictor:
+            log_duration_prediction = self.duration_predictor(encoded_text.transpose(1, 2))
+            duration_rounded = torch.clamp_min(torch.exp(log_duration_prediction) - 1, 0).long()
+
+            if self.use_duration_predictor:
+                if not torch.sum(duration_rounded, dim=1).bool().all():
+                    logging.error("Duration prediction failed on this batch. Settings to 1s")
+                    duration_rounded += 1
+                    # logging.debug(duration_rounded)
+                if torch.ge(torch.sum(duration_rounded, dim=1), 2048).any():
+                    logging.error("Duration prediction was too high this batch. Clamping further")
+                    length = duration_rounded.size(1)
+                    duration_rounded = torch.clamp(duration_rounded, max=2048 // length)
+                context = self.length_regulator(hiddens=encoded_text, durations=duration_rounded)
+                spec_len = torch.sum(duration_rounded, dim=1)
+
         output, _ = self.mel_decoder(context, spec_len)
         ouput = self.mel_linear(output)
 
-        return ouput, attn, attn2
+        return ouput, attn, attn2, log_duration_prediction
 
     def training_step(self, batch, batch_idx):
         f, fl, t, tl, attn_prior = batch
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
 
-        mel, attn, attn2 = self(spec=spec, spec_len=spec_len, text=t, text_length=tl, attn_prior=attn_prior)
+        mel, attn, attn2, log_duration_prediction = self(
+            spec=spec, spec_len=spec_len, text=t, text_length=tl, attn_prior=attn_prior
+        )
         attn_logprob = torch.log(attn + 1e-8).unsqueeze(1)
 
         # Loss
         loss1 = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
         self.log(name="train_mel_loss", value=loss1)
         output_dict = {"loss": loss1}
-        if self.global_step < 1000:
-            if self.global_step % 100 == 0:
-                attn_logprob_tolog = attn_logprob[0].data.cpu().numpy().squeeze()
-                self.tb_logger.add_image(
-                    "train_attn", plot_alignment_to_numpy(attn_logprob_tolog.T), self.global_step, dataformats="HWC",
-                )
-                self.log_train_images = False
-        elif self.global_step < 10000 and self.global_step % 1000 == 0:
-            attn_logprob_tolog = attn_logprob[0].data.cpu().numpy().squeeze()
-            self.tb_logger.add_image(
-                "train_attn", plot_alignment_to_numpy(attn_logprob_tolog.T), self.global_step, dataformats="HWC",
-            )
-            self.log_train_images = False
+        # if self.global_step < 1000:
+        #     if self.global_step % 100 == 0:
+        #         attn_logprob_tolog = attn_logprob[0].data.cpu().numpy().squeeze()
+        #         self.tb_logger.add_image(
+        #             "train_attn", plot_alignment_to_numpy(attn_logprob_tolog.T), self.global_step, dataformats="HWC",
+        #         )
+        #         self.log_train_images = False
+        # elif self.global_step < 10000 and self.global_step % 1000 == 0:
+        #     attn_logprob_tolog = attn_logprob[0].data.cpu().numpy().squeeze()
+        #     self.tb_logger.add_image(
+        #         "train_attn", plot_alignment_to_numpy(attn_logprob_tolog.T), self.global_step, dataformats="HWC",
+        #     )
+        #     self.log_train_images = False
         if self.log_train_images:
             self.log_train_images = False
             output_dict["outputs"] = [spec, mel, attn_logprob]
@@ -143,6 +174,12 @@ class FastSpeech2AttnModel(ModelPT):
             loss3 = self.loss3(attn, attn2)
             total_loss += loss3
             self.log(name="train_loss_3", value=loss3)
+            output_dict["loss"] = total_loss
+        if self.train_duration_predictor:
+            durations_target = torch.detach(attn2.sum(1).float())
+            dur_loss = self.durationloss(log_duration_prediction, durations_target, get_mask_from_lengths(tl))
+            total_loss += dur_loss
+            self.log(name="train_loss_4", value=dur_loss)
             output_dict["loss"] = total_loss
         self.log(name="train_loss", value=output_dict["loss"])
         return output_dict
@@ -166,21 +203,26 @@ class FastSpeech2AttnModel(ModelPT):
                 "train_attn", plot_alignment_to_numpy(attn.T), self.global_step, dataformats="HWC",
             )
 
-        # Switch to hard attention after 40% of training
-        if not self.binarize_attention and self.current_epoch >= np.ceil(0.4 * self._trainer.max_epochs):
-            logging.info(f"Using hard attentions at epoch: {self.current_epoch}")
+        # Switch to hard attention after 50% of training
+        if not self.binarize_attention and self.current_epoch >= np.ceil(0.5 * self._trainer.max_epochs):
+            logging.info(f"Using hard attentions after epoch: {self.current_epoch}")
             self.binarize_attention = True
 
         # Start training duration predictoru after 75% of training
         if not self.train_duration_predictor and self.current_epoch >= np.ceil(0.75 * self._trainer.max_epochs):
-            logging.info(f"Starting training duration predictory at epoch: {self.current_epoch}")
+            logging.info(f"Starting training duration predictor after epoch: {self.current_epoch}")
             self.train_duration_predictor = True
+
+        # Start training duration predictoru after 85% of training
+        if not self.use_duration_predictor and self.current_epoch >= np.ceil(0.85 * self._trainer.max_epochs):
+            logging.info(f"Using duration predictor after epoch: {self.current_epoch}")
+            self.use_duration_predictor = True
 
     def validation_step(self, batch, batch_idx):
         f, fl, t, tl, _ = batch
         spec, spec_len = self.audio_to_melspec_precessor(f, fl)
 
-        mel, _, _ = self(spec=spec, spec_len=spec_len, text=t, text_length=tl)
+        mel, _, _, _ = self(spec=spec, spec_len=spec_len, text=t, text_length=tl)
 
         # Loss
         loss = self.loss(spec_pred=mel, spec_target=spec, spec_target_len=spec_len, pad_value=-11.52)
@@ -229,7 +271,10 @@ class FastSpeech2AttnModel(ModelPT):
         elif not shuffle_should_be and cfg.dataloader_params.shuffle:
             logging.error(f"The {name} dataloader for {self} has shuffle set to True!!!")
 
-        dataset = instantiate(cfg.dataset, labels=self._cfg.labels, pad_id=len(self._cfg.labels))
+        labels = self._cfg.labels
+        dataset = instantiate(
+            cfg.dataset, labels=self._cfg.labels, bos_id=len(labels), eos_id=len(labels) + 1, pad_id=len(labels) + 2
+        )
         return torch.utils.data.DataLoader(dataset, collate_fn=dataset.collate_fn, **cfg.dataloader_params)
 
     def setup_training_data(self, cfg):

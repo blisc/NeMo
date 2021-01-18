@@ -16,11 +16,13 @@ import os
 import subprocess
 import sys
 import time
+from math import floor
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copy, move
 from typing import Any, Dict, List, Optional, Union
 
+import numba
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
@@ -149,6 +151,12 @@ def exp_manager(trainer: 'pytorch_lightning.Trainer', cfg: Optional[Union[DictCo
     if cfg is None:
         logging.error("exp_manager did not receive a cfg argument. It will be disabled.")
         return
+
+    # Set numba num threads
+    numba_num_threads = os.environ.get("NUMBA_NUM_THREADS", None)
+    if numba_num_threads is None:
+        numba.set_num_threads(floor(os.cpu_count() / trainer.num_gpus) - 4)
+        logging.info(f"Set numba threads to {floor(os.cpu_count() / trainer.num_gpus)-4}")
 
     # Ensure passed cfg is compliant with ExpManagerConfig
     schema = OmegaConf.structured(ExpManagerConfig)
