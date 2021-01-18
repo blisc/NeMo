@@ -59,6 +59,7 @@ class FastSpeech2AttnModel(ModelPT):
         self.length_regulator = LengthRegulator()
         self.mel_decoder = FFTBlocks(max_seq_len=2048, name="dec")
         self.mel_linear = nn.Linear(256, 80, bias=True)
+        self.parallel_mas = self._cfg.parallelize_mas
 
         self.loss = L1MelLoss()
         self.loss2 = None
@@ -112,7 +113,7 @@ class FastSpeech2AttnModel(ModelPT):
             binarize=self.binarize_attention,
             in_len=text_length,
             out_len=spec_len,
-            parallel=self._cfg.model.parallelize_mas,
+            parallel=self.parallel_mas,
         )
 
         log_duration_prediction = None
