@@ -133,7 +133,7 @@ class WaveGlowModel(Vocoder):
         self.mode = OperationMode.infer
 
         with torch.no_grad():
-            audio = self.waveglow(spec=spec, run_inverse=True, audio=None, sigma=sigma)
+            audio = self.waveglow.norm_dist_to_audio(spec=spec, sigma=sigma)
 
         return audio
 
