@@ -227,12 +227,8 @@ class Tacotron2Model(SpectrogramGenerator):
             pad_value=self.pad_value,
         )
 
-        output = {
-            'loss': loss,
-            'progress_bar': {'training_loss': loss},
-            'log': {'loss': loss},
-        }
-        return output
+        self.log('training_loss', loss)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         audio, audio_len, tokens, token_len = batch
@@ -269,7 +265,7 @@ class Tacotron2Model(SpectrogramGenerator):
                 tb_logger, outputs[0].values(), self.global_step, tag="val", log_images=True, add_audio=False,
             )
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()  # This reduces across batches, not workers!
-        self.log('val_loss', avg_loss)
+        self.log('val_loss', avg_loss, sync_dist=True)
 
     def __setup_dataloader_from_config(self, cfg, shuffle_should_be: bool = True, name: str = "train"):
         if "dataset" not in cfg or not isinstance(cfg.dataset, DictConfig):
