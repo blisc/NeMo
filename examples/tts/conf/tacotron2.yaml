@@ -1,14 +1,14 @@
 name: Tacotron2
-sample_rate: 22050
+sample_rate: 44100
 # <PAD>, <BOS>, <EOS> will be added by the tacotron2.py script
 labels: [' ', '!', '"', "'", '(', ')', ',', '-', '.', ':', ';', '?', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
         'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '[', ']',
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
         'u', 'v', 'w', 'x', 'y', 'z']
-n_fft: 1024
+n_fft: 2048
 n_mels: 80
-fmax: 8000
-n_stride: 256
+fmax: null
+n_stride: 512
 pad_value: -11.52
 train_dataset: ???
 validation_datasets: ???
@@ -66,7 +66,7 @@ model:
     lowfreq: 0
     mag_power: 1.0
     n_fft: ${n_fft}
-    n_window_size: 1024
+    n_window_size: 2048
     n_window_stride: ${n_stride}
     normalize: null
     pad_to: 16

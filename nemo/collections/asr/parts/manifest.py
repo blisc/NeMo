@@ -111,7 +111,7 @@ def __parse_item(line: str, manifest_file: str) -> Dict[str, Any]:
     item = dict(
         audio_file=item['audio_file'],
         duration=item['duration'],
-        text=item['text'],
+        text=item['text_normalized'],
         offset=item.get('offset', None),
         speaker=item.get('speaker', None),
         orig_sr=item.get('orig_sample_rate', None),

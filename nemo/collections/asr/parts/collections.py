@@ -16,6 +16,7 @@ import collections
 import json
 import os
 from typing import Any, Dict, List, Optional, Union
+from pathlib import Path
 
 import pandas as pd
 
@@ -192,7 +193,9 @@ class ASRAudioText(AudioText):
         ids, audio_files, durations, texts, offsets, speakers, orig_srs = [], [], [], [], [], [], []
         for item in manifest.item_iter(manifests_files):
             ids.append(item['id'])
-            audio_files.append(item['audio_file'])
+            audio_file_loc = Path(item['audio_file'])
+            audio_file_loc = '/data/speech/HiFiTTS' / audio_file_loc
+            audio_files.append(audio_file_loc)
             durations.append(item['duration'])
             texts.append(item['text'])
             offsets.append(item['offset'])
