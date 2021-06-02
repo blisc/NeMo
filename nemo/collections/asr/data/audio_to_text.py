@@ -25,7 +25,10 @@ from nemo.collections.asr.parts import collections, parsers
 from nemo.collections.asr.parts.features import WaveformFeaturizer
 from nemo.core.classes import Dataset, IterableDataset
 from nemo.core.neural_types import *
+from nemo.core import typecheck
 from nemo.utils import logging
+
+typecheck.set_typecheck_enabled(False)
 
 __all__ = [
     'AudioToCharDataset',
@@ -142,6 +145,8 @@ class _AudioTextDataset(Dataset):
         self.eos_id = eos_id
         self.bos_id = bos_id
         self.pad_id = pad_id
+
+        self.collection = sorted(self.collection, key=lambda x: len(x.text_tokens))
 
     def __getitem__(self, index):
         sample = self.collection[index]
