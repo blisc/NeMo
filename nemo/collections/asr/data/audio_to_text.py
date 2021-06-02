@@ -140,7 +140,7 @@ class _AudioTextDataset(Dataset):
             max_number=max_utts,
         )
 
-        self.featurizer = WaveformFeaturizer(sample_rate=sample_rate, int_values=int_values, augmentor=augmentor)
+        # self.featurizer = WaveformFeaturizer(sample_rate=sample_rate, int_values=int_values, augmentor=augmentor)
         self.trim = trim
         self.eos_id = eos_id
         self.bos_id = bos_id
@@ -155,10 +155,10 @@ class _AudioTextDataset(Dataset):
         if offset is None:
             offset = 0
 
-        features = self.featurizer.process(
-            sample.audio_file, offset=offset, duration=sample.duration, trim=self.trim, orig_sr=sample.orig_sr
-        )
-        f, fl = features, torch.tensor(features.shape[0]).long()
+        # features = self.featurizer.process(
+        #     sample.audio_file, offset=offset, duration=sample.duration, trim=self.trim, orig_sr=sample.orig_sr
+        # )
+        # f, fl = features, torch.tensor(features.shape[0]).long()
 
         t, tl = sample.text_tokens, len(sample.text_tokens)
         if self.bos_id is not None:
@@ -168,7 +168,7 @@ class _AudioTextDataset(Dataset):
             t = t + [self.eos_id]
             tl += 1
 
-        output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long()
+        output = None, None, torch.tensor(t).long(), torch.tensor(tl).long()
 
         return output
 

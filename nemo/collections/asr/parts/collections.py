@@ -92,13 +92,13 @@ class AudioText(_Collection):
     """List of audio-transcript text correspondence with preprocessing."""
 
     OUTPUT_TYPE = collections.namedtuple(
-        typename='AudioTextEntity', field_names='id audio_file duration text_tokens offset text_raw speaker orig_sr',
+        typename='AudioTextEntity', field_names='id duration text_tokens offset text_raw speaker orig_sr',
     )
 
     def __init__(
         self,
         ids: List[int],
-        audio_files: List[str],
+        # audio_files: List[str],
         durations: List[float],
         texts: List[str],
         offsets: List[str],
@@ -134,8 +134,8 @@ class AudioText(_Collection):
         if index_by_file_id:
             self.mapping = {}
 
-        for id_, audio_file, duration, offset, text, speaker, orig_sr in zip(
-            ids, audio_files, durations, offsets, texts, speakers, orig_sampling_rates
+        for id_, duration, offset, text, speaker, orig_sr in zip(
+            ids, durations, offsets, texts, speakers, orig_sampling_rates
         ):
             # Duration filters.
             if min_duration is not None and duration < min_duration:
@@ -156,10 +156,7 @@ class AudioText(_Collection):
 
             total_duration += duration
 
-            data.append(output_type(id_, audio_file, duration, text_tokens, offset, text, speaker, orig_sr))
-            if index_by_file_id:
-                file_id, _ = os.path.splitext(os.path.basename(audio_file))
-                self.mapping[file_id] = len(data) - 1
+            data.append(output_type(id_, duration, text_tokens, offset, text, speaker, orig_sr))
 
             # Max number of entities filter.
             if len(data) == max_number:
@@ -195,14 +192,14 @@ class ASRAudioText(AudioText):
             ids.append(item['id'])
             # audio_file_loc = Path(item['audio_file'])
             # audio_file_loc = '/data/speech/HiFiTTS' / audio_file_loc
-            audio_files.append(item['audio_file'])
+            # audio_files.append(item['audio_file'])
             durations.append(item['duration'])
             texts.append(item['text'])
             offsets.append(item['offset'])
             speakers.append(item['speaker'])
             orig_srs.append(item['orig_sr'])
 
-        super().__init__(ids, audio_files, durations, texts, offsets, speakers, orig_srs, *args, **kwargs)
+        super().__init__(ids, durations, texts, offsets, speakers, orig_srs, *args, **kwargs)
 
 
 class SpeechLabel(_Collection):
