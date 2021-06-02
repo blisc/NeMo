@@ -196,10 +196,10 @@ class Tacotron2Model(SpectrogramGenerator):
         input_types={"tokens": NeuralType(('B', 'T'), EmbeddedTextType())},
         output_types={"spec": NeuralType(('B', 'D', 'T'), MelSpectrogramType())},
     )
-    def generate_spectrogram(self, *, tokens):
+    def generate_spectrogram(self, *, tokens, token_len):
         self.eval()
         self.calculate_loss = False
-        token_len = torch.tensor([len(i) for i in tokens]).to(self.device)
+        # token_len = torch.tensor([len(i) for i in tokens]).to(self.device)
         tensors = self(tokens=tokens, token_len=token_len)
         spectrogram_pred = tensors[1]
 

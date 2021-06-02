@@ -328,6 +328,12 @@ class Decoder(NeuralModule):
 
             not_finished = not_finished * dec
             mel_lengths += not_finished
+            # print(torch.sigmoid(gate_output.data).squeeze())
+            # print(dec)
+            # print(not_finished)
+            # import ipdb
+
+            # ipdb.set_trace()
 
             if self.early_stopping and torch.sum(not_finished) == 0 and stepped:
                 break
