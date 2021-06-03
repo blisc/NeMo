@@ -47,6 +47,7 @@ dataset = _AudioTextDataset(
     bos_id=len(labels),
     eos_id=len(labels) + 1,
     pad_id=len(labels) + 2,
+    max_utts=128,
 )
 dataloader = torch.utils.data.DataLoader(
     dataset=dataset, batch_size=args.batchsize, collate_fn=dataset.collate_fn, num_workers=0, shuffle=False
@@ -62,7 +63,7 @@ for b in dataloader:
 
 print("warming up model")
 for _ in tqdm.tqdm(range(10)):
-    for batch in tqdm.tqdm(batches):
+    for batch in batches:
         _, _, text, text_length = batch
         text = text.to(device)
         text_length = text_length.to(device)
@@ -72,13 +73,13 @@ for _ in tqdm.tqdm(range(10)):
 
 print("testing model")
 for _ in tqdm.tqdm(range(100)):
-    for batch in tqdm.tqdm(batches):
+    for batch in batches:
         _, _, text, text_length = batch
         text = text.to(device)
         text_length = text_length.to(device)
         with torch.no_grad(), measures:
             spectrogram, lengths = t2.generate_spectrogram(tokens=text, token_len=text_length)
-        all_utterances += args.batchsize
+        all_utterances += text.size(0)
         all_samples += lengths.sum().item() * 512
 
 gm = np.sort(np.asarray(measures))

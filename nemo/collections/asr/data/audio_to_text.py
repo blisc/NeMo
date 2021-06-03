@@ -146,7 +146,7 @@ class _AudioTextDataset(Dataset):
         self.bos_id = bos_id
         self.pad_id = pad_id
 
-        self.collection = sorted(self.collection, key=lambda x: len(x.text_tokens))
+        # self.collection = sorted(self.collection, key=lambda x: len(x.text_tokens))
 
     def __getitem__(self, index):
         sample = self.collection[index]
