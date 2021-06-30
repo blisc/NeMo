@@ -55,7 +55,7 @@ adlr_gen_keys = adlr_gen_ckpt.keys()
 
 new_nemo_ckpt = {nemo_key: adlr_gen_ckpt[adlr_key] for adlr_key, nemo_key in zip(adlr_gen_keys, nemo_gen_keys)}
 vocoder.load_state_dict(new_nemo_ckpt)
-vocoder = vocoder.cuda().eval()
+vocoder = vocoder.cuda().eval().half()
 
 
 dataset = _AudioTextDataset(
@@ -94,7 +94,7 @@ for _ in tqdm.tqdm(range(10)):
         text_length = text_length.to(device)
         with torch.no_grad():
             spectrogram, _ = t2.generate_spectrogram(tokens=text, token_len=text_length)
-            audios = infer_vocoder(model=vocoder, spec=spectrogram)
+            audios = infer_vocoder(model=vocoder, spec=spectrogram.half())
 
 
 print("testing model")
@@ -105,7 +105,7 @@ for _ in tqdm.tqdm(range(100)):
         text_length = text_length.to(device)
         with torch.no_grad(), measures:
             spectrogram, lengths = t2.generate_spectrogram(tokens=text, token_len=text_length)
-            audios = infer_vocoder(model=vocoder, spec=spec, with_bias_denoise=args.with_bias_denoise)
+            audios = infer_vocoder(model=vocoder, spec=spectrogram.half())
         # with vocoder_measures:
 
         all_utterances += text.size(0)
@@ -118,5 +118,5 @@ for _ in tqdm.tqdm(range(100)):
 spec_gen_m = np.sort(np.asarray(measures))
 # vocoder_m = np.sort(np.asarray(vocoder_measures))
 full_pipeline_m = spec_gen_m  # + vocoder_m
-full_pipeline_rtf = all_samples / (all_utterances * full_pipeline_m.mean() * args.sample_rate)
-print(f"RTF: {full_pipeline_rtf}")
+full_pipeline_rtf = all_samples / (all_utterances * full_pipeline_m.mean() * 44100)
+print(f"RTF: {full_pipeline_rtf*args.batchsize}")
