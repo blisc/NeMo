@@ -193,7 +193,7 @@ class ASRAudioText(AudioText):
             ids.append(item['id'])
             # audio_file_loc = Path(item['audio_file'])
             # audio_file_loc = '/data/speech/HiFiTTS' / audio_file_loc
-            # audio_files.append(item['audio_file'])
+            # audio_files.append(audio_file_loc)
             audio_files.append(Path(item['audio_file']))
             durations.append(item['duration'])
             texts.append(item['text'])

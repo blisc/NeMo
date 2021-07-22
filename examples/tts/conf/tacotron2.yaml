@@ -18,7 +18,7 @@ model:
     dataset:
       _target_: "nemo.collections.asr.data.audio_to_text.AudioToCharDataset"
       manifest_filepath: ${train_dataset}
-      max_duration: null
+      max_duration: 16.7
       min_duration: 0.1
       trim: false
       int_values: false
@@ -38,7 +38,7 @@ model:
     dataset:
       _target_: "nemo.collections.asr.data.audio_to_text.AudioToCharDataset"
       manifest_filepath: ${validation_datasets}
-      max_duration: null
+      max_duration: 16.7
       min_duration: 0.1
       int_values: false
       normalize: true
