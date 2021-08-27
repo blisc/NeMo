@@ -83,7 +83,7 @@ class Tacotron2Model(SpectrogramGenerator):
 
         self._parser = None
         self.audio_to_melspec_precessor = instantiate(self._cfg.preprocessor)
-        self.text_embedding = nn.Embedding(len(cfg.labels) + 3, 512)
+        self.text_embedding = nn.Embedding(len(cfg.labels) + 3, self._cfg.encoder.encoder_embedding_dim)
         self.encoder = instantiate(self._cfg.encoder)
         self.decoder = instantiate(self._cfg.decoder)
         self.postnet = instantiate(self._cfg.postnet)

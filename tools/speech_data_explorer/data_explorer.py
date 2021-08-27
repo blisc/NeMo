@@ -230,6 +230,19 @@ def plot_histogram(data, key, label):
     return fig
 
 
+# plot cumdist of specified field in data list
+def plot_cumdist(data, key, label):
+    fig = px.ecdf(
+        data_frame=[item[key] for item in data],
+        labels={'value': label},
+        opacity=0.5,
+        color_discrete_sequence=['green'],
+        height=200,
+    )
+    fig.update_layout(showlegend=False, margin=dict(l=0, r=0, t=0, b=0, pad=0))
+    return fig
+
+
 def plot_word_accuracy(vocabulary_data):
     labels = ['Unrecognized', 'Sometimes recognized', 'Always recognized']
     counts = [0, 0, 0]
@@ -274,7 +287,7 @@ app = dash.Dash(
 )
 
 
-figure_duration = plot_histogram(data, 'duration', 'Duration (sec)')
+figure_duration = plot_cumdist(data, 'duration', 'Duration (sec)')
 figure_num_words = plot_histogram(data, 'num_words', '#words')
 figure_num_chars = plot_histogram(data, 'num_chars', '#chars')
 figure_word_rate = plot_histogram(data, 'word_rate', '#words/sec')
