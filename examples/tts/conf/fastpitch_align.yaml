@@ -1,5 +1,5 @@
 name: "FastPitch"
-sample_rate: 22050
+sample_rate: 44100
 train_dataset: ???
 validation_datasets: ???
 prior_folder: ???
@@ -11,12 +11,12 @@ model:
   max_token_duration: 75
   n_mel_channels: 80
   pitch_embedding_kernel_size: 3
-  n_window_size: 1024
-  n_window_stride: 256
+  n_window_size: 2048
+  n_window_stride: 512
   pitch_fmin: 80
   pitch_fmax: 640
-  pitch_avg: 211.27540199742586
-  pitch_std: 52.1851002822779
+  pitch_avg: 188.832507983196
+  pitch_std: 39.21287648605013
 
   train_ds:
     dataset:
@@ -35,6 +35,7 @@ model:
       pitch_fmax: ${model.pitch_fmax}
       pitch_avg: ${model.pitch_avg}
       pitch_std: ${model.pitch_std}
+      ignore_numbers: true
       vocab:
         notation: phonemes
         punct: true
@@ -68,6 +69,7 @@ model:
       pitch_fmax: ${model.pitch_fmax}
       pitch_avg: ${model.pitch_avg}
       pitch_std: ${model.pitch_std}
+      ignore_numbers: true
       vocab:
         notation: phonemes
         punct: true
@@ -88,7 +90,7 @@ model:
     dither: 0.0
     features: ${model.n_mel_channels}
     frame_splicing: 1
-    highfreq: 8000
+    highfreq: null
     log: true
     log_zero_guard_type: add
     log_zero_guard_value: 1e-05

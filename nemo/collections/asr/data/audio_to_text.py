@@ -112,6 +112,7 @@ class ASRManifestProcessor:
         bos_id: Optional[int] = None,
         eos_id: Optional[int] = None,
         pad_id: int = 0,
+        ignore_numbers: bool = False,
     ):
         self.parser = parser
 
@@ -121,6 +122,7 @@ class ASRManifestProcessor:
             min_duration=min_duration,
             max_duration=max_duration,
             max_number=max_utts,
+            ignore_numbers=ignore_numbers,
         )
 
         self.eos_id = eos_id
@@ -192,6 +194,7 @@ class _AudioTextDataset(Dataset):
         bos_id: Optional[int] = None,
         eos_id: Optional[int] = None,
         pad_id: int = 0,
+        ignore_numbers=False,
     ):
         self.manifest_processor = ASRManifestProcessor(
             manifest_filepath=manifest_filepath,
@@ -202,6 +205,7 @@ class _AudioTextDataset(Dataset):
             bos_id=bos_id,
             eos_id=eos_id,
             pad_id=pad_id,
+            ignore_numbers=ignore_numbers,
         )
         self.featurizer = WaveformFeaturizer(sample_rate=sample_rate, int_values=int_values, augmentor=augmentor)
         self.trim = trim
@@ -290,6 +294,7 @@ class AudioToCharDataset(_AudioTextDataset):
         eos_id: Optional[int] = None,
         pad_id: int = 0,
         parser: Union[str, Callable] = 'en',
+        ignore_numbers=False,
     ):
         self.labels = labels
 
@@ -310,6 +315,7 @@ class AudioToCharDataset(_AudioTextDataset):
             bos_id=bos_id,
             eos_id=eos_id,
             pad_id=pad_id,
+            ignore_numbers=ignore_numbers,
         )
 
 

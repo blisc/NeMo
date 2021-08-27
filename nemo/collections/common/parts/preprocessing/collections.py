@@ -109,6 +109,7 @@ class AudioText(_Collection):
         max_number: Optional[int] = None,
         do_sort_by_duration: bool = False,
         index_by_file_id: bool = False,
+        ignore_numbers=False,
     ):
         """Instantiates audio-text manifest with filters and preprocessing.
 
@@ -146,6 +147,14 @@ class AudioText(_Collection):
                 duration_filtered += duration
                 num_filtered += 1
                 continue
+
+            if ignore_numbers:
+                import re
+
+                if re.search(r"[0-9]", text) is not None:
+                    duration_filtered += duration
+                    num_filtered += 1
+                    continue
 
             text_tokens = parser(text)
             if text_tokens is None:
