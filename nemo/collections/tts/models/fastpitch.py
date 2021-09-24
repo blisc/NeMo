@@ -88,21 +88,26 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             self.aligner = instantiate(self._cfg.alignment_module)
             self.forward_sum_loss = ForwardSumLoss()
             self.bin_loss = BinLoss()
-            self.vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.train_ds.dataset.vocab)
+            self.vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.vocab)
+            # self.vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.train_ds.dataset.vocab)
             input_fft_kwargs["n_embed"] = len(self.vocab.labels)
             input_fft_kwargs["padding_idx"] = self.vocab.pad
 
         self.preprocessor = instantiate(self._cfg.preprocessor)
 
-        input_fft = instantiate(self._cfg.input_fft, **input_fft_kwargs)
+        input_fft_sally = instantiate(self._cfg.input_fft, **input_fft_kwargs)
+        input_fft_helen = instantiate(self._cfg.input_fft, **input_fft_kwargs)
         output_fft = instantiate(self._cfg.output_fft)
-        duration_predictor = instantiate(self._cfg.duration_predictor)
+        duration_predictor_1 = instantiate(self._cfg.duration_predictor)
+        duration_predictor_2 = instantiate(self._cfg.duration_predictor)
         pitch_predictor = instantiate(self._cfg.pitch_predictor)
 
         self.fastpitch = FastPitchModule(
-            input_fft,
+            input_fft_sally,
+            input_fft_helen,
             output_fft,
-            duration_predictor,
+            duration_predictor_1,
+            duration_predictor_2,
             pitch_predictor,
             self.aligner,
             cfg.n_speakers,
@@ -131,7 +136,8 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             return self._parser
 
         if self.learn_alignment:
-            vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.train_ds.dataset.vocab)
+            vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.vocab)
+            # vocab = AudioToCharWithDursF0Dataset.make_vocab(**self._cfg.train_ds.dataset.vocab)
             self._parser = vocab.encode
         else:
             self._parser = parsers.make_parser(
@@ -165,6 +171,7 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             "attn_prior": NeuralType(('B', 'T', 'T'), ProbsType(), optional=True),
             "mel_lens": NeuralType(('B'), LengthsType(), optional=True),
             "input_lens": NeuralType(('B'), LengthsType(), optional=True),
+            "helen_mix": NeuralType(optional=True),
         }
     )
     def forward(
@@ -179,6 +186,7 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
         attn_prior=None,
         mel_lens=None,
         input_lens=None,
+        helen_mix=0.0,
     ):
         return self.fastpitch(
             text=text,
@@ -190,13 +198,16 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             attn_prior=attn_prior,
             mel_lens=mel_lens,
             input_lens=input_lens,
+            helen_mix=helen_mix,
         )
 
     @typecheck(output_types={"spect": NeuralType(('B', 'C', 'T'), MelSpectrogramType())})
-    def generate_spectrogram(self, tokens: 'torch.tensor', speaker: int = 0, pace: float = 1.0) -> torch.tensor:
+    def generate_spectrogram(
+        self, tokens: 'torch.tensor', speaker: int = 0, pace: float = 1.0, helen_mix=0.0
+    ) -> torch.tensor:
         # FIXME: return masks as well?
         self.eval()
-        spect, *_ = self(text=tokens, durs=None, pitch=None, speaker=speaker, pace=pace)
+        spect, *_ = self(text=tokens, durs=None, pitch=None, speaker=speaker, pace=pace, helen_mix=helen_mix)
         return spect
 
     def training_step(self, batch, batch_idx):
@@ -400,7 +411,7 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             attn_hard,
             attn_hard_dur,
             pitch,
-        ) = self.fastpitch(text=text)
+        ) = self.fastpitch(text=text, pace=1.0, helen_mix=1.)
         return spect.to(torch.float), num_frames, durs_predicted, log_durs_predicted, pitch_predicted
 
     @property

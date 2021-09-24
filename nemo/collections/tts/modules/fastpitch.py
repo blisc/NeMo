@@ -131,9 +131,11 @@ class TemporalPredictor(NeuralModule):
 class FastPitchModule(NeuralModule):
     def __init__(
         self,
-        encoder_module: NeuralModule,
+        encoder_sally_module: NeuralModule,
+        encoder_helen_module: NeuralModule,
         decoder_module: NeuralModule,
-        duration_predictor: NeuralModule,
+        duration_predictor_1: NeuralModule,
+        duration_predictor_2: NeuralModule,
         pitch_predictor: NeuralModule,
         aligner: NeuralModule,
         n_speakers: int,
@@ -144,9 +146,11 @@ class FastPitchModule(NeuralModule):
     ):
         super().__init__()
 
-        self.encoder = encoder_module
+        self.encoder_sally = encoder_sally_module
+        self.encoder_helen = encoder_helen_module
         self.decoder = decoder_module
-        self.duration_predictor = duration_predictor
+        self.duration_predictor_sally = duration_predictor_1
+        self.duration_predictor_helen = duration_predictor_2
         self.pitch_predictor = pitch_predictor
         self.aligner = aligner
         self.learn_alignment = aligner is not None
@@ -215,6 +219,7 @@ class FastPitchModule(NeuralModule):
         attn_prior=None,
         mel_lens=None,
         input_lens=None,
+        helen_mix=0.0,  # between 0 and 1
     ):
 
         if not self.learn_alignment and self.training:
@@ -228,10 +233,15 @@ class FastPitchModule(NeuralModule):
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(input=text, conditioning=spk_emb)
+        enc_s_out, enc_s_mask = self.encoder_sally(input=text, conditioning=spk_emb)
+        enc_h_out, enc_h_mask = self.encoder_helen(input=text, conditioning=spk_emb)
 
-        log_durs_predicted = self.duration_predictor(enc_out, enc_mask)
-        durs_predicted = torch.clamp(torch.exp(log_durs_predicted) - 1, 0, self.max_token_duration)
+        log_durs_predicted_s = self.duration_predictor_sally(enc_s_out, enc_s_mask)
+        durs_predicted_s = torch.clamp(torch.exp(log_durs_predicted_s) - 1, 0, self.max_token_duration)
+        log_durs_predicted_h = self.duration_predictor_helen(enc_h_out, enc_h_mask)
+        durs_predicted_h = torch.clamp(torch.exp(log_durs_predicted_h) - 1, 0, self.max_token_duration)
+        log_durs_predicted = log_durs_predicted_h
+        durs_predicted = helen_mix * durs_predicted_h + (1 - helen_mix) * durs_predicted_s
 
         attn_soft, attn_hard, attn_hard_dur, attn_logprob = None, None, None, None
         if self.learn_alignment and spec is not None:
@@ -241,7 +251,7 @@ class FastPitchModule(NeuralModule):
             attn_hard_dur = attn_hard.sum(2)[:, 0, :]
 
         # Predict pitch
-        pitch_predicted = self.pitch_predictor(enc_out, enc_mask)
+        pitch_predicted = self.pitch_predictor(enc_h_out, enc_h_mask)
         if pitch is not None:
             if self.learn_alignment:
                 pitch = average_pitch(pitch.unsqueeze(1), attn_hard_dur).squeeze(1)
@@ -249,7 +259,7 @@ class FastPitchModule(NeuralModule):
         else:
             pitch_emb = self.pitch_emb(pitch_predicted.unsqueeze(1))
 
-        enc_out = enc_out + pitch_emb.transpose(1, 2)
+        enc_out = enc_h_out + pitch_emb.transpose(1, 2)
 
         if self.learn_alignment and spec is not None:
             len_regulated, dec_lens = regulate_len(attn_hard_dur, enc_out, pace)
@@ -282,6 +292,10 @@ class FastPitchModule(NeuralModule):
             A tuple of input examples.
         """
         par = next(self.parameters())
-        inp = torch.randint(0, self.encoder.word_emb.num_embeddings, (1, 44), device=par.device, dtype=torch.int64)
+        inp = torch.randint(
+            0, self.encoder_helen.word_emb.num_embeddings, (1, 44), device=par.device, dtype=torch.int64
+        )
+        # helen_mix = 0.5
 
+        # return ({'text': inp, 'helen_mix': helen_mix},)
         return ({'text': inp},)
