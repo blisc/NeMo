@@ -252,6 +252,12 @@ class FastPitchModule(NeuralModule):
 
         # Predict pitch
         pitch_predicted = self.pitch_predictor(enc_h_out, enc_h_mask)
+        # # print(pitch_predicted)
+        # non_zeros = pitch_predicted != 0
+        # pitch_predicted /= 39.21287648605013 / 45.0
+        # pitch_predicted += (220.0 - 188.832507983196) / 39.21287648605013
+        # pitch_predicted *= non_zeros
+        # # print(pitch_predicted)
         if pitch is not None:
             if self.learn_alignment:
                 pitch = average_pitch(pitch.unsqueeze(1), attn_hard_dur).squeeze(1)

@@ -63,7 +63,7 @@ class G2p:
         g2p_library,
         phoneme_dict_path=None,
         use_seq2seq_for_oov=False,
-        ignore_ambiguous_words=True,
+        ignore_ambiguous_words=False,
         text_preprocessing_func=_text_preprocessing,
         word_tokenize_func=_word_tokenize,
     ):
@@ -91,7 +91,6 @@ class G2p:
                     parts = line.split('  ')
                     word = re.sub(_alt_re, '', parts[0])
                     word = word.lower()
-
                     pronunciation = parts[1].strip().split(" ")
                     if word in g2p_dict:
                         g2p_dict[word].append(pronunciation)
