@@ -92,10 +92,13 @@ class BaseTokenizer(abc.ABC):
             tokens[-1], tokens[-2] = tokens[-2], tokens[-1]
             self.oov, self.blank = self.blank, self.oov
 
+        self.sos, tokens = len(tokens), tokens + ["<sos>"]
+        self.eos, tokens = len(tokens), tokens + ["<eos>"]
+
         self.tokens = tokens
         self.sep = sep
 
-        self._util_ids = {self.pad, self.blank, self.oov}
+        self._util_ids = {self.pad, self.blank, self.oov, self.sos, self.eos}
         self._token2id = {l: i for i, l in enumerate(tokens)}
         self._id2token = tokens
 
@@ -107,9 +110,9 @@ class BaseTokenizer(abc.ABC):
         """Turns str text into int tokens."""
         pass
 
-    def decode(self, tokens: List[int]) -> str:
+    def decode(self, tokens: List[int], return_utils=False) -> str:
         """Turns ints tokens into str text."""
-        return self.sep.join(self._id2token[t] for t in tokens if t not in self._util_ids)
+        return self.sep.join(self._id2token[t] for t in tokens if (t not in self._util_ids or return_utils))
 
 
 class EnglishCharsTokenizer(BaseTokenizer):
@@ -306,5 +309,7 @@ class EnglishPhonemesTokenizer(BaseTokenizer):
 
         if self.pad_with_space:
             ps = [space] + ps + [space]
+
+        ps = [self.tokens[self.sos]] + ps + [self.tokens[self.eos]]
 
         return [self._token2id[p] for p in ps]

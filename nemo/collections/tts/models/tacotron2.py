@@ -83,58 +83,61 @@ class Tacotron2Model(SpectrogramGenerator):
 
         self._parser = None
         self.audio_to_melspec_precessor = instantiate(self._cfg.preprocessor)
-        self.text_embedding = nn.Embedding(len(cfg.labels) + 3, 512)
+        self.text_embedding = nn.Embedding(116, 512)
         self.encoder = instantiate(self._cfg.encoder)
         self.decoder = instantiate(self._cfg.decoder)
         self.postnet = instantiate(self._cfg.postnet)
         self.loss = Tacotron2Loss()
         self.calculate_loss = True
 
-    @property
-    def parser(self):
-        if self._parser is not None:
-            return self._parser
-        if self._validation_dl is not None:
-            return self._validation_dl.dataset.parser
-        if self._test_dl is not None:
-            return self._test_dl.dataset.parser
-        if self._train_dl is not None:
-            return self._train_dl.dataset.parser
+    # @property
+    # def parser(self):
+    #     if self._parser is not None:
+    #         return self._parser
+    #     if self._validation_dl is not None:
+    #         return self._validation_dl.dataset.parser
+    #     if self._test_dl is not None:
+    #         return self._test_dl.dataset.parser
+    #     if self._train_dl is not None:
+    #         return self._train_dl.dataset.parser
 
-        # Else construct a parser
-        # Try to get params from validation, test, and then train
-        params = {}
-        try:
-            params = self._cfg.validation_ds.dataset
-        except ConfigAttributeError:
-            pass
-        if params == {}:
-            try:
-                params = self._cfg.test_ds.dataset
-            except ConfigAttributeError:
-                pass
-        if params == {}:
-            try:
-                params = self._cfg.train_ds.dataset
-            except ConfigAttributeError:
-                pass
+    #     # Else construct a parser
+    #     # Try to get params from validation, test, and then train
+    #     params = {}
+    #     try:
+    #         params = self._cfg.validation_ds.dataset
+    #     except ConfigAttributeError:
+    #         pass
+    #     if params == {}:
+    #         try:
+    #             params = self._cfg.test_ds.dataset
+    #         except ConfigAttributeError:
+    #             pass
+    #     if params == {}:
+    #         try:
+    #             params = self._cfg.train_ds.dataset
+    #         except ConfigAttributeError:
+    #             pass
 
-        name = params.get('parser', None) or 'en'
-        unk_id = params.get('unk_index', None) or -1
-        blank_id = params.get('blank_index', None) or -1
-        do_normalize = params.get('normalize', None) or False
-        self._parser = parsers.make_parser(
-            labels=self._cfg.labels, name=name, unk_id=unk_id, blank_id=blank_id, do_normalize=do_normalize,
-        )
-        return self._parser
+    #     name = params.get('parser', None) or 'en'
+    #     unk_id = params.get('unk_index', None) or -1
+    #     blank_id = params.get('blank_index', None) or -1
+    #     do_normalize = params.get('normalize', None) or False
+    #     self._parser = parsers.make_parser(
+    #         labels=self._cfg.labels, name=name, unk_id=unk_id, blank_id=blank_id, do_normalize=do_normalize,
+    #     )
+    #     return self._parser
+
+    # def parse(self, str_input: str) -> torch.tensor:
+    #     tokens = self.parser(str_input)
+    #     # Parser doesn't add bos and eos ids, so maunally add it
+    #     tokens = [len(self._cfg.labels)] + tokens + [len(self._cfg.labels) + 1]
+    #     tokens_tensor = torch.tensor(tokens).unsqueeze_(0).to(self.device)
+
+    #     return tokens_tensor
 
     def parse(self, str_input: str) -> torch.tensor:
-        tokens = self.parser(str_input)
-        # Parser doesn't add bos and eos ids, so maunally add it
-        tokens = [len(self._cfg.labels)] + tokens + [len(self._cfg.labels) + 1]
-        tokens_tensor = torch.tensor(tokens).unsqueeze_(0).to(self.device)
-
-        return tokens_tensor
+        pass
 
     @property
     def input_types(self):
@@ -213,7 +216,11 @@ class Tacotron2Model(SpectrogramGenerator):
         return spectrogram_pred
 
     def training_step(self, batch, batch_idx):
-        audio, audio_len, tokens, token_len = batch
+        data_dict = batch
+        audio = data_dict["audio"]
+        audio_len = data_dict["audio_lens"]
+        tokens = data_dict["text"]
+        token_len = data_dict["text_lens"]
         spec_pred_dec, spec_pred_postnet, gate_pred, spec_target, spec_target_len, _ = self.forward(
             audio=audio, audio_len=audio_len, tokens=tokens, token_len=token_len
         )
@@ -235,7 +242,11 @@ class Tacotron2Model(SpectrogramGenerator):
         return output
 
     def validation_step(self, batch, batch_idx):
-        audio, audio_len, tokens, token_len = batch
+        data_dict = batch
+        audio = data_dict["audio"]
+        audio_len = data_dict["audio_lens"]
+        tokens = data_dict["text"]
+        token_len = data_dict["text_lens"]
         spec_pred_dec, spec_pred_postnet, gate_pred, spec_target, spec_target_len, alignments = self.forward(
             audio=audio, audio_len=audio_len, tokens=tokens, token_len=token_len
         )
@@ -289,10 +300,10 @@ class Tacotron2Model(SpectrogramGenerator):
         elif not shuffle_should_be and cfg.dataloader_params.shuffle:
             logging.error(f"The {name} dataloader for {self} has shuffle set to True!!!")
 
-        labels = self._cfg.labels
+        # labels = self._cfg.labels
 
         dataset = instantiate(
-            cfg.dataset, labels=labels, bos_id=len(labels), eos_id=len(labels) + 1, pad_id=len(labels) + 2
+            cfg.dataset,  #  labels=labels, bos_id=len(labels), eos_id=len(labels) + 1, pad_id=len(labels) + 2
         )
         return torch.utils.data.DataLoader(dataset, collate_fn=dataset.collate_fn, **cfg.dataloader_params)
 
