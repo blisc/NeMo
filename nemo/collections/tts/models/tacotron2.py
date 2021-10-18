@@ -216,11 +216,12 @@ class Tacotron2Model(SpectrogramGenerator):
         return spectrogram_pred
 
     def training_step(self, batch, batch_idx):
-        data_dict = batch
-        audio = data_dict["audio"]
-        audio_len = data_dict["audio_lens"]
-        tokens = data_dict["text"]
-        token_len = data_dict["text_lens"]
+        # data_dict = batch
+        # audio = data_dict["audio"]
+        # audio_len = data_dict["audio_lens"]
+        # tokens = data_dict["text"]
+        # token_len = data_dict["text_lens"]
+        audio, audio_len, tokens, token_len = batch
         spec_pred_dec, spec_pred_postnet, gate_pred, spec_target, spec_target_len, _ = self.forward(
             audio=audio, audio_len=audio_len, tokens=tokens, token_len=token_len
         )
@@ -242,11 +243,12 @@ class Tacotron2Model(SpectrogramGenerator):
         return output
 
     def validation_step(self, batch, batch_idx):
-        data_dict = batch
-        audio = data_dict["audio"]
-        audio_len = data_dict["audio_lens"]
-        tokens = data_dict["text"]
-        token_len = data_dict["text_lens"]
+        # data_dict = batch
+        # audio = data_dict["audio"]
+        # audio_len = data_dict["audio_lens"]
+        # tokens = data_dict["text"]
+        # token_len = data_dict["text_lens"]
+        audio, audio_len, tokens, token_len = batch
         spec_pred_dec, spec_pred_postnet, gate_pred, spec_target, spec_target_len, alignments = self.forward(
             audio=audio, audio_len=audio_len, tokens=tokens, token_len=token_len
         )
