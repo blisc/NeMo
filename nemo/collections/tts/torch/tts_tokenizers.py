@@ -81,6 +81,7 @@ class BaseCharsTokenizer(BaseTokenizer):
         ':', ';', '/', '"', '(',
         ')', '[', ']', '{', '}',
     )
+    UNICODE_LOOKUP = {}
     # fmt: on
 
     def __init__(
@@ -138,6 +139,8 @@ class BaseCharsTokenizer(BaseTokenizer):
             # Add punct
             elif (c in self.PUNCT_LIST) and self.punct:
                 cs.append(c)
+            elif (c in self.UNICODE_LOOKUP) and self.UNICODE_LOOKUP[c] in tokens:
+                cs.append(self.UNICODE_LOOKUP[c])
             # Warn about unknown char
             elif c != space:
                 logging.warning(f"Text: [{text}] contains unknown char: [{c}]. Symbol will be skipped.")
@@ -153,6 +156,8 @@ class BaseCharsTokenizer(BaseTokenizer):
 
 
 class EnglishCharsTokenizer(BaseCharsTokenizer):
+    UNICODE_LOOKUP = {'—': '-'}
+
     def __init__(
         self,
         punct=True,
@@ -244,6 +249,7 @@ class EnglishPhonemesTokenizer(BaseTokenizer):
         'NG', 'P', 'R', 'S', 'SH', 'T',
         'TH', 'V', 'W', 'Y', 'Z', 'ZH',
     )
+    UNICODE_LOOKUP = {'—': '-'}
     # fmt: on
 
     def __init__(
@@ -346,6 +352,8 @@ class EnglishPhonemesTokenizer(BaseTokenizer):
             # Add punct
             elif (p in self.PUNCT_LIST) and self.punct:
                 ps.append(p)
+            elif (p in self.UNICODE_LOOKUP) and self.UNICODE_LOOKUP[p] in tokens:
+                ps.append(self.UNICODE_LOOKUP[p])
             # Warn about unknown char/phoneme
             elif p != space:
                 logging.warning(

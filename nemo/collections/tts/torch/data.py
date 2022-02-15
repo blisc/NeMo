@@ -17,6 +17,7 @@ import json
 import math
 import pickle
 import random
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Union
 
@@ -168,7 +169,8 @@ class TTSDataset(Dataset):
 
         data = []
         total_duration = 0
-        for manifest_file in self.manifest_filepath:
+        total_manifests = len(self.manifest_filepath)
+        for i, manifest_file in enumerate(self.manifest_filepath):
             with open(Path(manifest_file).expanduser(), 'r') as f:
                 logging.info(f"Loading dataset from {manifest_file}.")
                 for line in tqdm(f):
@@ -181,6 +183,8 @@ class TTSDataset(Dataset):
                         "duration": item["duration"] if "duration" in item else None,
                         "speaker_id": item["speaker"] if "speaker" in item else None,
                     }
+                    if total_manifests > 1:
+                        file_info["speaker_id"] = i
 
                     if "normalized_text" not in item:
                         text = item["text"]
@@ -468,9 +472,15 @@ class TTSDataset(Dataset):
                 torch.save(pitch, pitch_path)
 
             if self.pitch_mean is not None and self.pitch_std is not None and self.pitch_norm:
-                pitch -= self.pitch_mean
-                pitch[pitch == -self.pitch_mean] = 0.0  # Zero out values that were perviously zero
-                pitch /= self.pitch_std
+                if isinstance(self.pitch_mean, Iterable):
+                    idx = int(sample["speaker_id"])
+                    pitch -= self.pitch_mean[idx]
+                    pitch[pitch == -self.pitch_mean[idx]] = 0.0  # Zero out values that were perviously zero
+                    pitch /= self.pitch_std[idx]
+                else:
+                    pitch -= self.pitch_mean
+                    pitch[pitch == -self.pitch_mean] = 0.0  # Zero out values that were perviously zero
+                    pitch /= self.pitch_std
 
             pitch_length = torch.tensor(len(pitch)).long()
 
