@@ -995,7 +995,11 @@ class ModelPT(LightningModule, Model):
                         model_path, map_location=map_location, strict=cfg.get("init_strict", True)
                     )
                     # Restore checkpoint into current model
-                    self.load_state_dict(restored_model.state_dict(), strict=False)
+                    state_dict = restored_model.state_dict()
+                    state_dict['fastpitch.speaker_emb.weight'] = torch.cat(
+                        [state_dict['fastpitch.speaker_emb.weight'], torch.zeros([1, 384])]
+                    )
+                    self.load_state_dict(state_dict, strict=False)
                     logging.info(f'Model checkpoint restored from nemo file with path : `{model_path}`')
                     del restored_model
                 elif isinstance(cfg.init_from_nemo_model, (DictConfig, dict)):
