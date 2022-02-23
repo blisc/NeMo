@@ -395,12 +395,13 @@ class TTSDataset(Dataset):
         sample = self.data[index]
 
         # Let's keep audio name and all internal directories in rel_audio_path_as_text_id to avoid any collisions
-        try:
-            rel_audio_path = (
-                Path(sample["audio_filepath"]).relative_to(self.base_data_dir / "RIVA-TTS").with_suffix("")
-            )
-        except ValueError:
-            rel_audio_path = Path(sample["audio_filepath"]).relative_to(self.base_data_dir).with_suffix("")
+        # try:
+        #     rel_audio_path = (
+        #         Path(sample["audio_filepath"]).relative_to(self.base_data_dir / "RIVA-TTS").with_suffix("")
+        #     )
+        # except ValueError:
+        #     rel_audio_path = Path(sample["audio_filepath"]).relative_to("/mnt/ssd2/data/").with_suffix("")
+        rel_audio_path = Path(sample["audio_filepath"]).relative_to(self.base_data_dir).with_suffix("")
         rel_audio_path_as_text_id = str(rel_audio_path).replace("/", "_")
 
         # Load audio

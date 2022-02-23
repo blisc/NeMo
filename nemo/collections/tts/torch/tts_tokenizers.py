@@ -249,7 +249,7 @@ class EnglishPhonemesTokenizer(BaseTokenizer):
         'NG', 'P', 'R', 'S', 'SH', 'T',
         'TH', 'V', 'W', 'Y', 'Z', 'ZH',
     )
-    UNICODE_LOOKUP = {'—': '-'}
+    UNICODE_LOOKUP = {'—': '-', '’': "'"}
     # fmt: on
 
     def __init__(

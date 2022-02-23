@@ -996,9 +996,9 @@ class ModelPT(LightningModule, Model):
                     )
                     # Restore checkpoint into current model
                     state_dict = restored_model.state_dict()
-                    state_dict['fastpitch.speaker_emb.weight'] = torch.cat(
-                        [state_dict['fastpitch.speaker_emb.weight'], torch.zeros([1, 384])]
-                    )
+                    # state_dict['fastpitch.speaker_emb.weight'] = torch.cat(
+                    #     [state_dict['fastpitch.speaker_emb.weight'], torch.zeros([1, 384])]
+                    # )
                     self.load_state_dict(state_dict, strict=False)
                     logging.info(f'Model checkpoint restored from nemo file with path : `{model_path}`')
                     del restored_model
