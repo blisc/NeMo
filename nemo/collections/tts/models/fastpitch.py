@@ -511,15 +511,16 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
 
         return list_of_models
 
-    # Methods for model exportability
     def _prepare_for_export(self, **kwargs):
         super()._prepare_for_export(**kwargs)
 
         # Define input_types and output_types as required by export()
         self._input_types = {
-            "text": NeuralType(('B', 'T_text'), TokenIndex()),
-            "pitch": NeuralType(('B', 'T_text'), RegressionValuesType()),
-            "pace": NeuralType(('B', 'T_text'), optional=True),
+            "text": NeuralType(('T'), TokenIndex()),
+            "pitch": NeuralType(('T'), RegressionValuesType()),
+            "pace": NeuralType(('T'), optional=True),
+            # "volume": NeuralType(('T_text')),
+            "batch_lengths": NeuralType(('B'), Index()),
             "speaker": NeuralType(('B'), Index()),
         }
         self._output_types = {
@@ -528,6 +529,7 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             "durs_predicted": NeuralType(('B', 'T_text'), TokenDurationType()),
             "log_durs_predicted": NeuralType(('B', 'T_text'), TokenLogDurationType()),
             "pitch_predicted": NeuralType(('B', 'T_text'), RegressionValuesType()),
+            # "volume_aligned": NeuralType(('B', 'T_spec'), RegressionValuesType()),
         }
 
     def _export_teardown(self):
@@ -549,21 +551,39 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
     def output_types(self):
         return self._output_types
 
-    def input_example(self, max_batch=1, max_dim=256):
+    def input_example(self, max_batch=1, max_dim=44):
         """
         Generates input examples for tracing etc.
         Returns:
             A tuple of input examples.
         """
+        print(f"batch : {max_batch}")
+        print(f"dim :{max_dim}")
         par = next(self.fastpitch.parameters())
-        sz = (max_batch, max_dim)
+        sz = max_batch * max_dim
         inp = torch.randint(
-            0, self.fastpitch.encoder.word_emb.num_embeddings, sz, device=par.device, dtype=torch.int64
+            0, self.fastpitch.encoder.word_emb.num_embeddings, (sz,), device=par.device, dtype=torch.int64
         )
-        pitch = torch.randn(sz, device=par.device, dtype=torch.float32) * 0.5
-        pace = torch.clamp((torch.randn(sz, device=par.device, dtype=torch.float32) + 1) * 0.1, min=0.01)
+        pitch = torch.randn((sz,), device=par.device, dtype=torch.float32) * 0.5
+        pace = torch.clamp((torch.randn((sz,), device=par.device, dtype=torch.float32) + 1) * 0.1, min=0.01)
+        volume = torch.clamp((torch.randn((sz,), device=par.device, dtype=torch.float32) + 1) * 0.1, min=0.01)
+        batch_lengths = torch.zeros((max_batch + 1), device=par.device, dtype=torch.int32)
+        left_over_size = sz
+        batch_lengths[0] = 0
+        for i in range(1, max_batch):
+            length = torch.randint(1, left_over_size - (max_batch - i), (1,), device=par.device)
+            batch_lengths[i] = length + batch_lengths[i - 1]
+            left_over_size -= length.detach().cpu().numpy()[0]
+        batch_lengths[-1] = left_over_size + batch_lengths[-2]
 
-        inputs = {'text': inp, 'pitch': pitch, 'pace': pace}
+        # sum = 0
+        # index = 1
+        # while index < len(batch_lengths):
+        #     sum += batch_lengths[index] - batch_lengths[index - 1]
+        #     index += 1
+        # assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
+
+        inputs = {'text': inp, 'pitch': pitch, 'pace': pace, 'batch_lengths': batch_lengths}
 
         if self.fastpitch.speaker_emb is not None:
             inputs['speaker'] = torch.randint(
@@ -572,5 +592,57 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
 
         return (inputs,)
 
-    def forward_for_export(self, text, pitch, pace, speaker=None):
+    def forward_for_export(self, text, pitch, pace, batch_lengths, speaker=None):
+        text, pitch, pace = self.create_batch(text, pitch, pace, batch_lengths)
+        print(f"text.shape: {text.shape}")
+        print(f"pitch.shape: {pitch.shape}")
+        print(f"pace.shape: {pace.shape}")
+        print(f"text.dtype: {text.dtype}")
+        print(f"pitch.dtype: {pitch.dtype}")
+        print(f"pace.dtype: {pace.dtype}")
         return self.fastpitch.infer(text=text, pitch=pitch, pace=pace, speaker=speaker)
+
+    def create_batch(self, text, pitch, pace, batch_lengths):
+        texts = []
+        pitches = []
+        paces = []
+        # volumes = []
+        index = 1
+        max_len = -1
+
+        while index < len(batch_lengths):
+            seq_start = batch_lengths[index - 1]
+            seq_end = batch_lengths[index]
+            cur_seq_len = seq_end - seq_start
+            if cur_seq_len > max_len:
+                max_len = cur_seq_len
+
+            texts.append(text[seq_start:seq_end])
+            pitches.append(pitch[seq_start:seq_end])
+            paces.append(pace[seq_start:seq_end])
+            # volumes.append(volume[seq_start:seq_end])
+            index += 1
+
+        pad_value = torch.tensor(self.fastpitch.encoder.padding_idx, dtype=torch.int64)
+        padded_texts = [
+            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=pad_value)
+            for tensor in texts
+        ]
+        texts = torch.stack((padded_texts), dim=0)
+        padded_pitches = [
+            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=0.0)
+            for tensor in pitches
+        ]
+        pitches = torch.stack((padded_pitches), dim=0)
+        padded_paces = [
+            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0)
+            for tensor in paces
+        ]
+        paces = torch.stack((padded_paces), dim=0)
+        # padded_volumes = [
+        #     torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0)
+        #     for tensor in volumes
+        # ]
+        # volumes = torch.stack((padded_volumes), dim=0)
+
+        return texts, pitches, paces
