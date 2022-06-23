@@ -576,12 +576,15 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             left_over_size -= length.detach().cpu().numpy()[0]
         batch_lengths[-1] = left_over_size + batch_lengths[-2]
 
-        # sum = 0
-        # index = 1
-        # while index < len(batch_lengths):
-        #     sum += batch_lengths[index] - batch_lengths[index - 1]
-        #     index += 1
-        # assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
+        sum = 0
+        index = 1
+        while index < len(batch_lengths):
+            sum += batch_lengths[index] - batch_lengths[index - 1]
+            index += 1
+        assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
+
+        print(f"inp.shape :{inp.shape}")
+        print(inp)
 
         inputs = {'text': inp, 'pitch': pitch, 'pace': pace, 'batch_lengths': batch_lengths}
 
@@ -594,12 +597,6 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
 
     def forward_for_export(self, text, pitch, pace, batch_lengths, speaker=None):
         text, pitch, pace = self.create_batch(text, pitch, pace, batch_lengths)
-        print(f"text.shape: {text.shape}")
-        print(f"pitch.shape: {pitch.shape}")
-        print(f"pace.shape: {pace.shape}")
-        print(f"text.dtype: {text.dtype}")
-        print(f"pitch.dtype: {pitch.dtype}")
-        print(f"pace.dtype: {pace.dtype}")
         return self.fastpitch.infer(text=text, pitch=pitch, pace=pace, speaker=speaker)
 
     def create_batch(self, text, pitch, pace, batch_lengths):
