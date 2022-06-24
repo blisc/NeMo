@@ -132,7 +132,7 @@ def verify_runtime(
     ort_out = sess.run(output_names, to_onnxrt_input(input_names, input_dict, input_list))
     all_good = True
 
-    for i, out in enumerate(ort_out[0]):
+    for i, out in enumerate(ort_out):
         expected = output_example[i]
         if torch.is_tensor(expected):
             tout = torch.from_numpy(out)

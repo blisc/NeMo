@@ -302,4 +302,5 @@ class FastPitchModule(NeuralModule):
         # Output FFT
         dec_out, _ = self.decoder(input=len_regulated, seq_lens=dec_lens)
         spect = self.proj(dec_out).transpose(1, 2)
+        print(spect.shape)
         return spect.to(torch.float), dec_lens, durs_predicted, log_durs_predicted, pitch_predicted
