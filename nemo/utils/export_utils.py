@@ -136,8 +136,6 @@ def verify_runtime(
         expected = output_example[i]
         if torch.is_tensor(expected):
             tout = torch.from_numpy(out)
-            print(expected.shape)
-            print(tout.shape)
             if not torch.allclose(tout, expected.cpu(), rtol=check_tolerance, atol=100 * check_tolerance):
                 all_good = False
                 logging.info(f"onnxruntime results mismatch! PyTorch(expected):\n{expected}\nONNXruntime:\n{tout}")

@@ -558,8 +558,6 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
         Returns:
             A tuple of input examples.
         """
-        print(f"batch : {max_batch}")
-        print(f"dim :{max_dim}")
         par = next(self.fastpitch.parameters())
         sz = max_batch * max_dim
         inp = torch.randint(
@@ -592,9 +590,6 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             index += 1
         assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
 
-        print(f"inp.shape :{inp.shape}")
-        print(inp)
-
         inputs = {'text': inp, 'pitch': pitch, 'pace': pace, 'batch_lengths': batch_lengths}
 
         if self.fastpitch.speaker_emb is not None:
@@ -608,12 +603,6 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
         text, pitch, pace = create_batch(
             text, pitch, pace, batch_lengths, padding_idx=self.fastpitch.encoder.padding_idx
         )
-        print(text.shape)
-        print(text)
-        print(pitch.shape)
-        print(pitch)
-        print(pace.shape)
-        print(pace)
         return self.fastpitch.infer(text=text, pitch=pitch, pace=pace, speaker=speaker)
 
 
@@ -624,20 +613,8 @@ def create_batch(
 ):
     batch_lengths = batch_lengths.to(torch.int64)
     # offsets = torch.stack((batch_lengths[:-1], batch_lengths[1:])).transpose(0, 1)
-    # max_len = torch.max(batch_lengths[1:] - batch_lengths[:-1])
+    max_len = torch.max(batch_lengths[1:] - batch_lengths[:-1])
     # print(offsets)
-    # print(max_len)
-
-    max_len = -1
-    index = 1
-
-    while index < batch_lengths.shape[0]:
-        seq_start = batch_lengths[index - 1]
-        seq_end = batch_lengths[index]
-        cur_seq_len = seq_end - seq_start
-        if cur_seq_len > max_len:
-            max_len = cur_seq_len
-        index += 1
 
     index = 1
     texts = torch.zeros(batch_lengths.shape[0] - 1, max_len, dtype=torch.int64, device=text.device) + padding_idx
@@ -649,12 +626,9 @@ def create_batch(
         seq_end = batch_lengths[index]
         cur_seq_len = seq_end - seq_start
 
-        print(f"seq_start: {seq_start}")
-        print(f"seq_end: {seq_end}")
         texts[index - 1, :cur_seq_len] = text[seq_start:seq_end]
         pitches[index - 1, :cur_seq_len] = pitch[seq_start:seq_end]
         paces[index - 1, :cur_seq_len] = pace[seq_start:seq_end]
-        # volumes.append(volume[seq_start:seq_end])
 
         index += 1
 
