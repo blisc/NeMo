@@ -576,12 +576,13 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
             left_over_size -= length.detach().cpu().numpy()[0]
         batch_lengths[-1] = left_over_size + batch_lengths[-2]
 
-        sum = 0
-        index = 1
-        while index < len(batch_lengths):
-            sum += batch_lengths[index] - batch_lengths[index - 1]
-            index += 1
-        assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
+        # sum = 0
+        # seq_start = 0
+        # for length in batch_lengths:
+        #     seq_end = length
+        #     sum += seq_end - seq_start
+        #     seq_start = seq_end
+        # assert sum == sz, f"sum: {sum}, sz: {sz}, lengths:{batch_lengths}"
 
         print(f"inp.shape :{inp.shape}")
         print(inp)
@@ -596,50 +597,61 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
         return (inputs,)
 
     def forward_for_export(self, text, pitch, pace, batch_lengths, speaker=None):
-        text, pitch, pace = self.create_batch(text, pitch, pace, batch_lengths)
+        text, pitch, pace = create_batch(
+            text, pitch, pace, batch_lengths, padding_idx=self.fastpitch.encoder.padding_idx
+        )
         return self.fastpitch.infer(text=text, pitch=pitch, pace=pace, speaker=speaker)
 
-    def create_batch(self, text, pitch, pace, batch_lengths):
-        texts = []
-        pitches = []
-        paces = []
-        # volumes = []
-        index = 1
-        max_len = -1
 
-        while index < len(batch_lengths):
-            seq_start = batch_lengths[index - 1]
-            seq_end = batch_lengths[index]
-            cur_seq_len = seq_end - seq_start
-            if cur_seq_len > max_len:
-                max_len = cur_seq_len
+@torch.jit.script
+def create_batch(text, pitch, pace, batch_lengths, padding_idx: int):
+    batch_lengths = batch_lengths.to(torch.int64)
+    texts = []
+    pitches = []
+    paces = []
+    # volumes = []
+    seq_start = 0
+    lengths = []
 
-            texts.append(text[seq_start:seq_end])
-            pitches.append(pitch[seq_start:seq_end])
-            paces.append(pace[seq_start:seq_end])
-            # volumes.append(volume[seq_start:seq_end])
-            index += 1
+    index = 1
+    lengths = []
 
-        pad_value = torch.tensor(self.fastpitch.encoder.padding_idx, dtype=torch.int64)
-        padded_texts = [
-            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=pad_value)
-            for tensor in texts
-        ]
-        texts = torch.stack((padded_texts), dim=0)
-        padded_pitches = [
-            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=0.0)
-            for tensor in pitches
-        ]
-        pitches = torch.stack((padded_pitches), dim=0)
-        padded_paces = [
-            torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0)
-            for tensor in paces
-        ]
-        paces = torch.stack((padded_paces), dim=0)
-        # padded_volumes = [
-        #     torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0)
-        #     for tensor in volumes
-        # ]
-        # volumes = torch.stack((padded_volumes), dim=0)
+    # for length in batch_lengths:
+    #     seq_end = length
+    #     cur_seq_len = seq_end - seq_start
+    while index < batch_lengths.shape[0]:
+        seq_start = batch_lengths[index - 1]
+        seq_end = batch_lengths[index]
+        cur_seq_len = seq_end - seq_start
 
-        return texts, pitches, paces
+        print(f"seq_start: {seq_start}")
+        print(f"seq_end: {seq_end}")
+        lengths.append(cur_seq_len)
+        texts.append(text[seq_start:seq_end])
+        pitches.append(pitch[seq_start:seq_end])
+        paces.append(pace[seq_start:seq_end])
+        # volumes.append(volume[seq_start:seq_end])
+        index += 1
+
+    max_len = torch.max(torch.stack(lengths))
+
+    padded_texts = [
+        torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=int(padding_idx))
+        for tensor in texts
+    ]
+    texts = torch.stack((padded_texts), dim=0)
+    padded_pitches = [
+        torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=0.0) for tensor in pitches
+    ]
+    pitches = torch.stack((padded_pitches), dim=0)
+    padded_paces = [
+        torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0) for tensor in paces
+    ]
+    paces = torch.stack((padded_paces), dim=0)
+    # padded_volumes = [
+    #     torch.nn.functional.pad(input=tensor, pad=(0, int(max_len - tensor.size(0))), value=1.0)
+    #     for tensor in volumes
+    # ]
+    # volumes = torch.stack((padded_volumes), dim=0)
+
+    return texts, pitches, paces
