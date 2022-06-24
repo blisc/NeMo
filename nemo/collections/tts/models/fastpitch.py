@@ -617,6 +617,7 @@ class FastPitchModel(SpectrogramGenerator, Exportable):
         return self.fastpitch.infer(text=text, pitch=pitch, pace=pace, speaker=speaker)
 
 
+# This works
 @torch.jit.script
 def create_batch(
     text: torch.Tensor, pitch: torch.Tensor, pace: torch.Tensor, batch_lengths: torch.Tensor, padding_idx: int = -1
@@ -660,6 +661,7 @@ def create_batch(
     return texts, pitches, paces
 
 
+# This doesn't work yet
 # @torch.jit.script
 # def create_batch(
 #     text: torch.Tensor, pitch: torch.Tensor, pace: torch.Tensor, batch_lengths: torch.Tensor, padding_idx: int = -1
