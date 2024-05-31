@@ -377,14 +377,18 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
         # TODO: Fix this once apex patches FusedScaledMaskedSoftmax.
         # This is a workaround for the fact that `masked_softmax_fusion` has issues with certain input sizes that may be present while finetuning.
-        if cfg.get('language_model_path', None):
-            t5_cfg = MegatronT5Model.restore_from(
-                cfg.get('language_model_path'), trainer=trainer, return_config=True
+        cfg_language_model_path = cfg.get('language_model_path', None)
+        cfg_frozen_model = cfg.get('frozen_model', None)
+        if not (bool(cfg_language_model_path) ^ bool(cfg_frozen_model)):
+            raise ValueError(
+                "T5-TTS requires either 'language_model_path' or 'frozen_model' in its config, but not both."
             )
-        elif cfg.get('frozen_model', None):
-            t5_cfg = cfg["frozen_model"]
+
+        if cfg_language_model_path:
+            t5_cfg = MegatronT5Model.restore_from(cfg_language_model_path, trainer=trainer, return_config=True)
         else:
-            raise ValueError("T5-TTS requires either 'language_model_path' or 'frozen_model' in its config.")
+            t5_cfg = cfg_frozen_model
+
         OmegaConf.set_struct(t5_cfg, True)
         with open_dict(t5_cfg):
             if hasattr(t5_cfg, 'encoder') and hasattr(t5_cfg, 'decoder'):
@@ -428,9 +432,14 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             num_params = sum(p.numel() for p in self.frozen_model.parameters() if p.requires_grad)
             print(f"Number of parameters: {num_params}")
         else:
-            print("Loading from pretrained checkpoint!")
+            print(f"Loading from pretrained checkpoint: {cfg_language_model_path}")
+            if cfg_language_model_path is None:
+                raise ValueError(
+                    "T5-TTS SFT on pretrained model checkpoint requires `langauge_model_path` in its config."
+                )
+
             self.frozen_model = MegatronT5OverrideModel.restore_from(
-                cfg.get('language_model_path'),
+                cfg_language_model_path,
                 trainer=trainer,
                 override_config_path=t5_cfg,
                 save_restore_connector=NLPSaveRestoreConnector(),
