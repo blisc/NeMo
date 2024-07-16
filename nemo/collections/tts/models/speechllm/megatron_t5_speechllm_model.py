@@ -369,11 +369,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         return output, encoder_input, out_logits
 
     def load_frozen_model(self, cfg, trainer):
-        self.megatron_amp_O2 = cfg.get('megatron_amp_o2', None)
-        if self.megatron_amp_O2 == None:
-            self.megatron_amp_O2 = cfg.get('megatron_amp_O2', None)
-        if self.megatron_amp_O2 == None:
-            self.megatron_amp_O2 = False
+        self.megatron_amp_O2 = cfg.get('megatron_amp_o2', False)
 
         # TODO: Fix this once apex patches FusedScaledMaskedSoftmax.
         # This is a workaround for the fact that `masked_softmax_fusion` has issues with certain input sizes that may be present while finetuning.
