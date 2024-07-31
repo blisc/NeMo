@@ -417,7 +417,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 'num_attention_heads',  # 12
                 'hidden_dropout',  # 0.1
                 'attention_dropout',  # 0.1
-                'kv_channels' 'ffn_hidden_size',  # 64  # 2048
+                'kv_channels',  # 64
+                'ffn_hidden_size',  # 2048
             ]
             # Defaults for 220m model
             for k in overide_keys:
