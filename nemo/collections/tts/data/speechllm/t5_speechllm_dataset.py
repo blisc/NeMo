@@ -508,6 +508,7 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
             context_tokens[0] = context_tokens[0][:, :end_token_index]
 
         # Get virtual tokens
+        # `virtual_tokens` is "<prompt_0><prompt_1><prompt_2>".
         virtual_tokens = self._insert_virtual_token_placeholders(input_example.split(' ')[0], virtual_token_splits)
         # print("virtual_tokens", virtual_tokens)
 
@@ -590,10 +591,12 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
         dec_input = None
         dec_labels = None
 
+        # answer_text_ids  = [CLS_id, context audio code tensors, zero-pad, answer audio code tensor, SEP_id]
         if answer_field in doc.keys():  # training and validation
             dec_input = answer_text_ids[:-1]
             dec_labels = answer_text_ids[1:]
 
+        # dec_input: shape=(self.num_speech_codebooks, 1 + len(context audio frames) + 1 + len(answer audio frames))
         dec_input, dec_input_len = self.list_to_tensor(dec_input, True)
         dec_labels, dec_labels_len = self.list_to_tensor(dec_labels, True)
         is_speech = True if doc["answer_type"] != "TEXT" else False
@@ -672,20 +675,20 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
         else:
             context_and_question_len = context_tokens_len + question_tokens_len
         return (
-            taskname_id,
-            virtual_tokens,
-            virtual_tokens_len,
-            context_tokens_len,
-            context_and_question_tokens,
-            context_and_question_len,
-            dec_input,
-            dec_input_len,
-            dec_labels,
-            dec_labels_len,
-            is_speech,
-            cross_attention_prior,
-            lang.value,
-            question_text,
+            taskname_id,  # List, only one item. token id for "squad"
+            virtual_tokens,  # Tensor, shape=(3,). token id for ['<prompt_0>', '<prompt_1>', '<prompt_2>']
+            virtual_tokens_len,  # tensor, 3
+            context_tokens_len,  # tensor, 1
+            context_and_question_tokens,  # tensor, shape=(self.num_speech_codebooks, 1(context) + question len + 1(<extra_id_0>) + 1([SEP])). only first row includes token ids while all other rows are all zeros (pad).
+            context_and_question_len,  # tensor scalar, 1 + (question len + 1 + 1).
+            dec_input,  # tensor, shape=(self.num_speech_codebooks, 1 CLS + context audio frame len + 1 pad + answer audio frame len), first column is [CLS_id, 0*7]^T
+            dec_input_len,  # scalar tensor, 1 CLS + context audio frame len + 1 pad + answer audio frame len. 1 corresponds to CLS id
+            dec_labels,  # tensor, shape=(self.num_speech_codebooks, context audio frame len + 1 pad + answer frame len + 1 SEP).
+            dec_labels_len,  # tensor, context audio frame len + 1 PAD + answer frame len + 1 SEP.  1 corresponds to SEP id.
+            is_speech,  # True
+            cross_attention_prior,  # tensor, shape=(dec_labels_len, context_tokens_len + question_tokens_len + virtual_tokens_len).
+            lang.value,  # int,
+            question_text,  # str, answer transcript without question type (Phoneme TTS or Text to speech this).
         )
 
     def _truncate_input_speech(self, context_tokens, question_tokens, virtual_tokens):
@@ -891,6 +894,7 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
                 # _fixed_context_len = int(self.context_duration_min * self.codebook_fps)
                 field_tokens = field_tokens + [self.tokenizer.eos_id]
             else:
+                # if starts with Text to speech this
                 field_tokens = self._get_text_tokens(field_data.strip(" "))  # list of ids
         elif doc[f"{field}_type"] == 'SPEECH':
             dur = -1
@@ -1295,7 +1299,7 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
             "cross_attention_prior": torch.stack(cross_attention_prior_list)
             if len(cross_attention_prior_list) > 0
             else None,
-            "text_limits": torch.stack(text_limits) if len(text_limits) > 0 else None,
+            "text_limits": torch.stack(text_limits) if len(text_limits) > 0 else None,  # tensor, valid range of answer transcripts without virtual/instruction/end tokens.
             "lang": torch.stack(lang_list),
             "question_texts": question_texts,
         }

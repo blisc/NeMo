@@ -27,6 +27,7 @@ from nemo.utils.exp_manager import exp_manager
 def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
+    # logging.set_verbosity(logging.DEBUG)
 
     # MegatronTrainerBuilder compat checks
     if "gradient_as_bucket_view" not in cfg.model:
