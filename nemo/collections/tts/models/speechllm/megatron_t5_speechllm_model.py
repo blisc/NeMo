@@ -1758,7 +1758,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     
                     output_tensor = fwd_bwd_function(
                         forward_step_func=self.get_forward_output_only_func(),
-                        data_iterator=iter([batch,]),
+                        data_iterator=iter([batch, ]),
                         model=[self],
                         num_microbatches=get_num_microbatches(),
                         forward_only=True,
