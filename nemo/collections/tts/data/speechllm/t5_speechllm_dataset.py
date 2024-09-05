@@ -465,7 +465,15 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
 
         # Format the input example according to the template
         # Get context, question and answer codes in a dict.
-        question_text = doc["question"].replace("Phoneme TTS", "").replace("Text to speech this", "").strip()
+        # TODO @xueyang: declare the instructions when initializing the dataset so that they can be re-used. Temporally
+        #  hardcode them here.
+        question_text = doc["question"].strip()
+        instructions = ["Phoneme TTS", "Text to speech this"]
+        for prefix in instructions:
+            if doc["question"].startswith(prefix):
+                question_text = doc["question"][len(prefix):].strip()
+                break
+
         input_dict = self._insert_data_in_template(prompt_template_fields, doc, answer_field)
         lang = Lang[doc.get("lang", "en")]
         context_tokens = input_dict['context']
@@ -849,12 +857,12 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
             if _text.startswith("Phoneme TTS"):
                 lang = doc.get("lang", "en")
                 instruction_tokens = self._get_text_tokens("Phoneme TTS")
-                field_tokens = self._get_phoneme_tokens(_text.replace("Phoneme TTS ", ""), lang=lang)
+                field_tokens = self._get_phoneme_tokens(_text[len("Phoneme TTS"):].strip(), lang=lang)
                 field_tokens = instruction_tokens + field_tokens
             elif _text.startswith("Edit Speech"):
                 # Always use phoneme tokenizer for edit speech
                 instruction_tokens = self._get_text_tokens("Edit Speech")
-                field_tokens = self._get_phoneme_tokens(_text.replace("Edit Speech ", ""))
+                field_tokens = self._get_phoneme_tokens(_text[len("Edit Speech"):].strip())
                 field_tokens = instruction_tokens + field_tokens
             elif _text.startswith("TEXT CONTEXT:"):
                 # Speaker id conditioning
