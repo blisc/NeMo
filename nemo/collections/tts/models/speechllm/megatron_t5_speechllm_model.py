@@ -279,17 +279,23 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         self.predict_step_outputs = []
         self.phoneme_tokenizer = None
 
-        # classifier-free guidance (CFG) option. The probability (0.0 <= ε <= 1.0) is used to trigger the action that the
+        # classifier-free guidance (CFG) option during training. The probability (0.0 <= ε <= 1.0) is used to trigger the action that the
         # question tokens in a batch are replaced by [UNK] tokens, such that mimicking the transcript-free scenario.
         # If a random number is greater than ε, then keep questions tokens as-is, otherwise, the question tokens are
         # replaced by [UNK]. Default to 0.0, meaning CFG is disabled.
-        self.question_free_guidance_prob = cfg.get('question_free_guidance_prob', 0.0)
+        self.text_cfg_prob = cfg.get('text_cfg_prob', 0.0)
+        self.audio_cfg_prob = cfg.get('audio_cfg_prob', 0.0)
         self._rng = random.Random()
 
-        # control the strength of the classifier guidance, Logits_cfg = w*Logits_cond + (1-w)*Logits_uncond,
+        # control the strength of the classifier guidance during inference, Logits_cfg = w*Logits_cond + (1-w)*Logits_uncond,
         # equivalent to Logits_cfg = Logits_cond + alpha*(Logits_cond - Logits_uncond) where alpha=w-1.
-        # Default w to 1.O.
-        self.question_guidance_scale = cfg.get('question_guidance_scale', 1.0)
+        # Default w to 1.O, indicating no interpolation is applied.
+        self.cfg_interpolation_scale = cfg.get('cfg_interpolation_scale', 1.0)
+        self.apply_text_cfg = cfg.get('apply_text_cfg', False)
+        self.apply_audio_cfg = cfg.get('apply_audio_cfg', False)
+        if self.cfg_interpolation_scale == 1.0:
+            self.apply_text_cfg = False
+            self.apply_audio_cfg = False
 
         # whether to apply cfg filter to address faster speech rate.
         self.apply_cfg_filter = cfg.get("apply_cfg_filter", False)
@@ -933,9 +939,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         self._optimizer.zero_grad()
         batch = next(dataloader_iter)
 
-        # apply classifier-free guidance by replacing input question tokens with [UNK].
-        if self._rng.random() < self.question_free_guidance_prob:
-            logging.info(f"Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
+        # apply text classifier-free guidance by replacing input question tokens with [UNK].
+        if self._rng.random() < self.text_cfg_prob:
+            logging.info(f"Text Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
 
             # temporally disable computing CTC alignment loss.
             if self.use_alignment_loss:
@@ -965,6 +971,16 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         else:
             # recover to original alignment loss config.
             self.frozen_model.enc_dec_model.use_alignment_loss = self.use_alignment_loss
+
+        # apply audio context classifier-free guidance by replacing audio codec with [UNK]
+        if self._rng.random() < self.audio_cfg_prob:
+            logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
+
+            # dec_input
+            dec_input = batch[3]
+            dec_input_unconditioned = dec_input.clone()
+            dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
+            batch[3] = dec_input_unconditioned
 
         loss_mean = self.fwd_bwd_step(itertools.chain([batch]), batch_idx, forward_only=False)
         self.allreduce_gradients()
@@ -1648,8 +1664,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 dec_input_mask, (0, max_inference_timesteps - dec_input_mask.shape[1]), value=1
             )
 
-            # question unconditioned case
-            if self.question_guidance_scale != 1.0:
+            # text unconditioned case
+            if self.apply_text_cfg:
                 # replace question token IDs with [UNK]'s id. No speech offset for Phoneme's [UNK]. Same op as train.
                 # instruction token IDs are bpe token IDs directly obtained from self.tokenizer without any offset.
                 # question token IDs are phoneme and grapheme token IDs and are offset by self.lm_vocab_size
@@ -1666,10 +1682,23 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 del question_limits, time_range, question_start, question_end, question_mask
 
                 # concatenate both conditioned and unconditioned batches as a single one.
+                context_and_question_tokens = torch.cat((context_and_question_tokens, context_and_question_tokens_unconditioned), dim=0)  #
+                dec_input_cfg = torch.cat((dec_input, dec_input), dim=0)  #
+
+            # audio unconditioned case
+            if self.apply_audio_cfg:
+                # import ipdb; ipdb.set_trace()
+                dec_input_unconditioned = dec_input.clone()
+                dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
+
+                # concatenate both conditioned and unconditioned batches as a single one.
+                dec_input_cfg = torch.cat((dec_input, dec_input_unconditioned), dim=0)  #
+
+            if self.apply_text_cfg or self.apply_audio_cfg:
+                # concatenate both conditioned and unconditioned batches as a single one.
                 virtual_tokens = torch.cat((virtual_tokens, virtual_tokens), dim=0)
-                context_and_question_tokens = torch.cat((context_and_question_tokens, context_and_question_tokens_unconditioned), dim=0)
                 enc_mask = torch.cat((enc_mask, enc_mask), dim=0)
-                dec_input = torch.cat((dec_input, dec_input), dim=0)
+                dec_input = dec_input_cfg.clone()
                 dec_input_mask = torch.cat((dec_input_mask, dec_input_mask), dim=0)
                 position_ids = torch.cat((position_ids, position_ids), dim=0)
                 taskname_ids = torch.cat((taskname_ids, taskname_ids), dim=0)
@@ -1750,10 +1779,10 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     atention_probs_all.append(attention_probs_mean)
                 # output_logits (B, T, V, 8)
 
-                if self.question_guidance_scale != 1.0:
+                if self.apply_text_cfg or self.apply_audio_cfg:
                     # interpolate conditioned and unconditioned logits
-                    token_logits = self.question_guidance_scale * token_and_speech_logits[0][:batch_size] + (1 - self.question_guidance_scale) * token_and_speech_logits[0][batch_size:]
-                    output_speech_logits = self.question_guidance_scale * output_logits[:batch_size] + (1 - self.question_guidance_scale) * output_logits[batch_size:]
+                    token_logits = self.cfg_interpolation_scale * token_and_speech_logits[0][:batch_size] + (1 - self.cfg_interpolation_scale) * token_and_speech_logits[0][batch_size:]
+                    output_speech_logits = self.cfg_interpolation_scale * output_logits[:batch_size] + (1 - self.cfg_interpolation_scale) * output_logits[batch_size:]
                 else:
                     token_logits = token_and_speech_logits[0]  # (B, T, V)
                     output_speech_logits = output_logits
@@ -1793,7 +1822,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 output_logits_currtimestep_rescored[indices_to_remove] = -float('Inf')
 
                 # logits interpolation between conditioned and unconditioned logits.
-                if self.question_guidance_scale != 1.0 and self.apply_cfg_filter is True:
+                if (self.apply_text_cfg or self.apply_audio_cfg) and self.apply_cfg_filter:
                     output_logits_currtimestep_rescored = self.cfg_filter_interpolation_scale * output_logits_currtimestep_rescored + (1 - self.cfg_filter_interpolation_scale) * output_logits_currtimestep_unconditioned
 
                 temperature = self.cfg.get('temperature', 0.85)  # Set temp 0.01 for greedy decoding
@@ -1823,7 +1852,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 output_token_list.append(output_tokens_curr_timestep)
 
                 # duplicate to 2b dim as input for the next iteration if enabling cfg.
-                if self.question_guidance_scale != 1.0:
+                if self.apply_text_cfg or self.apply_audio_cfg:
                     output_tokens_curr_timestep = torch.cat((output_tokens_curr_timestep, output_tokens_curr_timestep), dim=0)
 
                 if torch.count_nonzero(speech_mask) > 0:
