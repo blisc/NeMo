@@ -977,6 +977,16 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
                 batch[3] = dec_input_unconditioned
 
+        # apply audio context classifier-free guidance by replacing audio codec with [UNK]
+        if self._rng.random() < self.audio_cfg_prob:
+            logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
+
+            # dec_input
+            dec_input = batch[3]
+            dec_input_unconditioned = dec_input.clone()
+            dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
+            batch[3] = dec_input_unconditioned
+
         loss_mean = self.fwd_bwd_step(itertools.chain([batch]), batch_idx, forward_only=False)
         self.allreduce_gradients()
 
