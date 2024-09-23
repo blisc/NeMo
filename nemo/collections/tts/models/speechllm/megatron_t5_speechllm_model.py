@@ -348,7 +348,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         Special forward method for p-tuning/prompt-tuning pretrained
         T5 style models.
         """
-        # import ipdb; ipdb.set_trace()
         multi_encoder = False
         if isinstance(context_and_question_tokens, list):
             multi_encoder = True
@@ -548,7 +547,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         else:
             _, dec_seq_length = batch[4].shape
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
-        
+
         fwd_bwd_function = get_forward_backward_func()
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
@@ -598,7 +597,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             batch = next(dataloader_iter)
             _batch = []
             for x in batch:
-                # import ipdb; ipdb.set_trace()
                 if isinstance(x, torch.Tensor):
                     x = x.cuda(non_blocking=True)
                 elif isinstance(x, list):
@@ -627,7 +625,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             
             if self.trainer.global_step % self.train_check_interval == 0 and not validation_step and self.is_rank_zero:
                 self.frozen_model.enc_dec_model.logging_step = True
-            
+
             _cross_attention_prior = cross_attention_prior
             if isinstance(context_and_question_tokens, list):
                 # None for context and prior for question
@@ -1687,7 +1685,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
             # audio unconditioned case
             if self.apply_audio_cfg:
-                # import ipdb; ipdb.set_trace()
                 dec_input_unconditioned = dec_input.clone()
                 dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
 
@@ -1764,7 +1761,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     
                     output_tensor = fwd_bwd_function(
                         forward_step_func=self.get_forward_output_only_func(),
-                        data_iterator=iter([batch, ]),
+                        data_iterator=iter([batch,]),
                         model=[self],
                         num_microbatches=get_num_microbatches(),
                         forward_only=True,
