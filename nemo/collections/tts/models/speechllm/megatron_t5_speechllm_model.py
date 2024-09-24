@@ -283,30 +283,30 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         # question tokens in a batch are replaced by [UNK] tokens, such that mimicking the transcript-free scenario.
         # If a random number is greater than ε, then keep questions tokens as-is, otherwise, the question tokens are
         # replaced by [UNK]. Default to 0.0, meaning CFG is disabled.
-        self.text_cfg_prob = cfg.get('text_cfg_prob', 0.0)
-        self.audio_cfg_prob = cfg.get('audio_cfg_prob', 0.0)
+        self.train_text_cfg_prob = cfg.get('train_text_cfg_prob', 0.0)
+        self.train_audio_cfg_prob = cfg.get('train_audio_cfg_prob', 0.0)
         self._rng = random.Random()
 
         # control the strength of the classifier guidance during inference, Logits_cfg = w*Logits_cond + (1-w)*Logits_uncond,
         # equivalent to Logits_cfg = Logits_cond + alpha*(Logits_cond - Logits_uncond) where alpha=w-1.
         # Default w to 1.O, indicating no interpolation is applied.
-        self.cfg_interpolation_scale = cfg.get('cfg_interpolation_scale', 1.0)
-        self.apply_text_cfg = cfg.get('apply_text_cfg', False)
-        self.apply_audio_cfg = cfg.get('apply_audio_cfg', False)
-        if self.cfg_interpolation_scale == 1.0:
-            self.apply_text_cfg = False
-            self.apply_audio_cfg = False
+        self.inference_cfg_interpolation_scale = cfg.get('inference_cfg_interpolation_scale', 1.0)
+        self.inference_apply_text_cfg = cfg.get('inference_apply_text_cfg', False)
+        self.inference_apply_audio_cfg = cfg.get('inference_apply_audio_cfg', False)
+        if self.inference_cfg_interpolation_scale == 1.0:
+            self.inference_apply_text_cfg = False
+            self.inference_apply_audio_cfg = False
 
         # whether to apply cfg filter to address faster speech rate.
-        self.apply_cfg_filter = cfg.get("apply_cfg_filter", False)
+        self.inference_apply_cfg_filter = cfg.get("inference_apply_cfg_filter", False)
 
         # this scale is suggested to be smaller than `self.question_guidance_scale` and it is used to balance the weights
         # between the conditioned logits after applying cfg filter and the original unconditioned logits. Default to 1.0,
         # indicating only conditioned logits are used.
-        if not self.apply_cfg_filter:
-            self.cfg_filter_interpolation_scale = None
+        if not self.inference_apply_cfg_filter:
+            self.inference_cfg_filter_interpolation_scale = None
         else:
-            self.cfg_filter_interpolation_scale = cfg.get('cfg_filter_interpolation_scale', 1.0)
+            self.inference_cfg_filter_interpolation_scale = cfg.get('inference_cfg_filter_interpolation_scale', 1.0)
 
     def decode_wav_from_codec_model(self, codes):
         codec_model = self.additional_models['codec']
@@ -938,47 +938,49 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         batch = next(dataloader_iter)
 
         # apply text classifier-free guidance by replacing input question tokens with [UNK].
-        if self._rng.random() < self.text_cfg_prob:
-            logging.info(f"Text Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
+        if self.train_text_cfg_prob > 0.0:
+            if self._rng.random() < self.train_text_cfg_prob:
+                logging.info(f"Text Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
 
-            # temporally disable computing CTC alignment loss.
-            if self.use_alignment_loss:
-                self.frozen_model.enc_dec_model.use_alignment_loss = False
+                # temporally disable computing CTC alignment loss.
+                if self.use_alignment_loss:
+                    self.frozen_model.enc_dec_model.use_alignment_loss = False
 
-            # make cross-attention prior to None to remove the prior.
-            batch[11] = None
+                # make cross-attention prior to None to remove the prior.
+                batch[11] = None
 
-            # replace question token IDs with [UNK]'s id. No speech offset for Phoneme's [UNK]. Same op as train.
-            # instruction token IDs are bpe token IDs directly obtained from self.tokenizer without any offset.
-            # question token IDs are phoneme and grapheme token IDs and are offset by self.lm_vocab_size
-            #   if under "Phoneme TTS" instruction, so existing no overlaps between instruction and question token IDs.
-            # question token IDs are bpe token IDs without any offset
-            #   if under "Text to speech this" instruction, so existing overlaps between instruction and question token IDs.
-            context_and_question_tokens = batch[1]  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
-            text_limits = batch[12]
-            virtual_tokens = batch[0]
-            question_limits = text_limits - virtual_tokens.size(1)  # (b, 2), reset question range to start from [pad] context, same start position as context_and_question_tokens.
-            context_and_question_tokens_unconditioned = context_and_question_tokens.clone()  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
-            time_range = torch.arange(context_and_question_tokens_unconditioned.size(2), device=context_and_question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
-            question_start = question_limits[:, 0].unsqueeze(1)  # (b, 1)
-            question_end = question_limits[:, 1].unsqueeze(1)  # (b, 1)
-            question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
-            context_and_question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
-            batch[1] = context_and_question_tokens_unconditioned
-            del question_limits, time_range, question_start, question_end, question_mask
-        else:
-            # recover to original alignment loss config.
-            self.frozen_model.enc_dec_model.use_alignment_loss = self.use_alignment_loss
+                # replace question token IDs with [UNK]'s id. No speech offset for Phoneme's [UNK]. Same op as train.
+                # instruction token IDs are bpe token IDs directly obtained from self.tokenizer without any offset.
+                # question token IDs are phoneme and grapheme token IDs and are offset by self.lm_vocab_size
+                #   if under "Phoneme TTS" instruction, so existing no overlaps between instruction and question token IDs.
+                # question token IDs are bpe token IDs without any offset
+                #   if under "Text to speech this" instruction, so existing overlaps between instruction and question token IDs.
+                context_and_question_tokens = batch[1]  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
+                text_limits = batch[12]
+                virtual_tokens = batch[0]
+                question_limits = text_limits - virtual_tokens.size(1)  # (b, 2), reset question range to start from [pad] context, same start position as context_and_question_tokens.
+                context_and_question_tokens_unconditioned = context_and_question_tokens.clone()  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
+                time_range = torch.arange(context_and_question_tokens_unconditioned.size(2), device=context_and_question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
+                question_start = question_limits[:, 0].unsqueeze(1)  # (b, 1)
+                question_end = question_limits[:, 1].unsqueeze(1)  # (b, 1)
+                question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
+                context_and_question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
+                batch[1] = context_and_question_tokens_unconditioned
+                del question_limits, time_range, question_start, question_end, question_mask
+            else:
+                # recover to original alignment loss config.
+                self.frozen_model.enc_dec_model.use_alignment_loss = self.use_alignment_loss
 
         # apply audio context classifier-free guidance by replacing audio codec with [UNK]
-        if self._rng.random() < self.audio_cfg_prob:
-            logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
+        if self.train_audio_cfg_prob > 0.0:
+            if self._rng.random() < self.train_audio_cfg_prob:
+                logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
 
-            # dec_input
-            dec_input = batch[3]
-            dec_input_unconditioned = dec_input.clone()
-            dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
-            batch[3] = dec_input_unconditioned
+                # dec_input
+                dec_input = batch[3]
+                dec_input_unconditioned = dec_input.clone()
+                dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
+                batch[3] = dec_input_unconditioned
 
         loss_mean = self.fwd_bwd_step(itertools.chain([batch]), batch_idx, forward_only=False)
         self.allreduce_gradients()
@@ -1663,7 +1665,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             )
 
             # text unconditioned case
-            if self.apply_text_cfg:
+            if self.inference_apply_text_cfg:
                 # replace question token IDs with [UNK]'s id. No speech offset for Phoneme's [UNK]. Same op as train.
                 # instruction token IDs are bpe token IDs directly obtained from self.tokenizer without any offset.
                 # question token IDs are phoneme and grapheme token IDs and are offset by self.lm_vocab_size
@@ -1684,14 +1686,14 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 dec_input_cfg = torch.cat((dec_input, dec_input), dim=0)  #
 
             # audio unconditioned case
-            if self.apply_audio_cfg:
+            if self.inference_apply_audio_cfg:
                 dec_input_unconditioned = dec_input.clone()
                 dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
 
                 # concatenate both conditioned and unconditioned batches as a single one.
                 dec_input_cfg = torch.cat((dec_input, dec_input_unconditioned), dim=0)  #
 
-            if self.apply_text_cfg or self.apply_audio_cfg:
+            if self.inference_apply_text_cfg or self.inference_apply_audio_cfg:
                 # concatenate both conditioned and unconditioned batches as a single one.
                 virtual_tokens = torch.cat((virtual_tokens, virtual_tokens), dim=0)
                 enc_mask = torch.cat((enc_mask, enc_mask), dim=0)
@@ -1776,10 +1778,10 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     atention_probs_all.append(attention_probs_mean)
                 # output_logits (B, T, V, 8)
 
-                if self.apply_text_cfg or self.apply_audio_cfg:
+                if self.inference_apply_text_cfg or self.inference_apply_audio_cfg:
                     # interpolate conditioned and unconditioned logits
-                    token_logits = self.cfg_interpolation_scale * token_and_speech_logits[0][:batch_size] + (1 - self.cfg_interpolation_scale) * token_and_speech_logits[0][batch_size:]
-                    output_speech_logits = self.cfg_interpolation_scale * output_logits[:batch_size] + (1 - self.cfg_interpolation_scale) * output_logits[batch_size:]
+                    token_logits = self.inference_cfg_interpolation_scale * token_and_speech_logits[0][:batch_size] + (1 - self.inference_cfg_interpolation_scale) * token_and_speech_logits[0][batch_size:]
+                    output_speech_logits = self.inference_cfg_interpolation_scale * output_logits[:batch_size] + (1 - self.inference_cfg_interpolation_scale) * output_logits[batch_size:]
                 else:
                     token_logits = token_and_speech_logits[0]  # (B, T, V)
                     output_speech_logits = output_logits
@@ -1811,7 +1813,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 indices_to_remove = output_logits_currtimestep < output_logits_currtimestep_topk[:, -1].unsqueeze(1)
                 # (B*8, 1024) or (B, 1024)
 
-                if self.apply_cfg_filter:
+                if self.inference_apply_cfg_filter:
                     output_logits_currtimestep_rescored = output_logits_currtimestep_conditioned.clone()
                 else:
                     output_logits_currtimestep_rescored = output_logits_currtimestep.clone()
@@ -1819,8 +1821,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 output_logits_currtimestep_rescored[indices_to_remove] = -float('Inf')
 
                 # logits interpolation between conditioned and unconditioned logits.
-                if (self.apply_text_cfg or self.apply_audio_cfg) and self.apply_cfg_filter:
-                    output_logits_currtimestep_rescored = self.cfg_filter_interpolation_scale * output_logits_currtimestep_rescored + (1 - self.cfg_filter_interpolation_scale) * output_logits_currtimestep_unconditioned
+                if (self.inference_apply_text_cfg or self.inference_apply_audio_cfg) and self.inference_apply_cfg_filter:
+                    output_logits_currtimestep_rescored = self.inference_cfg_filter_interpolation_scale * output_logits_currtimestep_rescored + (1 - self.inference_cfg_filter_interpolation_scale) * output_logits_currtimestep_unconditioned
 
                 temperature = self.cfg.get('temperature', 0.85)  # Set temp 0.01 for greedy decoding
                 output_logits_currtimestep_rescored = output_logits_currtimestep_rescored / temperature
@@ -1849,7 +1851,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 output_token_list.append(output_tokens_curr_timestep)
 
                 # duplicate to 2b dim as input for the next iteration if enabling cfg.
-                if self.apply_text_cfg or self.apply_audio_cfg:
+                if self.inference_apply_text_cfg or self.inference_apply_audio_cfg:
                     output_tokens_curr_timestep = torch.cat((output_tokens_curr_timestep, output_tokens_curr_timestep), dim=0)
 
                 if torch.count_nonzero(speech_mask) > 0:
