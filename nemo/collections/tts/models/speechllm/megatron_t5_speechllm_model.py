@@ -1582,7 +1582,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             end_inference_loop_at = None
             fwd_bwd_function = get_forward_backward_func()
             encoder_output = None
-            atention_probs_all = []
+            attention_probs_all = []
             start_time = time.time()
             for t in range(self.decoder_context_len + 1, dec_input.shape[2] - 1):
                 # Start at 0 if encoder context, else context_len
@@ -1646,10 +1646,12 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     )
                     output_logits = output_tensor[0]['output_logits']
                     token_and_speech_logits = output_tensor[0]['token_and_speech_logits']
-                    attention_probs = token_and_speech_logits[2]
-                    attention_probs_mean = torch.stack(attention_probs).mean(dim=0) # B, 12, 1, enc_timesteps
-                    atention_probs_all.append(attention_probs_mean)
-                    # import ipdb; ipdb.set_trace()
+
+                    # when return_all_crossattention is False, attention_probs is None.
+                    if self.frozen_model.enc_dec_model.return_all_crossattention_probs:
+                        attention_probs = token_and_speech_logits[2]
+                        attention_probs_mean = torch.stack(attention_probs).mean(dim=0) # B, 12, 1, enc_timesteps
+                        attention_probs_all.append(attention_probs_mean)
                 # output_logits (B, T, V, 8)
 
                 token_logits = token_and_speech_logits[0]  # (B, T, V)
@@ -1732,9 +1734,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            atention_probs_all = torch.cat(atention_probs_all, dim=2) # B, 12, dec_timesteps, enc_timesteps
-            atention_probs_all = atention_probs_all.mean(dim=1) # B, dec_timesteps, enc_timesteps
-            
             if 'nemo_sv_model' not in self.additional_models:
                 nemo_sv_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(model_name='titanet_large')
                 nemo_sv_model = nemo_sv_model.to(device)
@@ -1814,41 +1813,57 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             if isinstance(self.test_dataloader(), torch.utils.data.DataLoader):
                 test_dataloader_batch_size = self.test_dataloader().batch_size
 
+            # logging attention maps.
+            # empty attention_probs_all indicates self.frozen_model.enc_dec_model.return_all_crossattention_probs is False.
+            if len(attention_probs_all) != 0:
+                attention_probs_all = torch.cat(attention_probs_all, dim=2) # B, 12, dec_timesteps, enc_timesteps
+                attention_probs_all = attention_probs_all.mean(dim=1) # B, dec_timesteps, enc_timesteps
+
+                for i in range(batch_size):
+                    text_end_step = text_limits[i, 1].item()
+                    text_start_step = text_limits[i, 0].item()
+                    end_index = end_indices.get(i, output_tokens_combined.shape[2])
+                    if len(attention_probs_all) != 0:
+                        attention_probs_example = attention_probs_all[i][:end_index - (1 + self.decoder_context_len),
+                                                  text_start_step:text_end_step]  # T, enc_timesteps
+                        attention_map = attention_probs_example.float().cpu().numpy().T
+                        alignment_image = plot_alignment_to_numpy_for_speechllm(
+                            attention_map,
+                            phoneme_ver=1,
+                            phoneme_seq=None,
+                        )
+                        # ctc_loss = self.frozen_model.enc_dec_model.forward_sum_loss(
+                        #     attn_logprob=attention_probs_example[None,None,:,:],
+                        #     in_lens=torch.tensor([attention_probs_example.shape[1]]).to(device),
+                        #     out_lens=torch.tensor([attention_probs_example.shape[0]]).to(device)
+                        # )
+
+                        if global_step is not None:
+                            # During validation, step is simply global_step + i
+                            step = global_step + i
+                        else:
+                            # During inference, step is the index of the sample
+                            step = batch_idx * test_dataloader_batch_size + i
+
+                        # print("Ctc Loss: ", step, ctc_loss.item())
+                        self.logger.experiment.add_image(
+                            "Inf Attention Map", alignment_image, step, dataformats="HWC",
+                        )
+                        # Save attention image to file
+                        alignment_fp = os.path.join(_exp_dir_path, f'attention_map_{step}.png')
+                        imageio.imwrite(alignment_fp, alignment_image)
+
             wer_score = 0
             audio_to_pred = []
             audio_to_pred_zh = []
             total_audio_seconds = 0
             for i in range(batch_size):
-                text_end_step = text_limits[i,1].item()
-                text_start_step = text_limits[i,0].item()
-                end_index = end_indices.get(i, output_tokens_combined.shape[2])
-                attention_probs_example = atention_probs_all[i][:end_index - (1 + self.decoder_context_len),text_start_step:text_end_step] # T, enc_timesteps
-                attention_map = attention_probs_example.float().cpu().numpy().T
-                alignment_image = plot_alignment_to_numpy_for_speechllm(
-                    attention_map,
-                    phoneme_ver=1,
-                    phoneme_seq=None,
-                )
-                # ctc_loss = self.frozen_model.enc_dec_model.forward_sum_loss(
-                #     attn_logprob=attention_probs_example[None,None,:,:], 
-                #     in_lens=torch.tensor([attention_probs_example.shape[1]]).to(device),
-                #     out_lens=torch.tensor([attention_probs_example.shape[0]]).to(device)
-                # )
-                
                 if global_step is not None:
                     # During validation, step is simply global_step + i
                     step = global_step + i
                 else:
                     # During inference, step is the index of the sample
                     step = batch_idx * test_dataloader_batch_size + i
-
-                # print("Ctc Loss: ", step, ctc_loss.item())
-                self.logger.experiment.add_image(
-                    "Inf Attention Map", alignment_image, step, dataformats="HWC",
-                )
-                # Save attention image to file
-                alignment_fp = os.path.join(_exp_dir_path, f'attention_map_{step}.png')
-                imageio.imwrite(alignment_fp, alignment_image)
 
                 audio_len = self.decoder_context_len + (labels[i][0][self.decoder_context_len:] != 0).sum().item()
                 # step = batch_idx * self.test_dataloader().batch_size + i
@@ -1872,7 +1887,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     start_time = time.time()
                     predicted_tokens = self.convert_tokens_to_range(predicted_tokens, apply_offset_correction=False)
                     predicted_wav = self.decode_wav_from_codec_model(predicted_tokens)
-                    # acummulate audio length in seconds and process time in seconds to the RTF
+                    # accumulate audio length in seconds and process time in seconds to the RTF
                     total_process_time = total_process_time + (time.time() - start_time)
                     total_audio_seconds = total_audio_seconds + predicted_wav.size(-1) / self.sample_rate
 
