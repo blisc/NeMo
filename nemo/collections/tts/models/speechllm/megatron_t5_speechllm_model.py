@@ -148,20 +148,20 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
     """
     Model class for prompt-tuning or p-tuning a pretrained Megatron T5 model.
 
-    Prompt Tuning initalizes virtual prompt embeddings directly from a copy of
-    certain token embeddings from the the pretrained T5 model's vocabulary
+    Prompt Tuning initializes virtual prompt embeddings directly from a copy of
+    certain token embeddings from the pretrained T5 model's vocabulary
     and directly tunes these embedding weights. The token embeddings used in
-    initalization are specified by the user in the config file. The model can
+    initialization are specified by the user in the config file. The model can
     be prompt-tuned for multiple tasks at once. Virtual prompts are stored in a
     prompt table and can be added or deleted without disrupting virtual prompts
     for other tasks.
 
     P-tuning initializes an LSTM encoder model that generates virtual prompt
     embeddings for every task. Each task shares the same encoder. After p-tuning
-    is compelete, the learned virtual prompts can be saved to the prompt table
+    is complete, the learned virtual prompts can be saved to the prompt table
     using add_ptuned_prompts_to_prompt_table(). Thus, if a user wants to add a
     new virtual prompt via p-tuning, they do not need to retrain on all previous
-    tasks. This gives p-tuning the same task flexiblity as prompt-tuning.
+    tasks. This gives p-tuning the same task flexibility as prompt-tuning.
     """
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -204,7 +204,14 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
         self.frozen_model.enc_dec_model.attn_prior_scaledown_start_step = attn_prior_scaledown_start_step
         self.frozen_model.enc_dec_model.attn_prior_end_step = attn_prior_end_step
+
+        alignment_decoder_layerids = cfg.get('alignment_decoder_layerids', list(range(0, 12)))
         self.frozen_model.enc_dec_model.return_all_crossattention_probs = return_all_crossattention_probs
+        if return_all_crossattention_probs:
+            # if true, requires to declare alignment_decoder_layerids for
+            # nemo.collections.nlp.modules.common.megatron.token_level_encoder_decoder.MegatronTokenLevelEncoderDecoderSpeechLLMModule.
+            self.frozen_model.enc_dec_model.alignment_decoder_layerids = alignment_decoder_layerids
+
         self.frozen_model.enc_dec_model.num_cross_attention_heads = num_cross_attention_heads
         self.frozen_model.enc_dec_model.context_conditioning = self.context_conditioning
         self.frozen_model.enc_dec_model.decoder_context_len = self.decoder_context_len
@@ -219,19 +226,17 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             self.frozen_model.enc_dec_model.forward_sum_loss = ForwardSumLoss(loss_scale=alignment_loss_scale)
             self.frozen_model.enc_dec_model.alignment_text_end_offset = cfg.get('alignment_text_end_offset', 0)
             self.frozen_model.enc_dec_model.align_every_n_head = cfg.get('align_every_n_head', 1)
-            self.frozen_model.enc_dec_model.alignment_decoder_layerids = cfg.get(
-                'alignment_decoder_layerids', list(range(0, 12))
-            )
+            self.frozen_model.enc_dec_model.alignment_decoder_layerids = alignment_decoder_layerids
             self.alignment_loss_start_step = cfg.get('alignment_loss_start_step', 0)
             self.alignment_loss_end_step = cfg.get('alignment_loss_end_step', float('inf'))
 
-        # Need to explicitly set this since it is already initialiazed
+        # Need to explicitly set this since it is already initialized
         self.frozen_model.enc_dec_model.tokens_head.parallel_output = self.frozen_model.enc_dec_model.parallel_output
 
         list_of_speech_heads = []
         list_of_speech_tokens_embeddings = []
         for _ in range(self.num_speech_codebooks - 1):
-            # init is NOT used since we overwrite the weight below anywas
+            # init is NOT used since we overwrite the weight below anyways
             _speech_head_embedding = tensor_parallel.VocabParallelEmbedding(
                 speech_codebook_size,
                 embedding_dim=self.word_embeddings.embedding_dim,
