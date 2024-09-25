@@ -977,17 +977,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
                 batch[3] = dec_input_unconditioned
 
-        # apply audio context classifier-free guidance by replacing audio codec with [UNK]
-        if self.train_audio_cfg_prob > 0.0:
-            if self._rng.random() < self.train_audio_cfg_prob:
-                logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
-
-                # dec_input
-                dec_input = batch[3]
-                dec_input_unconditioned = dec_input.clone()
-                dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
-                batch[3] = dec_input_unconditioned
-
         loss_mean = self.fwd_bwd_step(itertools.chain([batch]), batch_idx, forward_only=False)
         self.allreduce_gradients()
 
@@ -1785,7 +1774,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         attention_probs_mean = torch.stack(attention_probs).mean(dim=0) # B, 12, 1, enc_timesteps
                         attention_probs_all.append(attention_probs_mean)
 
-                # output_logits (B, T, V, 8)
                 if self.inference_apply_text_cfg or self.inference_apply_audio_cfg:
                     # interpolate conditioned and unconditioned logits
                     token_logits = self.inference_cfg_interpolation_scale * token_and_speech_logits[0][:batch_size] + (1 - self.inference_cfg_interpolation_scale) * token_and_speech_logits[0][batch_size:]
