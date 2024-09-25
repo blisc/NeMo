@@ -1999,6 +1999,12 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
                         spk_embedding_context_wavlm = wavlm_embeddings[0].cpu().detach().numpy().flatten()
 
+                        # SQUIM MOS prediction versus the audio context. SQUIM MOS allows a non-matching reference.
+                        squim_mos_score_context_gt = squim_mos_model(torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
+                        squim_mos_score_context_pred = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
+                        squim_mos_list_context_gt.append(squim_mos_score_context_gt)
+                        squim_mos_list_context_pred.append(squim_mos_score_context_pred)
+
                     pred_similarity_context = np.dot(spk_embedding_context, spk_embedding_pred) / (
                         np.linalg.norm(spk_embedding_context) * np.linalg.norm(spk_embedding_pred)
                     )
@@ -2013,10 +2019,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         np.linalg.norm(spk_embedding_context_wavlm) * np.linalg.norm(spk_embedding_gt_wavlm)
                     )
 
-                    squim_mos_score_context_gt = squim_mos_model(torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
-                    squim_mos_score_context_pred = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
-                    squim_mos_list_context_gt.append(squim_mos_score_context_gt)
-                    squim_mos_list_context_pred.append(squim_mos_score_context_pred)
 
                     if log_scalars:
                         self.logger.experiment.add_scalar(f'Inf SV Cossim Context Pred', pred_similarity_context, step)
