@@ -726,6 +726,7 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
         self.speech_head_type = "token_level"
         self.attn_prior_scaledown_start_step = 10000
         self.attn_prior_end_step = 11000
+        self.use_alignment_loss = False
         self.return_all_crossattention_probs = False
         self.logging_step = False
         self.num_cross_attention_heads = 12  # 12 for 220m T5, 16 for 11b T5
@@ -882,8 +883,8 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     # On step 0 when set_inference_key_value_memory is True, we need all inputs in case
                     # we are using decoder context
                     # Else on step >= 1, only need last input
-                    logging.debug("Clipping dec_input")
-                    dec_input = dec_input[-1, :, :].unsqueeze(0)
+                    logging.debug("Clipping dec_input and only keep the last input.")
+                    dec_input = dec_input[-1, :, :].unsqueeze(0)  # shape (b, embed_dim)
             else:
                 # Note: This is when the decoder itself is split across PP ranks.
                 dec_input = None
@@ -973,7 +974,7 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     dec_output, attention_scores = dec_output
                     attention_probs = [torch.softmax(attention_score, dim=-1) for lidx, attention_score in enumerate(attention_scores) if lidx in self.alignment_decoder_layerids]
 
-                    if text_limits is not None and hasattr(self, "forward_sum_loss"):
+                    if text_limits is not None and self.use_alignment_loss and hasattr(self, "forward_sum_loss"):
                         attention_scores_filtered = [
                             attention_scores[lidx] for lidx in self.alignment_decoder_layerids
                         ]
@@ -1105,6 +1106,11 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     if self.hiddens_cfg is not None:
                         raise NotImplementedError("Not currently implemented for speechllm")
                     else:
+                        # all_speech_logits: tensor, (b, s, 1024, 8), all layers of speech.
+                        # token_logits: tensor, (b, s, vocab_size), text token logits.
+                        # speech_logits: tensor, (b, s, 1024, 7), 1-7 layers of speech.
+                        # attention_probs: tensor or None, (b, s, )
+                        # enc_output: tensor, (virtual_token_len+context_token_len+question_token_len+extra_id_0+[SEP], b, )
                         return all_speech_logits, [token_logits, speech_logits, attention_probs, enc_output]
 
             elif self.add_decoder and not self.add_encoder:
