@@ -553,7 +553,9 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
             question_tokens = pad_text_to_speech_dims(
                 question_tokens, self.tokenizer.pad_id, self.num_speech_codebooks - 1
             )
-        
+
+        # context_tokens: tensor, (num_speech_codebooks, audio_context_len)
+        # question_tokens: tensor, (num_speech_codebooks, instruction token len + question token len + 1 (<extra_id_0> + 1 ([SEP])), only first row includes token ids while all other rows are all zeros (pad)
         if self.encoder_type == "multi_transformer":
             context_and_question_tokens = [context_tokens, question_tokens]
         else:
@@ -591,12 +593,18 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
         dec_input = None
         dec_labels = None
 
-        # answer_text_ids  = [CLS_id, context audio code tensors, zero-pad, answer audio code tensor, SEP_id]
+        # if single-encoder and context_condition is decoder, answer_text_ids = [CLS_id, context audio code tensors, zero-pad, answer audio code tensor, SEP_id]
+        # if multi-encoder, answer_text_ids = [CLS_id, answer audio codec tensor, SEP_id], so dec_input will not include audio context anymore.
         if answer_field in doc.keys():  # training and validation
             dec_input = answer_text_ids[:-1]
             dec_labels = answer_text_ids[1:]
 
-        # dec_input: shape=(self.num_speech_codebooks, 1 + len(context audio frames) + 1 + len(answer audio frames))
+        # if single-encoder and context_condition is decoder:
+        #   dec_input: shape=(self.num_speech_codebooks, 1([CLS]) + len(context audio frames) + 1([PAD]) + len(answer audio frames))
+        #   dec_labels: shape=(self.num_speech_codebooks, len(context audio frames) + 1([PAD]) + len(answer audio frames) + 1([SEP]))
+        # if multi-encoder:
+        #   dec_input: (num_speech_codebooks, 1([CLS]) + len(answer audio frames))
+        #   dec_labels: (num_speech_codebooks, len(answer audio frames) + 1([SEP]))
         dec_input, dec_input_len = self.list_to_tensor(dec_input, True)
         dec_labels, dec_labels_len = self.list_to_tensor(dec_labels, True)
         is_speech = True if doc["answer_type"] != "TEXT" else False
@@ -679,8 +687,12 @@ class T5SpeechLMDataset(BasePromptLearningDataset):
             virtual_tokens,  # Tensor, shape=(3,). token id for ['<prompt_0>', '<prompt_1>', '<prompt_2>']
             virtual_tokens_len,  # tensor, 3
             context_tokens_len,  # tensor, 1
-            context_and_question_tokens,  # tensor, shape=(self.num_speech_codebooks, 1(context) + question len + 1(<extra_id_0>) + 1([SEP])). only first row includes token ids while all other rows are all zeros (pad).
-            context_and_question_len,  # tensor scalar, 1 + (question len + 1 + 1).
+            # tensor if single encoder and context_condition is encoder, shape=(self.num_speech_codebooks, 1(context) + question len + 1(<extra_id_0>) + 1([SEP])). only first row includes token ids while all other rows are all zeros (pad).
+            # list if multi-encoder and context_condition is encoder.
+            context_and_question_tokens,
+            # tensor scalar if single encoder and context_condition is decoder, 1 + (question len + 1 + 1).
+            # list if multi-encoder and context_condition is encoder.
+            context_and_question_len,
             dec_input,  # tensor, shape=(self.num_speech_codebooks, 1 CLS + context audio frame len + 1 pad + answer audio frame len), first column is [CLS_id, 0*7]^T
             dec_input_len,  # scalar tensor, 1 CLS + context audio frame len + 1 pad + answer audio frame len. 1 corresponds to CLS id
             dec_labels,  # tensor, shape=(self.num_speech_codebooks, context audio frame len + 1 pad + answer frame len + 1 SEP).
