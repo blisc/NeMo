@@ -1777,6 +1777,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
 
                     # concatenate both conditioned and unconditioned batches as a single one.
+                    context_and_question_tokens = torch.cat((context_and_question_tokens, context_and_question_tokens), dim=0)
                     enc_mask = torch.cat((enc_mask, enc_mask), dim=0)
                     dec_input = torch.cat((dec_input, dec_input_unconditioned), dim=0)
                     position_ids = torch.cat((position_ids, position_ids), dim=0)
