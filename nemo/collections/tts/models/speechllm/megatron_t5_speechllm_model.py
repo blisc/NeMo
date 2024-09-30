@@ -275,8 +275,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         self.phoneme_tokenizer = None
 
         # classifier-free guidance (CFG) option during training. The probability (0.0 <= ε <= 1.0) is used to trigger the action that the
-        # question tokens in a batch are replaced by [UNK] tokens, such that mimicking the transcript-free scenario.
-        # If a random number is greater than ε, then keep questions tokens as-is, otherwise, the question tokens are
+        # text or audio tokens in a batch are replaced by [UNK], such that mimicking the text- or audio-free scenario.
+        # If a random number is greater than ε, then keep text or audio tokens as-is, otherwise, the text or audio tokens are
         # replaced by [UNK]. Default to 0.0, meaning CFG is disabled.
         self.train_text_cfg_prob = cfg.get('train_text_cfg_prob', 0.0)
         self.train_audio_cfg_prob = cfg.get('train_audio_cfg_prob', 0.0)
@@ -954,14 +954,24 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 text_limits = batch[12]
                 virtual_tokens = batch[0]
                 question_limits = text_limits - virtual_tokens.size(1)  # (b, 2), reset question range to start from [pad] context, same start position as context_and_question_tokens.
-                context_and_question_tokens_unconditioned = context_and_question_tokens.clone()  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
-                time_range = torch.arange(context_and_question_tokens_unconditioned.size(2), device=context_and_question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
                 question_start = question_limits[:, 0].unsqueeze(1)  # (b, 1)
                 question_end = question_limits[:, 1].unsqueeze(1)  # (b, 1)
-                question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
-                context_and_question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
-                batch[1] = context_and_question_tokens_unconditioned
-                del question_limits, time_range, question_start, question_end, question_mask
+
+                if isinstance(context_and_question_tokens, list):  # indicate self.encoder_type=multi_transformers.
+                    context_tokens, question_tokens = context_and_question_tokens
+                    question_tokens_unconditioned = question_tokens.clone()
+                    time_range = torch.arange(question_tokens_unconditioned.size(2), device=question_tokens_unconditioned.device).unsqueeze(0)
+                    question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
+                    question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
+                    batch[1] = [context_tokens, question_tokens_unconditioned]
+                else:
+                    context_and_question_tokens_unconditioned = context_and_question_tokens.clone()  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
+                    time_range = torch.arange(context_and_question_tokens_unconditioned.size(2), device=context_and_question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
+                    question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
+                    context_and_question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
+                    batch[1] = context_and_question_tokens_unconditioned
+
+                del question_limits, question_start, question_end, time_range, question_mask
             else:
                 # recover to original alignment loss config.
                 self.frozen_model.enc_dec_model.use_alignment_loss = self.use_alignment_loss
@@ -971,11 +981,19 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             if self._rng.random() < self.train_audio_cfg_prob:
                 logging.info(f"Audio Classifier-Free Guidance is triggered for the {batch_idx}-th batch.")
 
-                # dec_input
-                dec_input = batch[3]
-                dec_input_unconditioned = dec_input.clone()
-                dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
-                batch[3] = dec_input_unconditioned
+                context_and_question_tokens = batch[1]  # (batch_size, self.num_speech_codebooks, max_context_question_tokens_len)
+
+                if isinstance(context_and_question_tokens, list):  # indicate self.encoder_type=multi_transformers.
+                    context_tokens, question_tokens = context_and_question_tokens
+                    context_tokens_unconditioned = context_tokens.clone()
+                    context_tokens_unconditioned[:, :, :] = self.tokenizer.unk_id  # TODO @xueyang: verify if extra tokens other than audio codec tokens are appended.
+                    batch[1] = [context_tokens_unconditioned, question_tokens]
+                else:
+                    # dec_input
+                    dec_input = batch[3]
+                    dec_input_unconditioned = dec_input.clone()
+                    dec_input_unconditioned[:, :, 1:self.decoder_context_len + 1] = self.tokenizer.unk_id  # TODO @xueyang: switch to other token id if this one is conflict with text unk.
+                    batch[3] = dec_input_unconditioned
 
         loss_mean = self.fwd_bwd_step(itertools.chain([batch]), batch_idx, forward_only=False)
         self.allreduce_gradients()
@@ -1675,7 +1693,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
                     # text
                     question_tokens_unconditioned = question_tokens.clone()
-                    time_range = torch.arange(question_tokens_unconditioned.size(2), device=question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
+                    time_range = torch.arange(question_tokens_unconditioned.size(2), device=question_tokens_unconditioned.device).unsqueeze(0)
                     question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
                     question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
 
@@ -1730,7 +1748,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     context_tokens, question_tokens = context_and_question_tokens
                     question_tokens_unconditioned = question_tokens.clone()
 
-                    time_range = torch.arange(question_tokens_unconditioned.size(2), device=question_tokens_unconditioned.device).unsqueeze(0)  # (1, max_context_question_tokens_len)
+                    time_range = torch.arange(question_tokens_unconditioned.size(2), device=question_tokens_unconditioned.device).unsqueeze(0)
                     question_mask = (time_range >= question_start) & (time_range < question_end)  # create a mask for question only tokens.
                     question_tokens_unconditioned[:, 0][question_mask] = self.tokenizer.unk_id  # only the first layer has non-zero IDs.
 
