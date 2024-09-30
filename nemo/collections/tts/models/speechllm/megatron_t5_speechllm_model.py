@@ -1799,6 +1799,12 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     enc_mask = torch.cat((enc_mask, enc_mask), dim=0)
                     dec_input = torch.cat((dec_input, dec_input_unconditioned), dim=0)
                     position_ids = torch.cat((position_ids, position_ids), dim=0)
+            else:
+                logging.debug(
+                    f"Neither text or audio cfg logits are applied:"
+                    f" self.inference_apply_text_cfg={self.inference_apply_text_cfg},"
+                    f" self.inference_apply_audio_cfg={self.inference_apply_audio_cfg}"
+                )
 
             end_inference_loop_at = None
             fwd_bwd_function = get_forward_backward_func()
