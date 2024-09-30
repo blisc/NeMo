@@ -411,6 +411,10 @@ def get_iterator_k_split(batch: List[torch.Tensor], num_microbatches: int) -> It
                     split_batch.append(split_tuple)
                 else:
                     split_batch.append(split_list(item, num_microbatches))
+            elif item is None:
+                split_batch.append(item)
+            else:
+                raise ValueError(f"Unsupported item type: {type(item)}")
         
         microbatches = [
             [elem[i] if elem is not None else elem for elem in split_batch] for i in range(num_microbatches)
