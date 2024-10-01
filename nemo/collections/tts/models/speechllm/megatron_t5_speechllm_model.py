@@ -172,10 +172,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         num_speech_codebooks = cfg.data.get('num_speech_codebooks', 8)
         speech_offset = cfg.data.get('speech_offset', 30000)
         codecmodel_type = cfg.get('codecmodel_type', 'nemo_codec')
-
         attn_prior_scaledown_start_step = cfg.get('attn_prior_scaledown_start_step', 10000)
         attn_prior_end_step = cfg.get('attn_prior_end_step', 11000)
-        return_all_crossattention_probs = cfg.get('return_all_crossattention_probs', False)
         num_cross_attention_heads = cfg.get('num_cross_attention_heads', 12)
         self.lm_vocab_size = cfg.get('lm_vocab_size', 30000)
         self.context_pattern = cfg.data.get('context_pattern', 'parallel')
@@ -201,17 +199,10 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         self.frozen_model.enc_dec_model.speech_codebook_size = speech_codebook_size
         self.frozen_model.enc_dec_model.num_speech_codebooks = num_speech_codebooks
         self.frozen_model.enc_dec_model.seq_pattern = cfg.get('seq_pattern', 'parallel')
-
         self.frozen_model.enc_dec_model.attn_prior_scaledown_start_step = attn_prior_scaledown_start_step
         self.frozen_model.enc_dec_model.attn_prior_end_step = attn_prior_end_step
-
-        alignment_decoder_layerids = cfg.get('alignment_decoder_layerids', list(range(0, 12)))
-        self.frozen_model.enc_dec_model.return_all_crossattention_probs = return_all_crossattention_probs
-        if return_all_crossattention_probs:
-            # if true, requires to declare alignment_decoder_layerids for
-            # nemo.collections.nlp.modules.common.megatron.token_level_encoder_decoder.MegatronTokenLevelEncoderDecoderSpeechLLMModule.
-            self.frozen_model.enc_dec_model.alignment_decoder_layerids = alignment_decoder_layerids
-
+        self.frozen_model.enc_dec_model.alignment_decoder_layerids = cfg.get('alignment_decoder_layerids', list(range(0, 12)))
+        self.frozen_model.enc_dec_model.return_all_crossattention_probs = cfg.get('return_all_crossattention_probs', False)
         self.frozen_model.enc_dec_model.num_cross_attention_heads = num_cross_attention_heads
         self.frozen_model.enc_dec_model.context_conditioning = self.context_conditioning
         self.frozen_model.enc_dec_model.decoder_context_len = self.decoder_context_len
@@ -226,7 +217,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             self.frozen_model.enc_dec_model.forward_sum_loss = ForwardSumLoss(loss_scale=alignment_loss_scale)
             self.frozen_model.enc_dec_model.alignment_text_end_offset = cfg.get('alignment_text_end_offset', 0)
             self.frozen_model.enc_dec_model.align_every_n_head = cfg.get('align_every_n_head', 1)
-            self.frozen_model.enc_dec_model.alignment_decoder_layerids = alignment_decoder_layerids
             self.alignment_loss_start_step = cfg.get('alignment_loss_start_step', 0)
             self.alignment_loss_end_step = cfg.get('alignment_loss_end_step', float('inf'))
 
