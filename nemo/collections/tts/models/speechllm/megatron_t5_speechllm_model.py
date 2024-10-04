@@ -2230,10 +2230,11 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     # estimate MOS scores.
                     if self.estimate_mos:
                         squim_mos_score_pred = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0)).item()
-                        squim_mos_score_context = squim_mos_model(context_wav.to(device).unsqueeze(0)).item()
                         squim_mos_score_gt = squim_mos_model(torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0)).item()
+                        if context_wav is not None:
+                            squim_mos_score_context = squim_mos_model(context_wav.to(device).unsqueeze(0)).item()
+                            squim_mos_list_context.append(squim_mos_score_context)
                         squim_mos_list_pred.append(squim_mos_score_pred)
-                        squim_mos_list_context.append(squim_mos_score_context)
                         squim_mos_list_gt.append(squim_mos_score_gt)
                 else:
                     r = labels[i, 0].long()
