@@ -2098,7 +2098,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     # speaker verification evaluation using wavlm model
                     gt_16khz_wav, _ = librosa.load(audio_fp_gt, sr=16000)
                     pred_16khz_wav, _ = librosa.load(audio_fp_pred, sr=16000)
-                    inputs_wavlm = wavlm_sv_extractor([pred_16khz_wav, gt_16khz_wav], padding=True, return_tensors="pt")
+                    inputs_wavlm = wavlm_sv_extractor([pred_16khz_wav, gt_16khz_wav], padding=True, return_tensors="pt", sampling_rate=16000)
                     for key in inputs_wavlm.keys():
                         inputs_wavlm[key] = inputs_wavlm[key].to(device)
 
@@ -2172,7 +2172,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         spk_embedding_context = spk_embedding_context.cpu().detach().numpy().flatten()
                         # wavlm
                         context_wavlm_wav, _ = librosa.load(context_wav_fp, sr=16000)
-                        inputs_wavlm = wavlm_sv_extractor([context_wavlm_wav], padding=True, return_tensors="pt")
+                        inputs_wavlm = wavlm_sv_extractor([context_wavlm_wav], padding=True, return_tensors="pt", sampling_rate=16000)
                         for key in inputs_wavlm.keys():
                             inputs_wavlm[key] = inputs_wavlm[key].to(device)
             
