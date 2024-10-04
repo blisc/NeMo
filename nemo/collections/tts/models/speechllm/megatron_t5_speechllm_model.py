@@ -17,6 +17,7 @@ import json
 import os
 import string
 from typing import Any, List
+from functools import partial
 
 import editdistance
 import numpy as np
@@ -303,12 +304,24 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         else:
             self.inference_cfg_filter_interpolation_scale = cfg.get('inference_cfg_filter_interpolation_scale', 1.0)
 
+        # whether to estimate MOS in predict_step.
+        self.estimate_mos = cfg.get('estimate_mos', True)
+        if self.estimate_mos:
+            # requires to specify a non-matching high-quality and clean reference audio file. It is used to estimate MOS.
+            self.non_matching_ref_audio_filepath = cfg.get('non_matching_ref_audio_filepath', None)
+            if self.non_matching_ref_audio_filepath is None:
+                raise ValueError(f"Please provide a high-quality reference audio to estimate the MOS. Alternatively, "
+                                 f"set `model.estimate_mos=False` to disable MOS estimation.")
+            if not os.path.exists(self.non_matching_ref_audio_filepath):
+                raise FileNotFoundError(f"Please provide a valid file path for a high-quality reference audio to estimate"
+                                        f" the MOS. Alternatively, set `model.estimate_mos=False` to disable MOS estimation.")
+
     def decode_wav_from_codec_model(self, codes):
         codec_model = self.additional_models['codec']
         if self.codecmodel_type == 'nemo_codec':
             codec_len = torch.Tensor([codes.shape[1]]).long().cuda()
             if codec_len < 10:
-                # return a one second silence
+                # return a one-second silence
                 return torch.zeros(24000).cuda()
             wav, _ = codec_model.decode(tokens=codes.unsqueeze(0), tokens_len=codec_len)
             wav = wav[0]
@@ -1931,20 +1944,32 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 wavlm_sv_model = self.additional_models['wavlm_sv_model']
                 wavlm_sv_extractor = self.additional_models['wavlm_sv_extractor']
 
-            if 'squim_mos_model' not in self.additional_models:
-                squim_mos_model = SQUIM_SUBJECTIVE.get_model().to(device)
-                self.additional_models['squim_mos_model'] = squim_mos_model
-            else:
-                squim_mos_model = self.additional_models['squim_mos_model']
+            # load MOS estimator model only if True.
+            if self.estimate_mos:
+                # load mos estimator.
+                if 'squim_mos_model' not in self.additional_models:
+                    squim_mos_model_full = SQUIM_SUBJECTIVE.get_model().to(device)
+                    self.additional_models['squim_mos_model'] = squim_mos_model_full
+                else:
+                    squim_mos_model_full = self.additional_models['squim_mos_model']
+
+                # load non-matching reference clean audio.
+                ref_16khz_wav, _ = librosa.load(self.non_matching_ref_audio_filepath, sr=16000)
+
+                # prepare MOS estimator by taking a single audio example as an input.
+                squim_mos_model = partial(
+                    squim_mos_model_full,
+                    reference=torch.from_numpy(ref_16khz_wav).to(device).unsqueeze(0)
+                )
 
             _exp_dir_path = self.logger.log_dir
             _exp_dir_path = _exp_dir_path + '/Sample_Audios'
             if not os.path.exists(_exp_dir_path):
                 os.mkdir(_exp_dir_path)
 
-            squim_mos_list = []
-            squim_mos_list_context_gt = []
-            squim_mos_list_context_pred = []
+            squim_mos_list_pred = []
+            squim_mos_list_context = []
+            squim_mos_list_gt = []
             similarity_list = []
             similarity_list_wavlm = []
             pred_context_similarity_list = []
@@ -2013,8 +2038,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     step = batch_idx * test_dataloader_batch_size + i
 
                 audio_len = self.decoder_context_len + (labels[i][0][self.decoder_context_len:] != 0).sum().item()
-                # step = batch_idx * self.test_dataloader().batch_size + i
-                
+
                 if torch.count_nonzero(speech_mask) > 0:
                     dec_input_to_1024 = self.convert_tokens_to_range(dec_input_raw[i, :, 0:audio_len])
                     dec_input_to_1024_answer = dec_input_to_1024[:,self.decoder_context_len+1:]
@@ -2088,9 +2112,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         np.linalg.norm(spk_embedding_pred_wavlm) * np.linalg.norm(spk_embedding_gt_wavlm)
                     )
                     similarity_list_wavlm.append(similarity_wavlm)
-
-                    squim_mos_score = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0), torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0)).item()
-                    squim_mos_list.append(squim_mos_score)
 
                     if lang[i] == Lang.zh.value:
                         audio_to_pred_zh.append({"step": i, "audio": audio_fp_pred})
@@ -2175,11 +2196,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         np.linalg.norm(spk_embedding_context_wavlm) * np.linalg.norm(spk_embedding_gt_wavlm)
                     )
 
-                    squim_mos_score_context_gt = squim_mos_model(torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
-                    squim_mos_score_context_pred = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0), context_wav.to(device).unsqueeze(0)).item()
-                    squim_mos_list_context_gt.append(squim_mos_score_context_gt)
-                    squim_mos_list_context_pred.append(squim_mos_score_context_pred)
-
                     if log_scalars:
                         self.logger.experiment.add_scalar(f'Inf SV Cossim Context Pred', pred_similarity_context, step)
                         self.logger.experiment.add_scalar(f'Inf SV Cossim Context GT', gt_similarity_context, step)
@@ -2211,6 +2227,14 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         ter_dict[layer_idx]['hypothesis'].append(predicted_tokens[layer_idx].cpu().numpy().tolist())
                         ter_dict[layer_idx]['gt'].append(dec_input_to_1024_answer[layer_idx].cpu().numpy().tolist())
 
+                    # estimate MOS scores.
+                    if self.estimate_mos:
+                        squim_mos_score_pred = squim_mos_model(torch.from_numpy(pred_16khz_wav).to(device).unsqueeze(0)).item()
+                        squim_mos_score_context = squim_mos_model(context_wav.to(device).unsqueeze(0)).item()
+                        squim_mos_score_gt = squim_mos_model(torch.from_numpy(gt_16khz_wav).to(device).unsqueeze(0)).item()
+                        squim_mos_list_pred.append(squim_mos_score_pred)
+                        squim_mos_list_context.append(squim_mos_score_context)
+                        squim_mos_list_gt.append(squim_mos_score_gt)
                 else:
                     r = labels[i, 0].long()
                     nzm = r != 0
@@ -2312,11 +2336,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             pred_context_similarity_avg_wavlm = np.mean(pred_context_similarity_list_wavlm)
             gt_context_similarity_avg_wavlm = np.mean(gt_context_similarity_list_wavlm)
 
-
-            squim_mos_avg = np.mean(squim_mos_list)
-            squim_mos_context_gt_avg = np.mean(squim_mos_list_context_gt)
-            squim_mos_context_pred_avg = np.mean(squim_mos_list_context_pred)
-
             if log_scalars:
                 self.logger.experiment.add_scalar(f'Inf SV Avg Cossim', similarity_avg, batch_idx)
             self.predict_step_outputs.append(
@@ -2327,9 +2346,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     'wavlm_avg_cossim': similarity_avg_wavlm,
                     'wavlm_avg_cossim_context_pred': pred_context_similarity_avg_wavlm,
                     'wavlm_avg_cossim_context_gt': gt_context_similarity_avg_wavlm,
-                    'squim_mos_pred_GT': squim_mos_avg,
-                    'squim_mos_GT_context': squim_mos_context_gt_avg,
-                    'squim_mos_pred_context': squim_mos_context_pred_avg,
+                    'squim_mos_pred': np.mean(squim_mos_list_pred) if len(squim_mos_list_pred) > 0 else None,
+                    'squim_mos_context': np.mean(squim_mos_list_context) if len(squim_mos_list_context) > 0 else None,
+                    'squim_mos_gt': np.mean(squim_mos_list_gt) if len(squim_mos_list_gt) > 0 else None,
                     'cer_transcript': np.mean(cer_batch),
                     'wer_transcript': np.mean(wer_batch),
                     'cer_phoneme': np.mean(cer_phoneme) if len(cer_phoneme) > 0 else None,
@@ -2346,6 +2365,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 }
             )
 
+    #TODO @xueyang: PTL 2.0+ patch. Signature of method `on_predict_epoch_end` does not match signature of the base method in PTL class 'ModelHooks'.
+    # Remove the `outputs` param and choose `self.predict_step_output` instead.
     def on_predict_epoch_end(self, outputs: List[Any]) -> None:
 
         gather_results = [None for _ in range(parallel_state.get_data_parallel_world_size())]
