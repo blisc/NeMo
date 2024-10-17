@@ -46,8 +46,7 @@ __all__ = ["MegatronTransformerEncoderDecoderModule"]
 
 
 class MegatronTransformerEncoderDecoderModule(MegatronModule):
-    """Transformer encoder-decoder model.
-    """
+    """Transformer encoder-decoder model."""
 
     def __init__(
         self,
@@ -144,7 +143,11 @@ class MegatronTransformerEncoderDecoderModule(MegatronModule):
         # apply hidden transformations if needed
         if self.hiddens_module is not None:
             enc_output = self.hiddens_module.apply_hidden_transforms(
-                {"hiddens": enc_output, "hiddens_mask": self.get_hiddens_mask(enc_attn_mask),}, batch_data=batch_data,
+                {
+                    "hiddens": enc_output,
+                    "hiddens_mask": self.get_hiddens_mask(enc_attn_mask),
+                },
+                batch_data=batch_data,
             )
 
         return enc_output
@@ -236,9 +239,11 @@ class MegatronTransformerEncoderDecoderModule(MegatronModule):
         dec_output = self.decode(
             dec_input=dec_input,
             dec_attn_mask=dec_attn_mask,
-            enc_output=enc_output["enc_output"]  # enc_output is a dict if we used hidden transformations
-            if self.hiddens_module is not None
-            else enc_output,
+            enc_output=(
+                enc_output["enc_output"]  # enc_output is a dict if we used hidden transformations
+                if self.hiddens_module is not None
+                else enc_output
+            ),
             # Adjust encoder attention mask if encoder is a perceiver.
             enc_attn_mask=self.get_hiddens_mask(enc_attn_mask),
             dec_layer_past=dec_layer_past,

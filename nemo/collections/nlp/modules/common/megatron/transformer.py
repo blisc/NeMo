@@ -1633,7 +1633,7 @@ class ParallelTransformer(MegatronModule):
                         for encoder_idx in range(len(encoder_output)):
                             for layer_idx in enc_output_to_layers[encoder_idx]:
                                 layer_to_encoder_num_mapping[layer_idx] = encoder_idx
-                            
+
                     for index in range(self.num_layers):
                         layer = self._get_layer(index)
                         past = None
@@ -1648,7 +1648,7 @@ class ParallelTransformer(MegatronModule):
                             _cross_attention_relative_position_bias = cross_attention_relative_position_bias[layer_to_encoder_num_mapping[index]]
                             if encoder_max_sequence_len is not None:
                                 _encoder_max_sequence_len = encoder_max_sequence_len[layer_to_encoder_num_mapping[index]]
-                            
+
 
                         if layer_past is not None:
                             past = layer_past[index]

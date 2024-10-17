@@ -308,8 +308,8 @@ class VideoText(_Collection):
         super().__init__(data)
 
 
-class InstructionTuningAudioText(_Collection):
-    """`AudioText` collector from asr structured json files."""
+class T5AudioText(_Collection):
+    """T5 collection copied from  `ASRAudioText`."""
 
     OUTPUT_TYPE = collections.namedtuple(
         typename='InstructionTuningText',

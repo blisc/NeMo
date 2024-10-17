@@ -473,7 +473,7 @@ class MegatronTokenLevelEncoderDecoderModule(MegatronModule, adapter_mixins.Adap
         return encoder_kv_channels, decoder_kv_channels
 
     def set_input_tensor(self, input_tensor):
-        """ See megatron.model.transformer.set_input_tensor()"""
+        """See megatron.model.transformer.set_input_tensor()"""
         # This is usually handled in schedules.py but some inference code still
         # gives us non-lists or None
 
@@ -570,7 +570,8 @@ class MegatronTokenLevelEncoderDecoderModule(MegatronModule, adapter_mixins.Adap
 
         if self.add_encoder and self.encoder_relative_position_embedding is not None:
             encoder_self_attention_relative_position_bias = self.encoder_relative_position_embedding(
-                query_seq_length=enc_seq_length, key_seq_length=enc_seq_length,
+                query_seq_length=enc_seq_length,
+                key_seq_length=enc_seq_length,
             )
 
         if output_enc_hidden_only:
@@ -608,8 +609,11 @@ class MegatronTokenLevelEncoderDecoderModule(MegatronModule, adapter_mixins.Adap
                     query_seq_length=dec_input_ids.size(1), key_seq_length=dec_input_ids.size(1)
                 )
                 if not self.decoder_cfg.relative_position_bias_self_attention_only:
-                    decoder_cross_attention_relative_position_bias = self.decoder_cross_attention_relative_position_embedding(
-                        query_seq_length=dec_input_ids.size(1), key_seq_length=enc_seq_length,
+                    decoder_cross_attention_relative_position_bias = (
+                        self.decoder_cross_attention_relative_position_embedding(
+                            query_seq_length=dec_input_ids.size(1),
+                            key_seq_length=enc_seq_length,
+                        )
                     )
                 else:
                     decoder_cross_attention_relative_position_bias = None
@@ -660,7 +664,8 @@ class MegatronTokenLevelEncoderDecoderModule(MegatronModule, adapter_mixins.Adap
                     # check if hiddens is used
                     if self.hiddens_cfg is not None:
                         loss_dict = self.enc_dec_model.hiddens_module.apply_loss_transforms(
-                            outputs=enc_output, batch_data=batch_data,
+                            outputs=enc_output,
+                            batch_data=batch_data,
                         )
                         loss_dict["tokens_loss"] = tokens_loss
                         # We need to store default output in a known key, so that we can mimic default behaviour
@@ -719,6 +724,8 @@ class MegatronTokenLevelEncoderDecoderModule(MegatronModule, adapter_mixins.Adap
 
 
 class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderDecoderModule):
+    """A subclass of MegatronTokenLevelEncoderDecoderModule that adds support for speech token input and output"""
+
     def __init__(self, *args, **kwargs):
         super(MegatronTokenLevelEncoderDecoderSpeechLLMModule, self).__init__(*args, **kwargs)
         # Overridden in MegatronT5SpeechLMModel constructor
@@ -895,8 +902,11 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     query_seq_length=dec_input_ids.size(1), key_seq_length=dec_input_ids.size(1)
                 )
                 if not self.decoder_cfg.relative_position_bias_self_attention_only:
-                    decoder_cross_attention_relative_position_bias = self.decoder_cross_attention_relative_position_embedding(
-                        query_seq_length=dec_input_ids.size(1), key_seq_length=enc_seq_length,
+                    decoder_cross_attention_relative_position_bias = (
+                        self.decoder_cross_attention_relative_position_embedding(
+                            query_seq_length=dec_input_ids.size(1),
+                            key_seq_length=enc_seq_length,
+                        )
                     )
                 else:
                     decoder_cross_attention_relative_position_bias = None
@@ -907,7 +917,7 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                 single_encoder = True
                 cross_attention_prior = [cross_attention_prior]
 
-            
+
             decoder_cross_attention_relative_position_bias = []
             for _cross_attention_prior in cross_attention_prior:
                 _decoder_cross_attention_relative_position_bias = None
@@ -989,8 +999,9 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                         align_every_n_head = self.align_every_n_head
                         dec_start_idx = self.decoder_context_len + 1 # +1 to remove bos
                         attention_scores_sliced = attention_scores_combined[
-                            :,::align_every_n_head,dec_start_idx:,text_start_idx:-(2 + end_offset)
-                        ] # -2 to remove eos and pad
+                            :, ::align_every_n_head, dec_start_idx:, text_start_idx :
+                        ]  # -2 to remove eos and pad
+                        # @shehzeen: Removing the text end slicing, since it is anyway handled by the enc_len passed to CTC loss
                         attention_logprobs = (
                             attention_scores_sliced  # not taking log_softmax, since we will do that in loss function
                         )

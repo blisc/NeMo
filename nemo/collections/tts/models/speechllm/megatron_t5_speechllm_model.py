@@ -84,13 +84,14 @@ __all__ = ['MegatronT5SpeechLMModel']
 
 class MegatronT5OverrideModel(MegatronT5Model):
     def _build_tokenizer(self):
-        if self._cfg.tokenizer.library  == "sentencepiece":
+        if self._cfg.tokenizer.library == "sentencepiece":
             if hasattr(self._cfg.tokenizer, "sentencepiece_legacy"):
                 legacy = self._cfg.tokenizer.sentencepiece_legacy
             else:
                 legacy = True if self._cfg.tokenizer.library == 'sentencepiece' else False
             self.tokenizer = SentencePieceSpeechLLMTTSTokenizer(
-                model_path=self.register_artifact("tokenizer.model", self._cfg.tokenizer.get('model', None)), legacy=legacy
+                model_path=self.register_artifact("tokenizer.model", self._cfg.tokenizer.get('model', None)),
+                legacy=legacy,
             )
 
             if self._cfg.tokenizer.get('additional_special_tokens', None) is not None:
@@ -149,20 +150,20 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
     """
     Model class for prompt-tuning or p-tuning a pretrained Megatron T5 model.
 
-    Prompt Tuning initializes virtual prompt embeddings directly from a copy of
-    certain token embeddings from the pretrained T5 model's vocabulary
+    Prompt Tuning initalizes virtual prompt embeddings directly from a copy of
+    certain token embeddings from the the pretrained T5 model's vocabulary
     and directly tunes these embedding weights. The token embeddings used in
-    initialization are specified by the user in the config file. The model can
+    initalization are specified by the user in the config file. The model can
     be prompt-tuned for multiple tasks at once. Virtual prompts are stored in a
     prompt table and can be added or deleted without disrupting virtual prompts
     for other tasks.
 
     P-tuning initializes an LSTM encoder model that generates virtual prompt
     embeddings for every task. Each task shares the same encoder. After p-tuning
-    is complete, the learned virtual prompts can be saved to the prompt table
+    is compelete, the learned virtual prompts can be saved to the prompt table
     using add_ptuned_prompts_to_prompt_table(). Thus, if a user wants to add a
     new virtual prompt via p-tuning, they do not need to retrain on all previous
-    tasks. This gives p-tuning the same task flexibility as prompt-tuning.
+    tasks. This gives p-tuning the same task flexiblity as prompt-tuning.
     """
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -195,7 +196,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         if self.enc_output_to_layers is not None:
             # Convert from listconfig to list
             self.enc_output_to_layers = [ [l for l in encoder_layer] for encoder_layer in self.enc_output_to_layers ]
-        
+
         self.frozen_model.enc_dec_model.speech_offset = speech_offset
         self.frozen_model.enc_dec_model.speech_codebook_size = speech_codebook_size
         self.frozen_model.enc_dec_model.num_speech_codebooks = num_speech_codebooks
@@ -630,7 +631,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 _,  # TODO: text limit and lang not in tarred dataset
                 _,
             ) = batch
-            
+
             if self.trainer.global_step % self.train_check_interval == 0 and not validation_step and self.is_rank_zero:
                 self.frozen_model.enc_dec_model.logging_step = True
 
@@ -780,10 +781,15 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                                             phoneme_seq=None if self.plot_alignments_sliced else [text_si],
                                         )
                                         self.logger.experiment.add_image(
-                                            name, alignment_image, self.global_step, dataformats="HWC",
+                                            name,
+                                            alignment_image,
+                                            self.global_step,
+                                            dataformats="HWC",
                                         )
                                         attention_sliced_list.append(
-                                            attention_probs[0, _i, self.decoder_context_len:audio_len, text_si:text_ei]
+                                            attention_probs[
+                                                0, _i, self.decoder_context_len : audio_len, text_si:text_ei
+                                            ]
                                         )
                                 attention_sliced = torch.stack(attention_sliced_list)
                                 attention_sliced = torch.mean(attention_sliced, 0)
@@ -882,7 +888,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 speech_mask,
             ) = batch
 
-            
             output_logits, _, token_and_speech_logits = model(
                 context_and_question_tokens,
                 context_and_question_tokens,
@@ -908,15 +913,15 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         return fwd_output_only_func
 
     def backward(self, *args, **kwargs):
-        """ LightningModule hook to do backward.
-            We want this to do nothing since we run backward in the fwd/bwd functions from megatron-core.
-            No need to call it here.
+        """LightningModule hook to do backward.
+        We want this to do nothing since we run backward in the fwd/bwd functions from megatron-core.
+        No need to call it here.
         """
         return
 
     def optimizer_zero_grad(self, *args, **kwargs):
-        """ LightningModule hook to zero grad.
-            We want this to do nothing as we are zeroing grads during the training_step.
+        """LightningModule hook to zero grad.
+        We want this to do nothing as we are zeroing grads during the training_step.
         """
         return
 
@@ -1033,9 +1038,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             enc_mask=enc_mask,
             num_tokens_to_generate=self.decoder_seq_length,
             encoder_input=encoder_input,
-            bos_id=self.tokenizer.pad_id
-            if self.cfg.data.get('decoder_starts_with_pad', False)
-            else self.tokenizer.bos_id,
+            bos_id=(
+                self.tokenizer.pad_id if self.cfg.data.get('decoder_starts_with_pad', False) else self.tokenizer.bos_id
+            ),
         )
         # Special ids to text function to handle stripping <eos> and special tokens with sentencepiece tokenizers.
         preds_text = MegatronT5SFTModel.ids_to_text(predicted_token_ids, self.tokenizer)
@@ -1091,12 +1096,10 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         ) = batch
         # loss_mask (b, t)
         # does not use dataloader_iter due to device placement issues arising from PTL
-        
         mode = self.training
         self.eval()
         gbs = self.cfg.get('validation_global_batch_size', self.cfg.global_batch_size)
         self._reconfigure_and_process_inference_batch(virtual_tokens.size(0), gbs)
-
         loss_mean = self.fwd_bwd_step(
             itertools.chain([batch]), batch_idx, forward_only=True
         )  # comment this out and add custom forward function to calculate WER
@@ -1115,11 +1118,11 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     )
 
         labels_original = labels.clone()  # (b, 8, t)
-        
+
         _cross_attention_prior = cross_attention_prior
         if isinstance(context_and_question_tokens, list):
             _cross_attention_prior = [None, cross_attention_prior]
-        
+
         output_loss, _, output_logits = self.forward(
             virtual_tokens,
             context_and_question_tokens,
@@ -1235,7 +1238,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         for lidx in range(len(attention_probs_list)):
                             attention_probs = attention_probs_list[lidx]
                             for _i in range(attention_probs.shape[1]):
-                                attention_sliced_list.append(attention_probs[0, _i, self.decoder_context_len:audio_len, text_si:text_ei])
+                                attention_sliced_list.append(
+                                    attention_probs[0, _i, self.decoder_context_len : audio_len, text_si:text_ei]
+                                )
                         attention_sliced = torch.stack(attention_sliced_list)
                         attention_sliced = torch.mean(attention_sliced, 0)
                         text = None
@@ -1351,7 +1356,11 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 averaged_first_layer_accuracy = torch.stack([item['first_layer_accuracy'] for item in outputs]).mean()
 
                 self.log(
-                    'val_loss_total_check', averaged_loss_total_check, prog_bar=False, rank_zero_only=True, batch_size=1
+                    'val_loss_total_check',
+                    averaged_loss_total_check,
+                    prog_bar=False,
+                    rank_zero_only=True,
+                    batch_size=1,
                 )
                 self.log(
                     'val_first_layer_accuracy',
@@ -1394,7 +1403,11 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 logging.info(f'Validation loss: {averaged_loss}')
                 self.log('val_loss', averaged_loss, prog_bar=True, rank_zero_only=True, batch_size=1)
                 self.log(
-                    'val_loss_total_check', averaged_loss_total_check, prog_bar=False, rank_zero_only=True, batch_size=1
+                    'val_loss_total_check',
+                    averaged_loss_total_check,
+                    prog_bar=False,
+                    rank_zero_only=True,
+                    batch_size=1,
                 )
 
                 averaged_first_layer_accuracy = torch.stack([item['first_layer_accuracy'] for item in outputs]).mean()
@@ -1446,7 +1459,8 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 gather_results_dedup = list(set(itertools.chain(*gather_results)))
 
                 val_metric_dict = self.validation_metric.get_score(
-                    [i[2] for i in gather_results_dedup], [i[1] for i in gather_results_dedup],
+                    [i[2] for i in gather_results_dedup],
+                    [i[1] for i in gather_results_dedup],
                 )
 
                 for metric, val in val_metric_dict.items():
@@ -1566,9 +1580,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             drop_last=drop_last,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            persistent_workers=True
-            if num_workers > 0
-            else False,  # (@adithyare and @eharper) We need to set this to True to get around issues with spawn=True
+            persistent_workers=(
+                True if num_workers > 0 else False
+            ),  # (@adithyare and @eharper) We need to set this to True to get around issues with spawn=True
         )
         logging.info(f'build success: {len(dataloader)} {dataset_paths}')
         if self.phoneme_tokenizer is None:
@@ -1623,9 +1637,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             drop_last=drop_last,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            persistent_workers=True
-            if num_workers > 0
-            else False,  # (@adithyare and @eharper) We need to set this to True to get around issues with spawn=True
+            persistent_workers=(
+                True if num_workers > 0 else False
+            ),  # (@adithyare and @eharper) We need to set this to True to get around issues with spawn=True
         )
         logging.info(f'build success: {len(dataloader)} {dataset_paths}')
 
@@ -1652,7 +1666,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
         return single_space_text
 
-    def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0, log_scalars=True, global_step=None) -> Any:
+    def predict_step(
+        self, batch: Any, batch_idx: int, dataloader_idx: int = 0, log_scalars=True, global_step=None
+    ) -> Any:
 
         with torch.no_grad():
             (
@@ -1831,7 +1847,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 if t == end_inference_loop_at:
                     print("All ends detected")
                     break
-                
+
                 if isinstance(enc_mask, list):
                     encoder_max_sequence_len = [e.size(1) for e in enc_mask]
                 else:
@@ -1857,12 +1873,12 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         encoder_max_sequence_len=encoder_max_sequence_len
                     )
                     encoder_output = token_and_speech_logits[-1]
-                    
+
                     if isinstance(encoder_output, list):
                         encoder_output = [e.transpose(0, 1) for e in encoder_output]
                     else:
                         encoder_output = encoder_output.transpose(0, 1)
-                    
+
                 else:
                     # Prepare batch
                     batch = [
@@ -1876,7 +1892,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         taskname_ids,
                         speech_mask,
                     ]
-                    
+
                     output_tensor = fwd_bwd_function(
                         forward_step_func=self.get_forward_output_only_func(),
                         data_iterator=iter([batch,]),
@@ -2004,7 +2020,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             if 'nemo_sv_model' not in self.additional_models:
                 nemo_sv_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(model_name='titanet_large')
                 nemo_sv_model = nemo_sv_model.to(device)
-                nemo_sv_model.encoder.disable_torch_distributed = True # For multi-gpu training validation
+                nemo_sv_model.encoder.disable_torch_distributed = True  # For multi-gpu training validation
                 nemo_sv_model.eval()
                 self.additional_models['nemo_sv_model'] = nemo_sv_model
                 logging.info(f"Loaded SV Model: {nemo_sv_model}")
@@ -2020,7 +2036,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     model = nemo_asr.models.EncDecRNNTBPEModel
                 asr_model = model.from_pretrained(model_name=asr_model)
                 asr_model = asr_model.to(device)
-                asr_model.encoder.disable_torch_distributed = True # For multi-gpu training validation
+                asr_model.encoder.disable_torch_distributed = True  # For multi-gpu training validation
                 asr_model.eval()
                 self.additional_models['asr_model'] = asr_model
                 logging.info(f"Loaded ASR Model: {asr_model}")
@@ -2038,7 +2054,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     self.additional_models['asr_model_zh'] = asr_model_zh
                 else:
                     asr_model_zh = self.additional_models['asr_model_zh']
-            
+
             if 'wavlm_sv_model' not in self.additional_models:
                 wavlm_sv_extractor = Wav2Vec2FeatureExtractor.from_pretrained('microsoft/wavlm-base-plus-sv')
                 wavlm_sv_model = WavLMForXVector.from_pretrained('microsoft/wavlm-base-plus-sv')
@@ -2266,7 +2282,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                                 [v for v in _context_token_list if v < self.lm_vocab_size]
                             )
                             self.logger.experiment.add_text("Context Text", _context_text, self.global_step)
-                            
+
                     else:
                         context_wav = None
                         # raise NotImplementedError("During prediction, there was no context found.")
@@ -2282,7 +2298,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         inputs_wavlm = wavlm_sv_extractor([context_wavlm_wav], padding=True, return_tensors="pt", sampling_rate=16000)
                         for key in inputs_wavlm.keys():
                             inputs_wavlm[key] = inputs_wavlm[key].to(device)
-            
+
                         with torch.no_grad():
                             wavlm_embeddings = wavlm_sv_model(**inputs_wavlm).embeddings
                             wavlm_embeddings = torch.nn.functional.normalize(wavlm_embeddings, dim=-1).cpu()
@@ -2396,15 +2412,19 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 assert all_audio_to_pred[i]["step"] == all_audio_to_pred[i + 1]["step"]
                 # step = batch_idx * self.test_dataloader().batch_size + all_audio_to_pred[i]["step"]
                 step = batch_idx * test_dataloader_batch_size + all_audio_to_pred[i]["step"]
-                question_text = question_texts[i//2]
+                question_text = question_texts[i // 2]
 
                 # No need to process text since both are ASR outputs
                 cer_sample = word_error_rate([greedy_transcripts[i]], [greedy_transcripts[i + 1]], use_cer=True)
                 wer_sample = word_error_rate([greedy_transcripts[i]], [greedy_transcripts[i + 1]], use_cer=False)
 
                 # Processing text since one is ASR output and the other is the GT text
-                cer_gt = word_error_rate([self.process_text(greedy_transcripts[i])], [self.process_text(question_text)], use_cer=True)
-                wer_gt = word_error_rate([self.process_text(greedy_transcripts[i])], [self.process_text(question_text)], use_cer=False)
+                cer_gt = word_error_rate(
+                    [self.process_text(greedy_transcripts[i])], [self.process_text(question_text)], use_cer=True
+                )
+                wer_gt = word_error_rate(
+                    [self.process_text(greedy_transcripts[i])], [self.process_text(question_text)], use_cer=False
+                )
 
                 self.logger.experiment.add_text("Inf Predicted Text", greedy_transcripts[i], step)
                 self.logger.experiment.add_text("Inf GT Text", greedy_transcripts[i + 1], step)
@@ -2498,7 +2518,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
 
             input_prediction_pair = []
             correct = 0
-            for (input, pred, label) in gather_results_dedup:
+            for input, pred, label in gather_results_dedup:
                 input_prediction_pair.append((input, pred))
                 if label:
                     if pred == label:
