@@ -11,7 +11,6 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from encodec import EncodecModel
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -41,13 +40,12 @@ class AudioDataset(Dataset):
         min_duration=0.0,
         max_duration=22.0,
         sample_rate=24000,
-        noise_manifest_path=None,
-        min_snr_db=0,
-        max_snr_db=5,
         max_same_speaker_audios=1,
         use_context_as_same_speaker_audio=False,
         pad_multiple=320,
         audio_type="actual", # actual or noise or silence
+        start_batch_idx=0,
+        batch_size=16,
     ):
         self.data = []
         speakerwise_records = {}
@@ -82,14 +80,6 @@ class AudioDataset(Dataset):
         self.sample_rate = sample_rate
         self.audio_type = audio_type
 
-        # TODO: Using White Noise Perturbation right now (dont have noise manifest)
-
-        # self.noise_perturber = NoisePerturbation(
-        #     manifest_path=noise_manifest_path,
-        #     min_snr_db=min_snr_db,
-        #     max_snr_db=max_snr_db,
-        # )
-
         self.noise_perturber = WhiteNoisePerturbation()
 
         self.max_same_speaker_audios = max_same_speaker_audios
@@ -105,6 +95,9 @@ class AudioDataset(Dataset):
             self.add_context_records_to_manifest()
 
         self.base_data_dir = get_base_dir([item["audio_filepath"] for item in self.data])
+        if start_batch_idx > 0:
+            self.data = self.data[start_batch_idx * batch_size :]
+            logging.info("Starting from batch idx", start_batch_idx)
         # self.filter_invalid_records()
         # if sup_data_dir is not None:
         #     self.sup_data_dir = sup_data_dir
@@ -393,7 +386,7 @@ def save_batch_audios(batch, bidx, temp_dir, codec_model, codec_model_type='enco
                     elif codec_model_type == 'dac':
                         _z = codec_model.quantizer.from_codes(codec.unsqueeze(0))[0]
                         codec_decoded_audio = codec_model.decoder(_z)[0][0]
-                    elif codec_model_type in ['nemo_codec', 'nemo_codec21', 'nemo_codec211k', 'nemo_codec214k']:
+                    elif codec_model_type.startswith('nemo_'):
                         codec_len = torch.Tensor([codec.shape[1]]).long().cuda()
                         codec_decoded_audio, _ = codec_model.decode(tokens=codec.unsqueeze(0), tokens_len=codec_len)
                         codec_decoded_audio = codec_decoded_audio[0]
@@ -420,27 +413,60 @@ def save_manifest(records, manifest_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Create multiple tasks')
-    parser.add_argument("--noise_manifest", type=str, default="/datap/misc/noisedata/train_manifest.json")
     parser.add_argument(
         '--manifest_paths',
         type=str,
         default="/Data/manifests_libri_local/train_clean_300_speechlm_ttstasks_with3sec_ref_all_random.json",
     )
     parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--split_num', type=int, default=0)
     parser.add_argument('--out_dir', type=str, default='/Data/CodecDatasets/speechllm_codecdatasets/')
     parser.add_argument('--dataset_name', type=str, default='LibriTTSCorrectContext_train')
     parser.add_argument('--codec_model_path', type=str, default='/Data/Checkpoints/rlang_codec/SpeechCodec.nemo')
     parser.add_argument('--codec_bw', type=float, default=6.0)  # 6 for 8 codebooks, 1.5 for 3 codebooks
-    parser.add_argument('--codec_model', type=str, default='nemo_codec')  # encodec, uniaudio_codec, dac, nemo_codec, nemo_codec21, nemo_codec211k, nemo_codec214k
+    parser.add_argument('--codec_model', type=str, default='nemo_spectral_86fps_8codebooks_1kcodes')  # encodec, uniaudio_codec, dac, nemo_spectral_86fps_8codebooks_1kcodes, nemo_audio_86fps_8codebooks_1kcodes ...
     parser.add_argument('--use_context_as_same_speaker_audio', action='store_true')
     parser.add_argument('--save_only_tts_records', action='store_true')
+    parser.add_argument('--save_only_codec_files', action='store_true')
     parser.add_argument('--shuffle', action='store_true')
     parser.add_argument('--split_into_train_val', action='store_true')
     parser.add_argument('--num_val_records', type=int, default=500)
     parser.add_argument('--audio_type', type=str, default='actual')  # actual, noise or silence
     args = parser.parse_args()
 
+    nemo_codec_specs = {
+        'nemo_spectral_86fps_8codebooks_1kcodes_v2b': {
+            'downsampling_factor': 256.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_86fps_8codebooks_1kcodes_v2b': {
+            'downsampling_factor': 256.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_21fps_8codebooks_1kcodes_v2b': {
+            'downsampling_factor': 1024.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_21fps_8codebooks_2kcodes_v2bWithWavLM': {
+            'downsampling_factor': 1024.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_21fps_8codebooks_2kcodes_v2bNoWavLM': {
+            'downsampling_factor': 1024.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_21fps_8codebooks_2kcodes_v1': {
+            'downsampling_factor': 1024.0,
+            'sample_rate': 22050,
+        },
+        'nemo_audio_21fps_8codebooks_4kcodes_v2b': {
+            'downsampling_factor': 1024.0,
+            'sample_rate': 22050,
+        },
+    }
+
     if args.codec_model == 'encodec':
+        from encodec import EncodecModel
         codec_model = EncodecModel.encodec_model_24khz()
         codec_model.set_target_bandwidth(6.0)
         codec_model.cuda()
@@ -463,40 +489,46 @@ def main():
         codec_model.to('cuda')
         codec_model_sample_rate = 44100
         codec_model_downsampling_factor = 512.0
-    elif args.codec_model == 'nemo_codec':
+    elif args.codec_model.startswith('nemo_'):
+        assert args.codec_model in nemo_codec_specs, "Unknown codec model {}".format(args.codec_model)
         model_path = args.codec_model_path
         codec_model = AudioCodecModel.restore_from(model_path)
         codec_model.to('cuda')
         codec_model.eval()
-        codec_model_sample_rate = 22050
-        codec_model_downsampling_factor = 256.0
-    elif args.codec_model in ['nemo_codec21', 'nemo_codec211k', 'nemo_codec214k']:
-        model_path = args.codec_model_path
-        codec_model = AudioCodecModel.restore_from(model_path)
-        codec_model.to('cuda')
-        codec_model.eval()
-        codec_model_sample_rate = 22050
-        codec_model_downsampling_factor = 1024.0
+        codec_model_sample_rate = nemo_codec_specs[args.codec_model]['sample_rate']
+        codec_model_downsampling_factor = nemo_codec_specs[args.codec_model]['downsampling_factor']
     else:
         raise ValueError("Unknown codec model {}".format(args.codec_model))
+
+    _exp_name = "{}_{}".format(args.dataset_name, args.codec_model)
+    temp_dir = os.path.join(args.out_dir, "temp_{}_{}".format(_exp_name, args.split_num))
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+    status_file = os.path.join(temp_dir, "process_status.json")
+    start_batch_idx = 0
+    if os.path.exists(status_file):
+        with open(status_file, "r") as f:
+            current_status = json.load(f)
+            if current_status["status"] == "completed":
+                print("Already completed")
+                return
+            else:
+                print("Resuming from", current_status["prcessed_batch_idx"])
+                start_batch_idx = current_status["prcessed_batch_idx"]
 
     dataset = AudioDataset(
         manifest_paths=[args.manifest_paths],
         sample_rate=codec_model_sample_rate,
-        noise_manifest_path=args.noise_manifest,
         use_context_as_same_speaker_audio=args.use_context_as_same_speaker_audio,
         pad_multiple=int(codec_model_downsampling_factor),
         audio_type=args.audio_type,
+        start_batch_idx=start_batch_idx,
+        batch_size=args.batch_size,
     )
 
     dataloader = torch.utils.data.DataLoader(
         dataset=dataset, batch_size=args.batch_size, collate_fn=dataset.pad_collate_fn, shuffle=False, num_workers=8,
     )
-
-    _exp_name = "{}_{}_bw_{}".format(args.dataset_name, args.codec_model, args.codec_bw)
-    temp_dir = os.path.join(args.out_dir, "temp_{}".format(_exp_name))
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
 
     codec_base_dir = os.path.join(args.out_dir, "codecs")
     manifest_dir = os.path.join(args.out_dir, "manifests")
@@ -514,9 +546,10 @@ def main():
     sentencepiece_tts_records = []
     phoneme_plus_sentencepiece_tts_records = []
 
+    total_batches = len(dataloader) + start_batch_idx
     for bidx, batch in enumerate(tqdm(dataloader)):
         # print("bidx", bidx+1, "of", len(dataloader))
-
+        # Update status file
         audio_len_mask = mask_from_lens(batch["audio_len"])
 
         cuda_keys = ['audio', 'perturbed_audio', 'mixed_audio', 'audio_len', 'perturbed_audio_len', 'mixed_audio_len']
@@ -545,7 +578,7 @@ def main():
                 if not args.save_only_tts_records:
                     _, perturbed_codec_codes, _, _, _ = codec_model.encode(batch["perturbed_audio"].unsqueeze(1))
                     _, mixed_codec_codes, _, _, _ = codec_model.encode(batch["mixed_audio"].unsqueeze(1))
-            elif args.codec_model in ['nemo_codec', 'nemo_codec21', 'nemo_codec211k', 'nemo_codec214k']:
+            elif args.codec_model.startswith('nemo_'):
                 original_codec_codes, _ = codec_model.encode(audio=batch["audio"], audio_len=batch["audio_len"])
                 if not args.save_only_tts_records:
                     perturbed_codec_codes, _ = codec_model.encode(
@@ -687,6 +720,15 @@ def main():
 
         if bidx == 0:
             save_batch_audios(batch, bidx, temp_dir, codec_model, args.codec_model, codec_model_sample_rate)
+        
+        with open(status_file, "w") as f:
+            json.dump({"status": "processing", "prcessed_batch_idx": bidx + start_batch_idx, 'total_batches': total_batches}, f)
+
+    with open(status_file, "w") as f:
+        json.dump({"status": "completed", "prcessed_batch_idx": bidx + start_batch_idx, 'total_batches': total_batches}, f)
+        if args.save_only_codec_files:
+            print("Saved only codec files")
+            return
 
     if args.shuffle:
         # To ensure same split for encodec and uniaudio_codec
