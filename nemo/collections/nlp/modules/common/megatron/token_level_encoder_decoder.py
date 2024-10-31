@@ -1004,8 +1004,14 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                         )
                 else:
                     attention_probs = None
+                
+                pred_embedding = self.dec_out_to_code_embedding(dec_output)[0]  # T, B, 32
+                pred_embedding_BCT = pred_embedding.permute(1, 2, 0)  # B, 32, T
+                
                 # project decoder output to vocabulary-size dimensions
                 if self.share_decoder_tokens_head_embeddings:
+                    
+
                     first_layer_vocabsize = (
                         self.speech_offset + self.speech_codebook_size
                     )  # variables set in __init__ of speechlm model
@@ -1036,8 +1042,7 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     with torch.no_grad():
                         labels_dequantized = self.additional_models['codec'].dequantize(tokens=labels_codebook_values, tokens_len=answer_lens) # B, C, T
                     
-                    pred_embedding = self.dec_out_to_code_embedding(dec_output)[0]  # T, B, 32
-                    pred_embedding_BCT = pred_embedding.permute(1, 2, 0)  # B, 32, T
+                    
 
                     speech_token_mask = get_mask_from_lengths(answer_lens, x=dec_attn_mask)
                     pred_embedding_BCT = pred_embedding_BCT * speech_token_mask.unsqueeze(1)
