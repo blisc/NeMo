@@ -86,6 +86,9 @@ import librosa
 
 __all__ = ['MegatronT5SpeechLMModel']
 
+class DoesthisWork():
+    pass
+
 
 class MegatronT5OverrideModel(MegatronT5Model):
     def _build_tokenizer(self):
@@ -206,7 +209,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             self.enc_output_to_layers_gen = torch.full([len(self.enc_output_to_layers), max_], -1)
             for idx, layer_ids in enumerate(self.enc_output_to_layers):
                 self.enc_output_to_layers_gen[idx, :len(layer_ids)] = torch.tensor(layer_ids)
-        
+
         self.frozen_model.enc_dec_model.speech_offset = speech_offset
         self.frozen_model.enc_dec_model.speech_codebook_size = speech_codebook_size
         self.frozen_model.enc_dec_model.num_speech_codebooks = num_speech_codebooks
@@ -326,6 +329,71 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             if not os.path.exists(self.non_matching_ref_audio_filepath):
                 raise FileNotFoundError(f"Please provide a valid file path for a high-quality reference audio to estimate"
                                         f" the MOS. Alternatively, set `model.estimate_mos=False` to disable MOS estimation.")
+
+    def init_infer(self):
+        with torch.no_grad(): #, torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            self.temp_device = next(self.parameters()).device
+
+            virtual_tokens = torch.tensor([[39124, 39125, 39126]]).to(self.temp_device)  # need to concat to both context embeddings and input text embeddings for current model
+            self.taskname_ids = torch.tensor([[4322]]).to(self.temp_device)
+
+            self.max_inference_timesteps = self.cfg.get('max_inference_timesteps', 2048)
+            self.virtual_tokens_embeddings = self.get_embeddings(virtual_tokens, self.taskname_ids, inference=True)
+            self.enc_position_embedding = self.frozen_model.enc_dec_model.encoder_embedding.position_embeddings.weight
+            self.dec_positional_embeddings = self.frozen_model.enc_dec_model.decoder_embedding.position_embeddings.weight
+            self.mask_type = self.frozen_model.enc_dec_model.enc_dec_model.encoder.model_attn_mask_type
+
+            # speaker_context = "TEXT CONTEXT: | Language:en Dataset:Riva Speaker:Lindy_CMU_HAPPY |"
+            speaker_context = "TEXT CONTEXT: | Language:en Dataset:Riva Speaker:Lindy_WIZWIKI |"
+
+            if isinstance(speaker_context, str):
+                speaker_context = self.tokenizer.text_to_ids(speaker_context) + [self.tokenizer.eos_id]
+                speaker_context = torch.tensor(speaker_context).to(self.temp_device)
+                speaker_context = pad_text_to_speech_dims(
+                    speaker_context, self.tokenizer.pad_id, self.num_speech_codebooks - 1
+                )
+
+            speaker_context = speaker_context.unsqueeze(0)
+            speaker_context_embeddings = self.get_embeddings(speaker_context, self.taskname_ids, inference=True)
+            speaker_context_embeddings = torch.cat([self.virtual_tokens_embeddings, speaker_context_embeddings], dim=1)
+            speaker_context_embeddings += self.enc_position_embedding[:speaker_context_embeddings.shape[1],:].unsqueeze(0)
+            # Embed speaker
+            self.speaker_context_mask = torch.ones([1, speaker_context_embeddings.shape[1]]).to(self.temp_device)
+            speaker_context_embeddings = speaker_context_embeddings.transpose(0, 1)
+            speaker_context_mask_3d = attn_mask_postprocess(
+                build_attention_mask_3d(
+                    source_mask=self.speaker_context_mask, target_mask=self.speaker_context_mask, attn_mask_type=self.mask_type,
+                )
+            )
+            self.speaker_context_output = self.frozen_model.enc_dec_model.enc_dec_model.encoder.model[0](
+                speaker_context_embeddings,
+                speaker_context_mask_3d,
+                layer_past=None,
+                get_key_value=False,
+                self_attention_relative_position_bias=None,
+                cross_attention_relative_position_bias=None,
+                set_inference_key_value_memory=False,
+            )
+            self.instruction_tokens = self.tokenizer.text_to_ids("Phoneme TTS")
+            # self.alibi = ALiBiRelativePositionEmbedding(False, 12, LayerType.decoder, None, 2048)
+            self.reset_infer()
+
+    def reset_infer(self):
+        with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            self.input_text_buffer = ""
+            self.generated_codes_buffer = torch.empty([1,8,0], dtype=torch.int64).to(self.temp_device)
+            # Decoder input starts with bos and 0 token
+            bos_dec_input = torch.tensor([self.tokenizer.bos_id, 0]).to(self.temp_device)
+            bos_dec_input = pad_text_to_speech_dims(bos_dec_input, 0, 7)
+            self.bos_dec_input = bos_dec_input.unsqueeze(0)
+            self.curr_dec_input = self.bos_dec_input.clone()
+            self.decoder_t = 1
+            self.text_split_start = 0
+            self.reset = True
+            self.code_length_per_split = []
+            self.splits_tokenized = []
+            self.split_i = 0
+            self.current_enc_step = 0
 
     def decode_wav_from_codec_model(self, codes):
         codec_model = self.additional_models['codec']
@@ -642,7 +710,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 _,  # TODO: text limit and lang not in tarred dataset
                 _,
             ) = batch
-            
+
             if self.trainer.global_step % self.train_check_interval == 0 and not validation_step and self.is_rank_zero:
                 self.frozen_model.enc_dec_model.logging_step = True
 
@@ -894,7 +962,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 speech_mask,
             ) = batch
 
-            
+
             output_logits, _, token_and_speech_logits = model(
                 context_and_question_tokens,
                 context_and_question_tokens,
@@ -1103,7 +1171,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         ) = batch
         # loss_mask (b, t)
         # does not use dataloader_iter due to device placement issues arising from PTL
-        
+
         mode = self.training
         self.eval()
         gbs = self.cfg.get('validation_global_batch_size', self.cfg.global_batch_size)
@@ -1127,11 +1195,11 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     )
 
         labels_original = labels.clone()  # (b, 8, t)
-        
+
         _cross_attention_prior = cross_attention_prior
         if isinstance(context_and_question_tokens, list):
             _cross_attention_prior = [None, cross_attention_prior]
-        
+
         output_loss, _, output_logits = self.forward(
             virtual_tokens,
             context_and_question_tokens,
@@ -1842,7 +1910,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 if t == end_inference_loop_at:
                     print("All ends detected")
                     break
-                
+
                 if isinstance(enc_mask, list):
                     encoder_max_sequence_len = [e.size(1) for e in enc_mask]
                 else:
@@ -1868,12 +1936,12 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         encoder_max_sequence_len=encoder_max_sequence_len
                     )
                     encoder_output = token_and_speech_logits[-1]
-                    
+
                     if isinstance(encoder_output, list):
                         encoder_output = [e.transpose(0, 1) for e in encoder_output]
                     else:
                         encoder_output = encoder_output.transpose(0, 1)
-                    
+
                 else:
                     # Prepare batch
                     batch = [
@@ -1887,7 +1955,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         taskname_ids,
                         speech_mask,
                     ]
-                    
+
                     output_tensor = fwd_bwd_function(
                         forward_step_func=self.get_forward_output_only_func(),
                         data_iterator=iter([batch,]),
@@ -2049,7 +2117,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     self.additional_models['asr_model_zh'] = asr_model_zh
                 else:
                     asr_model_zh = self.additional_models['asr_model_zh']
-            
+
             if 'wavlm_sv_model' not in self.additional_models:
                 wavlm_sv_extractor = Wav2Vec2FeatureExtractor.from_pretrained('microsoft/wavlm-base-plus-sv')
                 wavlm_sv_model = WavLMForXVector.from_pretrained('microsoft/wavlm-base-plus-sv')
@@ -2277,7 +2345,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                                 [v for v in _context_token_list if v < self.lm_vocab_size]
                             )
                             self.logger.experiment.add_text("Context Text", _context_text, self.global_step)
-                            
+
                     else:
                         context_wav = None
                         # raise NotImplementedError("During prediction, there was no context found.")
@@ -2293,7 +2361,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                         inputs_wavlm = wavlm_sv_extractor([context_wavlm_wav], padding=True, return_tensors="pt", sampling_rate=16000)
                         for key in inputs_wavlm.keys():
                             inputs_wavlm[key] = inputs_wavlm[key].to(device)
-            
+
                         with torch.no_grad():
                             wavlm_embeddings = wavlm_sv_model(**inputs_wavlm).embeddings
                             wavlm_embeddings = torch.nn.functional.normalize(wavlm_embeddings, dim=-1).cpu()
@@ -2584,7 +2652,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             inference_key_memory = []
             inference_value_memory = []
             inference_current_sequence_lens = []
-            
+
             speaker_inference_kv_tensor = torch.zeros(
                     [speaker_context_output.shape[0], batch_size, n_head, hidden_size_per_head],
                     dtype=speaker_context_output.dtype,
@@ -2641,7 +2709,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                     dec_input=dec_input,
                     dec_attn_mask=torch.ones([1, t+1]).to(self.device),
                     text_encoded=text_enc_output,
-                    speaker_encoded=speaker_context_output,                        
+                    speaker_encoded=speaker_context_output,
                     text_attn_mask=text_mask_3d_,
                     speaker_attn_mask=speaker_mask_3d,
                     layer_past=None,
@@ -2709,7 +2777,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 )  # (b, s, 1024, 8)
 
                 stop_token_pred = token_logits[:, -1, :].argmax(dim=1)
- 
+
                 if t > decoder_t+n_codes_to_regenerate+10 and stop_token_pred[0] == self.tokenizer.eos_id:
                     break
 
