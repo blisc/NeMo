@@ -263,16 +263,19 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             list_of_speech_tokens_embeddings
         )
 
-        self.frozen_model.enc_dec_model.dec_out_to_code_embedding = tensor_parallel.ColumnParallelLinear(
-            input_size=hidden_size,
-            output_size=32,
-            bias=True,
-            gather_output=not self.frozen_model.enc_dec_model.parallel_output,
-            init_method=init_method_normal(init_method_std),
-            config=self.model_parallel_config,
-            # use_cpu_initialization=False,
-            # params_dtype=self.frozen_model.enc_dec_model.dtype,
-        )
+        if self.cfg.get('embedding_loss_scale', 0.0) > 0.0:
+            import ipdb; ipdb.set_trace()
+            self.frozen_model.enc_dec_model.use_embedding_loss = True
+            self.frozen_model.enc_dec_model.dec_out_to_code_embedding = tensor_parallel.ColumnParallelLinear(
+                input_size=hidden_size,
+                output_size=32,
+                bias=True,
+                gather_output=not self.frozen_model.enc_dec_model.parallel_output,
+                init_method=init_method_normal(init_method_std),
+                config=self.model_parallel_config,
+                # use_cpu_initialization=False,
+                # params_dtype=self.frozen_model.enc_dec_model.dtype,
+            )
 
         self.sample_rate = 24000
         if codecmodel_type == 'nemo_codec':
@@ -1084,7 +1087,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
         ) = batch
         # loss_mask (b, t)
         # does not use dataloader_iter due to device placement issues arising from PTL
-        
         mode = self.training
         self.eval()
         gbs = self.cfg.get('validation_global_batch_size', self.cfg.global_batch_size)

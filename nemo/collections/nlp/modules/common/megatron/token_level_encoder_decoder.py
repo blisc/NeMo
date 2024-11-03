@@ -732,6 +732,7 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
         self.logging_step = False
         self.num_cross_attention_heads = 12  # 12 for 220m T5, 16 for 11b T5
         self.enc_output_to_layers = None
+        self.use_embedding_loss = False
 
     def get_decoder_embeddings(self, dec_input_ids, dec_position_ids, token_type_ids):
         if dec_input_ids.dim() <= 2:
@@ -1005,8 +1006,9 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                 else:
                     attention_probs = None
                 
-                pred_embedding = self.dec_out_to_code_embedding(dec_output)[0]  # T, B, 32
-                pred_embedding_BCT = pred_embedding.permute(1, 2, 0)  # B, 32, T
+                if self.use_embedding_loss == True:
+                    pred_embedding = self.dec_out_to_code_embedding(dec_output)[0]  # T, B, 32
+                    pred_embedding_BCT = pred_embedding.permute(1, 2, 0)  # B, 32, T
                 
                 # project decoder output to vocabulary-size dimensions
                 if self.share_decoder_tokens_head_embeddings:
@@ -1045,11 +1047,12 @@ class MegatronTokenLevelEncoderDecoderSpeechLLMModule(MegatronTokenLevelEncoderD
                     
 
                     speech_token_mask = get_mask_from_lengths(answer_lens, x=dec_attn_mask)
-                    pred_embedding_BCT = pred_embedding_BCT * speech_token_mask.unsqueeze(1)
-                    labels_dequantized = labels_dequantized * speech_token_mask.unsqueeze(1)
+                    if self.use_embedding_loss == True:
+                        pred_embedding_BCT = pred_embedding_BCT * speech_token_mask.unsqueeze(1)
+                        labels_dequantized = labels_dequantized * speech_token_mask.unsqueeze(1)
 
-                    # Compute L2 loss between pred_embedding_BCT and labels_dequantized
-                    embedding_loss = torch.mean((pred_embedding_BCT - labels_dequantized) ** 2)
+                        # Compute L2 loss between pred_embedding_BCT and labels_dequantized
+                        embedding_loss = torch.mean((pred_embedding_BCT - labels_dequantized) ** 2)
 
                     if labels.dim() == 2:
                         # [b, s] -> [s, b]
