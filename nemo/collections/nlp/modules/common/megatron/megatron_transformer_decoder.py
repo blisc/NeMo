@@ -99,8 +99,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
         moe_dropout=0.0,
         position_embedding_type='learned_absolute',
         use_flash_attention=False,
-        layer_type=LayerType.decoder,
-        is_inference=False
+        layer_type=LayerType.decoder
     ):
         super(MegatronTransformerDecoderModule, self).__init__(config=config)
 
@@ -164,8 +163,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
             moe_frequency=moe_frequency,
             moe_dropout=moe_dropout,
             position_embedding_type=position_embedding_type,
-            use_flash_attention=use_flash_attention,
-            is_inference=is_inference
+            use_flash_attention=use_flash_attention
         )
         self._model_key = 'model'
 

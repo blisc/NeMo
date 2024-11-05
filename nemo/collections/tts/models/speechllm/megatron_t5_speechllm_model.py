@@ -29,7 +29,6 @@ from omegaconf.dictconfig import DictConfig
 from omegaconf.omegaconf import open_dict
 from pytorch_lightning.trainer.trainer import Trainer
 
-from apex.transformer.enums import AttnMaskType, ModelType
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.metrics.wer import word_error_rate
 from nemo.collections.tts.data.speechllm.t5_speechllm_dataset import Lang, T5SpeechLMDataset, pad_text_to_speech_dims
@@ -54,15 +53,18 @@ from nemo.collections.tts.losses.aligner_loss import ForwardSumLoss
 from nemo.collections.tts.models import AudioCodecModel
 from nemo.collections.tts.models.speechllm.megatron_base_speechllm_prompt_model import MegatronBaseSpeechLM
 from nemo.collections.tts.parts.utils.helpers import plot_alignment_to_numpy_for_speechllm, plot_codec_to_numpy
+from nemo.collections.nlp.modules.common.megatron.utils import ApexGuardDefaults
 from nemo.utils import AppState, logging
 import imageio
 
 try:
     from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
-
+    from apex.transformer.enums import AttnMaskType, ModelType
     HAVE_APEX = True
 
 except (ImportError, ModuleNotFoundError):
+    AttnMaskType = ApexGuardDefaults()
+    ModelType = ApexGuardDefaults()
 
     HAVE_APEX = False
 
@@ -170,10 +172,9 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
     tasks. This gives p-tuning the same task flexibility as prompt-tuning.
     """
 
-    def __init__(self, cfg: DictConfig, trainer: Trainer, is_inference=False):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
         # torch.autograd.set_detect_anomaly(True)
-        super().__init__(cfg, trainer, is_inference=is_inference)
-        self.is_inference = is_inference
+        super().__init__(cfg, trainer)
         self.model_type = ModelType.encoder_and_decoder
         speech_codebook_size = cfg.data.get('speech_codebook_size', 1024)
         num_speech_codebooks = cfg.data.get('num_speech_codebooks', 8)
@@ -531,7 +532,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 if cfg.get(f'override_{k}') is not None:
                     t5_cfg[k] = cfg.get(f'override_{k}')
 
-            self.frozen_model = MegatronT5OverrideModel(t5_cfg, trainer=trainer, is_inference=self.is_inference)
+            self.frozen_model = MegatronT5OverrideModel(t5_cfg, trainer=trainer)
             num_params = sum(p.numel() for p in self.frozen_model.parameters() if p.requires_grad)
             print(f"Number of parameters: {num_params}")
         else:
@@ -545,8 +546,7 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
                 cfg_language_model_path,
                 trainer=trainer,
                 override_config_path=t5_cfg,
-                save_restore_connector=NLPSaveRestoreConnector(),
-                is_inference=self.is_inference
+                save_restore_connector=NLPSaveRestoreConnector()
             )
 
         if not cfg.get('english_only_model', False):

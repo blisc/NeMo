@@ -153,8 +153,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
         position_embedding_type='learned_absolute',
         multi_query_attention=False,
         normalize_attention_scores=True,
-        use_flash_attention=False,
-        is_inference=False
+        use_flash_attention=False
     ):
         super(ParallelAttention, self).__init__(config=config)
         self.layer_number = max(1, layer_number)
@@ -236,18 +235,15 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
         )
 
         # Output.
-        if is_inference:
-            self.dense = torch.nn.Linear(projection_size, hidden_size, bias=bias)
-        else:
-            self.dense = tensor_parallel.RowParallelLinear(
-                projection_size,
-                hidden_size,
-                config=config,
-                input_is_parallel=True,
-                init_method=output_layer_init_method,
-                skip_bias_add=True,
-                bias=bias,
-            )
+        self.dense = tensor_parallel.RowParallelLinear(
+            projection_size,
+            hidden_size,
+            config=config,
+            input_is_parallel=True,
+            init_method=output_layer_init_method,
+            skip_bias_add=True,
+            bias=bias,
+        )
 
         self.headscale = headscale
         if headscale:

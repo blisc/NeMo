@@ -81,8 +81,7 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
         normalization='layernorm',
         layernorm_epsilon=1e-5,
         persist_layer_norm=False,
-        dropout=0.0,
-        is_inference=False
+        dropout=0.0
     ):
         super(ParallelMLP, self).__init__(config=config)
         self.activation = activation
@@ -116,44 +115,30 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
         self.fast_glu_activation = activation in ['fast-geglu', 'fast-swiglu', 'fast-reglu']
 
         # Project to 4h.
-        if is_inference:
-            self.dense_h_to_4h_2 = torch.nn.Linear(
+        self.dense_h_to_4h = tensor_parallel.ColumnParallelLinear(
+            hidden_size,
+            ffn_hidden_size * 2
+            if self.fast_glu_activation
+            else ffn_hidden_size,  # NOTE: When using geglu, divide ffn dim by 2/3 to keep overall params the same.
+            config=config,
+            gather_output=False,
+            init_method=init_method,
+            skip_bias_add=True,
+            bias=bias,
+        )
+
+        if activation in ['geglu', 'reglu', 'swiglu']:
+            # Separate linear layer for *GLU activations.
+            # Source: https://github.com/huggingface/transformers/blob/bee361c6f1f7704f8c688895f2f86f6e5ff84727/src/transformers/models/t5/modeling_t5.py#L292
+            self.dense_h_to_4h_2 = tensor_parallel.ColumnParallelLinear(
                 hidden_size,
                 ffn_hidden_size,  # NOTE: When using *glu, divide ffn dim by 2/3 to keep overall params the same.
-                bias=bias,
-            )
-        else:
-            self.dense_h_to_4h = tensor_parallel.ColumnParallelLinear(
-                hidden_size,
-                ffn_hidden_size * 2
-                if self.fast_glu_activation
-                else ffn_hidden_size,  # NOTE: When using geglu, divide ffn dim by 2/3 to keep overall params the same.
                 config=config,
                 gather_output=False,
                 init_method=init_method,
                 skip_bias_add=True,
                 bias=bias,
             )
-
-        if activation in ['geglu', 'reglu', 'swiglu']:
-            # Separate linear layer for *GLU activations.
-            # Source: https://github.com/huggingface/transformers/blob/bee361c6f1f7704f8c688895f2f86f6e5ff84727/src/transformers/models/t5/modeling_t5.py#L292
-            if is_inference:
-                self.dense_h_to_4h_2 = torch.nn.Linear(
-                    hidden_size,
-                    ffn_hidden_size,  # NOTE: When using *glu, divide ffn dim by 2/3 to keep overall params the same.
-                    bias=bias,
-            )
-            else:
-                self.dense_h_to_4h_2 = tensor_parallel.ColumnParallelLinear(
-                    hidden_size,
-                    ffn_hidden_size,  # NOTE: When using *glu, divide ffn dim by 2/3 to keep overall params the same.
-                    config=config,
-                    gather_output=False,
-                    init_method=init_method,
-                    skip_bias_add=True,
-                    bias=bias,
-                )
 
         self.glu_activation_family = activation in [
             'geglu',
@@ -200,22 +185,15 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
             self.activation_func = squared_relu
 
         # Project back to h.
-        if is_inference:
-            self.dense_4h_to_h = torch.nn.Linear(
-                ffn_hidden_size,
-                hidden_size,
-                bias=bias,
-            )
-        else:
-            self.dense_4h_to_h = tensor_parallel.RowParallelLinear(
-                ffn_hidden_size,
-                hidden_size,
-                config=config,
-                input_is_parallel=True,
-                init_method=output_layer_init_method,
-                skip_bias_add=True,
-                bias=bias,
-            )
+        self.dense_4h_to_h = tensor_parallel.RowParallelLinear(
+            ffn_hidden_size,
+            hidden_size,
+            config=config,
+            input_is_parallel=True,
+            init_method=output_layer_init_method,
+            skip_bias_add=True,
+            bias=bias,
+        )
 
         # Normformer normalization
         if transformer_block_type == 'normformer':
@@ -233,27 +211,18 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 self.normalization = MixedFusedRMSNorm(
                     ffn_hidden_size // get_tensor_model_parallel_world_size(), layernorm_epsilon
                 )
-        self.is_inference = is_inference
 
     def forward(self, hidden_states):
 
         # [s, b, 4hp]
-        if self.is_inference:
-            intermediate_parallel = self.dense_h_to_4h(hidden_states)
-            bias_parallel = self.dense_h_to_4h.bias
-        else:
-            intermediate_parallel, bias_parallel = self.dense_h_to_4h(hidden_states)
+        intermediate_parallel, bias_parallel = self.dense_h_to_4h(hidden_states)
 
         if self.fast_glu_activation:
             intermediate_parallel, intermediate_parallel_2 = torch.chunk(intermediate_parallel, 2, dim=-1)
             if bias_parallel is not None:
                 bias_parallel, bias_parallel_2 = torch.chunk(bias_parallel, 2, dim=-1)
         elif self.glu_activation_family and not self.fast_glu_activation:
-            if self.is_inference:
-                intermediate_parallel_2 = self.dense_h_to_4h_2(hidden_states)
-                bias_parallel_2 = self.dense_h_to_4h_2.bias
-            else:
-                intermediate_parallel_2, bias_parallel_2 = self.dense_h_to_4h_2(hidden_states)
+            intermediate_parallel_2, bias_parallel_2 = self.dense_h_to_4h_2(hidden_states)
 
         if self.bias_activation_fusion:
             if self.activation == 'gelu':
@@ -289,11 +258,7 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
             intermediate_parallel = self.normalization(intermediate_parallel)
 
         # [s, b, h]
-        if self.is_inference:
-            output = self.dense_4h_to_h(intermediate_parallel)
-            output_bias = self.dense_4h_to_h.bias
-        else:
-            output, output_bias = self.dense_4h_to_h(intermediate_parallel)
+        output, output_bias = self.dense_4h_to_h(intermediate_parallel)
         return output, output_bias
 
 

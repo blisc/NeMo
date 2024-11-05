@@ -77,9 +77,8 @@ class MegatronLMEncoderDecoderModel(MegatronBaseModel):
     Megatron encoder-decoder base class
     """
 
-    def __init__(self, cfg: DictConfig, trainer: Trainer, is_inference=False):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
-        self.is_inference = is_inference
         if cfg.get('pipeline_model_parallel_size', 1) > 1:
             if cfg.get('pipeline_model_parallel_split_rank', 0) <= 0:
                 raise ValueError(
