@@ -453,12 +453,6 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
                     if lora_kv_adapter and self.adapter_cfg[AdapterName.LORA_KV_ADAPTER]['enabled']:
                         lora_mixed_kv_layer = lora_kv_adapter(encoder_output)
                         mixed_kv_layer = mixed_kv_layer + lora_mixed_kv_layer
-            mixed_kv_layer, _ = self.key_value(encoder_output)
-            if self.is_adapter_available():
-                lora_kv_adapter = self.get_adapter_module(AdapterName.LORA_KV_ADAPTER)
-                if lora_kv_adapter and self.adapter_cfg[AdapterName.LORA_KV_ADAPTER]['enabled']:
-                    lora_mixed_kv_layer = lora_kv_adapter(encoder_output)
-                    mixed_kv_layer = mixed_kv_layer + lora_mixed_kv_layer
 
                 # [sk, b, (np * 2 * hn)] --> [sk, b, np, 2 * hn]
                 new_tensor_shape = mixed_kv_layer.size()[:-1] + (
