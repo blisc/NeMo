@@ -15,8 +15,6 @@
 import enum
 import math
 
-from torch import is_inference
-
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 

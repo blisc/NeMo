@@ -88,9 +88,6 @@ import librosa
 
 __all__ = ['MegatronT5SpeechLMModel']
 
-class DoesthisWork():
-    pass
-
 
 class MegatronT5OverrideModel(MegatronT5Model):
     def _build_tokenizer(self):
@@ -330,71 +327,6 @@ class MegatronT5SpeechLMModel(MegatronBaseSpeechLM):
             if not os.path.exists(self.non_matching_ref_audio_filepath):
                 raise FileNotFoundError(f"Please provide a valid file path for a high-quality reference audio to estimate"
                                         f" the MOS. Alternatively, set `model.estimate_mos=False` to disable MOS estimation.")
-
-    def init_infer(self):
-        with torch.no_grad(): #, torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            self.temp_device = next(self.parameters()).device
-
-            virtual_tokens = torch.tensor([[39124, 39125, 39126]]).to(self.temp_device)  # need to concat to both context embeddings and input text embeddings for current model
-            self.taskname_ids = torch.tensor([[4322]]).to(self.temp_device)
-
-            self.max_inference_timesteps = self.cfg.get('max_inference_timesteps', 2048)
-            self.virtual_tokens_embeddings = self.get_embeddings(virtual_tokens, self.taskname_ids, inference=True)
-            self.enc_position_embedding = self.frozen_model.enc_dec_model.encoder_embedding.position_embeddings.weight
-            self.dec_positional_embeddings = self.frozen_model.enc_dec_model.decoder_embedding.position_embeddings.weight
-            self.mask_type = self.frozen_model.enc_dec_model.enc_dec_model.encoder.model_attn_mask_type
-
-            # speaker_context = "TEXT CONTEXT: | Language:en Dataset:Riva Speaker:Lindy_CMU_HAPPY |"
-            speaker_context = "TEXT CONTEXT: | Language:en Dataset:Riva Speaker:Lindy_WIZWIKI |"
-
-            if isinstance(speaker_context, str):
-                speaker_context = self.tokenizer.text_to_ids(speaker_context) + [self.tokenizer.eos_id]
-                speaker_context = torch.tensor(speaker_context).to(self.temp_device)
-                speaker_context = pad_text_to_speech_dims(
-                    speaker_context, self.tokenizer.pad_id, self.num_speech_codebooks - 1
-                )
-
-            speaker_context = speaker_context.unsqueeze(0)
-            speaker_context_embeddings = self.get_embeddings(speaker_context, self.taskname_ids, inference=True)
-            speaker_context_embeddings = torch.cat([self.virtual_tokens_embeddings, speaker_context_embeddings], dim=1)
-            speaker_context_embeddings += self.enc_position_embedding[:speaker_context_embeddings.shape[1],:].unsqueeze(0)
-            # Embed speaker
-            self.speaker_context_mask = torch.ones([1, speaker_context_embeddings.shape[1]]).to(self.temp_device)
-            speaker_context_embeddings = speaker_context_embeddings.transpose(0, 1)
-            speaker_context_mask_3d = attn_mask_postprocess(
-                build_attention_mask_3d(
-                    source_mask=self.speaker_context_mask, target_mask=self.speaker_context_mask, attn_mask_type=self.mask_type,
-                )
-            )
-            self.speaker_context_output = self.frozen_model.enc_dec_model.enc_dec_model.encoder.model[0](
-                speaker_context_embeddings,
-                speaker_context_mask_3d,
-                layer_past=None,
-                get_key_value=False,
-                self_attention_relative_position_bias=None,
-                cross_attention_relative_position_bias=None,
-                set_inference_key_value_memory=False,
-            )
-            self.instruction_tokens = self.tokenizer.text_to_ids("Phoneme TTS")
-            # self.alibi = ALiBiRelativePositionEmbedding(False, 12, LayerType.decoder, None, 2048)
-            self.reset_infer()
-
-    def reset_infer(self):
-        with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            self.input_text_buffer = ""
-            self.generated_codes_buffer = torch.empty([1,8,0], dtype=torch.int64).to(self.temp_device)
-            # Decoder input starts with bos and 0 token
-            bos_dec_input = torch.tensor([self.tokenizer.bos_id, 0]).to(self.temp_device)
-            bos_dec_input = pad_text_to_speech_dims(bos_dec_input, 0, 7)
-            self.bos_dec_input = bos_dec_input.unsqueeze(0)
-            self.curr_dec_input = self.bos_dec_input.clone()
-            self.decoder_t = 1
-            self.text_split_start = 0
-            self.reset = True
-            self.code_length_per_split = []
-            self.splits_tokenized = []
-            self.split_i = 0
-            self.current_enc_step = 0
 
     def decode_wav_from_codec_model(self, codes):
         codec_model = self.additional_models['codec']

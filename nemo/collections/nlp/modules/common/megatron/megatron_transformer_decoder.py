@@ -14,7 +14,6 @@
 
 """Transformer based language model."""
 
-from torch import is_inference
 import torch
 from nemo.collections.nlp.modules.common.megatron.layer_type import LayerType
 from nemo.collections.nlp.modules.common.megatron.megatron_decoder_module import MegatronDecoderModule
@@ -231,7 +230,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
         dec_input,
         dec_attn_mask,
         text_encoded,
-        speaker_encoded,                        
+        speaker_encoded,
         text_attn_mask,
         speaker_attn_mask,
         layer_past=None,
@@ -263,7 +262,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
             layer_past=layer_past,
             get_key_value=get_key_value,
             text_encoded=text_encoded,
-            speaker_encoded=speaker_encoded,              
+            speaker_encoded=speaker_encoded,
             text_attn_mask=text_attn_mask,
             speaker_attn_mask=speaker_attn_mask,
             self_attention_relative_position_bias=dec_self_attention_relative_position_bias,
