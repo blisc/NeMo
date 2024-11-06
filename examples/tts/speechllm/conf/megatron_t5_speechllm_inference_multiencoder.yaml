@@ -152,7 +152,7 @@ model:
     grapheme_prefix: null
     train_ds: null
     validation_ds: null
-    test_ds: ???
+    # test_ds: ???
     max_seq_length: 2048
     sample_rate: 24000
     add_eos: true
