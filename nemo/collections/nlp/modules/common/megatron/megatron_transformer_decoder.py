@@ -14,6 +14,7 @@
 
 """Transformer based language model."""
 
+import torch
 from nemo.collections.nlp.modules.common.megatron.layer_type import LayerType
 from nemo.collections.nlp.modules.common.megatron.megatron_decoder_module import MegatronDecoderModule
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
@@ -97,7 +98,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
         moe_dropout=0.0,
         position_embedding_type='learned_absolute',
         use_flash_attention=False,
-        layer_type=LayerType.decoder,
+        layer_type=LayerType.decoder
     ):
         super(MegatronTransformerDecoderModule, self).__init__(config=config)
 
@@ -161,7 +162,7 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
             moe_frequency=moe_frequency,
             moe_dropout=moe_dropout,
             position_embedding_type=position_embedding_type,
-            use_flash_attention=use_flash_attention,
+            use_flash_attention=use_flash_attention
         )
         self._model_key = 'model'
 
@@ -219,6 +220,69 @@ class MegatronTransformerDecoderModule(MegatronModule, Exportable, MegatronDecod
             decoder_max_sequence_len=decoder_max_sequence_len,
             encoder_max_sequence_len=encoder_max_sequence_len,
             enc_output_to_layers=enc_output_to_layers,
+        )
+
+        return dec_output
+
+
+    def infer(
+        self,
+        dec_input,
+        dec_attn_mask,
+        text_encoded,
+        speaker_encoded,
+        text_attn_mask,
+        speaker_attn_mask,
+        layer_past=None,
+        get_key_value=False,
+        dec_self_attention_relative_position_bias=None,
+        text_cross_attention_relation_position_bias=None,
+        spk_cross_attention_relative_position_bias=None,
+        return_all_crossattention_probs=False,
+        set_inference_key_value_memory=False,
+        decoder_max_sequence_len=None,
+        encoder_max_sequence_len=None,
+        enc_output_to_layers=None,
+        current_enc_step=None,
+        curr_dec_step=torch.tensor(0),
+        inference_key_memory=None,
+        inference_value_memory=None,
+        inference_current_sequence_lens=None
+    ):
+        # convert to Megatron mask
+        dec_attn_mask_3d = build_attention_mask_3d(
+            source_mask=dec_attn_mask, target_mask=dec_attn_mask, attn_mask_type=self.model_attn_mask_type,
+        )
+
+
+        # transformer decoder
+        dec_output = self.model.infer(
+            dec_input,
+            attn_mask_postprocess(dec_attn_mask_3d),
+            layer_past=layer_past,
+            get_key_value=get_key_value,
+            text_encoded=text_encoded,
+            speaker_encoded=speaker_encoded,
+            text_attn_mask=text_attn_mask,
+            speaker_attn_mask=speaker_attn_mask,
+            self_attention_relative_position_bias=dec_self_attention_relative_position_bias,
+            text_cross_attention_relation_position_bias=text_cross_attention_relation_position_bias,
+            spk_cross_attention_relative_position_bias=spk_cross_attention_relative_position_bias,
+            return_all_crossattention_probs=return_all_crossattention_probs,
+            set_inference_key_value_memory=set_inference_key_value_memory,
+            rotary_pos_emb=None,
+            retrieved_emb=None,
+            return_all_selfattention_probs=False,
+            checkpoint_activations_all_layers=None,
+            inference_max_sequence_len=0,
+            decoder_max_sequence_len=decoder_max_sequence_len,
+            encoder_max_sequence_len=encoder_max_sequence_len,
+            enc_output_to_layers=enc_output_to_layers,
+            current_enc_step=current_enc_step,
+            current_dec_step=curr_dec_step,
+            inference_key_memory=inference_key_memory,
+            inference_value_memory=inference_value_memory,
+            inference_current_sequence_lens=inference_current_sequence_lens
         )
 
         return dec_output

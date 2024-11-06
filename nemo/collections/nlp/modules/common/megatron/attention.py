@@ -150,7 +150,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
         position_embedding_type='learned_absolute',
         multi_query_attention=False,
         normalize_attention_scores=True,
-        use_flash_attention=False,
+        use_flash_attention=False
     ):
         super(ParallelAttention, self).__init__(config=config)
         self.layer_number = max(1, layer_number)
@@ -620,6 +620,238 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
 
         return output, bias
 
+    def infer(
+        self,
+        hidden_states,
+        attention_mask,
+        layer_past=None,
+        get_key_value=False,
+        encoder_output=None,
+        set_inference_key_value_memory=False,
+        inference_max_sequence_len=None,
+        rotary_pos_emb=None,  # rotary positional embedding
+        relative_position_bias=None,
+        checkpoint_core_attention=False,
+        return_scores=False,
+        current_enc_step=None,
+        current_dec_step=torch.tensor(-1),
+        inference_value_memory=torch.tensor([]),
+        inference_key_memory=torch.tensor([]),
+        inference_current_sequence_len:int=0
+    ):
+        # hidden_states: [sq, b, h]
+
+        # =================================================
+        # Pre-allocate memory for key-values for inference.
+        # =================================================
+        mask_slice_idx = current_dec_step + 1 
+        if inference_max_sequence_len:
+            # Added equals to as inference key_memory size refers to cross-attention key size
+            # which is already equal to the current "sequence length"
+            assert inference_current_sequence_len <= inference_key_memory.size(0)
+            assert inference_max_sequence_len == inference_key_memory.size(0)
+        # This is added for safety. In case inference_max_sequence_len
+        # is not provided, make sure there is no potential memory left
+        # from previous inference.
+        if not inference_max_sequence_len:
+            inference_key_memory = None
+            inference_value_memory = None
+
+        # =====================
+        # Query, Key, and Value
+        # =====================
+
+        if self.attention_type == AttnType.self_attn:
+            # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
+            mixed_x_layer, _ = self.query_key_value(hidden_states)
+            if self.is_adapter_available():
+                lora_kqv_adapter = self.get_adapter_module(AdapterName.LORA_KQV_ADAPTER)
+                if lora_kqv_adapter:
+                    lora_mixed_x_layer = lora_kqv_adapter(hidden_states)
+                    mixed_x_layer = mixed_x_layer + lora_mixed_x_layer
+
+            # [sq, b, (np * 3 * hn)] --> [sq, b, np, 3 * hn]
+            new_tensor_shape = mixed_x_layer.size()[:-1] + (
+                self.num_attention_heads_per_partition,
+                3 * self.hidden_size_per_attention_head,
+            )
+            if self.megatron_legacy:
+                mixed_x_layer = self._transpose_last_dim(mixed_x_layer, 3, True)
+            mixed_x_layer = mixed_x_layer.view(*new_tensor_shape)
+
+            # [sq, b, np, 3 * hn] --> 3 [sq, b, np, hn]
+            (query_layer, key_layer, value_layer) = tensor_parallel.split_tensor_along_last_dim(
+                mixed_x_layer, 3, contiguous_split_chunks=True
+            )
+        else:  # Else in cross_attention
+            # Attention heads [sk, b, h] --> [sk, b, (np * 2 * hn)]
+            if (
+                inference_max_sequence_len is None
+            ) or inference_current_sequence_len < inference_max_sequence_len:
+                # If we are in traning and inference_max_sequence_len is None
+                # Or we haven't cached the key and value part of cross attention in the decoder on step 0,
+                # Do the caching
+                mixed_kv_layer, _ = self.key_value(encoder_output)
+                if self.is_adapter_available():
+                    lora_kv_adapter = self.get_adapter_module(AdapterName.LORA_KV_ADAPTER)
+                    if lora_kv_adapter:
+                        lora_mixed_kv_layer = lora_kv_adapter(encoder_output)
+                        mixed_kv_layer = mixed_kv_layer + lora_mixed_kv_layer
+
+                # [sk, b, (np * 2 * hn)] --> [sk, b, np, 2 * hn]
+                new_tensor_shape = mixed_kv_layer.size()[:-1] + (
+                    self.num_attention_heads_per_partition,
+                    2 * self.hidden_size_per_attention_head,
+                )
+                if self.megatron_legacy:
+                    mixed_kv_layer = self._transpose_last_dim(mixed_kv_layer, 2, True)
+                mixed_kv_layer = mixed_kv_layer.view(*new_tensor_shape)
+
+                # [sk, b, np, 2 * hn] --> 2 [sk, b, np, hn]
+                (key_layer, value_layer) = tensor_parallel.split_tensor_along_last_dim(
+                    mixed_kv_layer, 2, contiguous_split_chunks=True
+                )
+            else:
+                # else if we are in inference and have already cached key, value, can just read cache
+                key_layer = inference_key_memory[: inference_current_sequence_len, ...]
+                value_layer = inference_value_memory[: inference_current_sequence_len, ...]
+                if attention_mask is not None:
+                    attention_mask = attention_mask[..., -1, :].unsqueeze(-2)
+
+            # Attention head [sq, b, h] --> [sq, b, hp]
+            query_layer, _ = self.query(hidden_states)
+            if self.is_adapter_available():
+                lora_q_adapter = self.get_adapter_module(AdapterName.LORA_Q_ADAPTER)
+                if lora_q_adapter:
+                    lora_q_layer = lora_q_adapter(hidden_states)
+                    query_layer = query_layer + lora_q_layer
+            # [sq, b, hp] --> [sq, b, np, hn]
+            new_tensor_shape = query_layer.size()[:-1] + (
+                self.num_attention_heads_per_partition,
+                self.hidden_size_per_attention_head,
+            )
+            query_layer = query_layer.view(*new_tensor_shape)
+
+        if self.is_adapter_available():
+            key_infused_adapter = self.get_adapter_module(AdapterName.KEY_INFUSED)
+            value_infused_adapter = self.get_adapter_module(AdapterName.VALUE_INFUSED)
+            if key_infused_adapter:
+                assert value_infused_adapter is not None, "Expected value_infused_adapter not found!"
+                kls = key_layer.shape
+                key_layer = key_infused_adapter(key_layer.reshape(kls[0], kls[1], -1)).reshape(kls)
+            if value_infused_adapter:
+                assert key_infused_adapter is not None, "Expected key_infused_adapter not found!"
+                vls = value_layer.shape
+                value_layer = value_infused_adapter(value_layer.reshape(vls[0], vls[1], -1)).reshape(vls)
+
+        # ===================================================
+        # Adjust key, value, and attention mask for inference
+        # ===================================================
+
+        # duplicate the pos_emb for self attention
+        if rotary_pos_emb is not None:
+            rotary_pos_emb = rotary_pos_emb if isinstance(rotary_pos_emb, tuple) else ((rotary_pos_emb,) * 2)
+
+        # If we are in cross attention (inference_current_sequence_len == inference_max_sequence_len == inference_key_memory.size(0))
+        # We only need to cache this once
+        if inference_max_sequence_len and inference_current_sequence_len < inference_max_sequence_len:
+            # Adjust the range variables.
+            start = inference_current_sequence_len
+            inference_current_sequence_len += key_layer.size(0)
+            end = inference_current_sequence_len
+            # Copy key and values.
+            inference_key_memory[start:end, ...] = key_layer
+            inference_value_memory[start:end, ...] = value_layer
+            key_layer = inference_key_memory[:end, ...]
+            value_layer = inference_value_memory[:end, ...]
+            # Adjust attention mask
+            if attention_mask is not None and self.attention_type == AttnType.self_attn:
+                attention_mask = attention_mask[..., start:end, :end]
+            # adjust the key rotary positional embedding
+            if rotary_pos_emb is not None:
+                q_pos_emb, k_pos_emb = rotary_pos_emb
+                if not set_inference_key_value_memory:
+                    # In inference, we compute one token at a time.
+                    # Select the correct positional embedding.
+                    q_pos_emb = q_pos_emb[end - 1 : end]
+                else:
+                    q_pos_emb = q_pos_emb[:end, :, :, :]
+                k_pos_emb = k_pos_emb[:end, :, :, :]
+                rotary_pos_emb = (q_pos_emb, k_pos_emb)
+
+        if layer_past is not None:
+            past_key, past_value = layer_past
+            key_layer = torch.cat((past_key.type_as(key_layer), key_layer), dim=0)
+            value_layer = torch.cat((past_value.type_as(value_layer), value_layer), dim=0)
+
+        if get_key_value:
+            present = (key_layer, value_layer)
+
+        if (
+            flash_attn_with_kvcache is not None
+            and self.use_flash_attention
+            and rotary_pos_emb is not None
+            and inference_max_sequence_len
+            and not set_inference_key_value_memory
+        ):
+            # Mainly used for decoding with sq=1
+            q = _cast_if_autocast_enabled(
+                rearrange(apply_rotary_pos_emb(query_layer, rotary_pos_emb[0]), 'sq b np hn -> b sq np hn')
+            )
+            k = _cast_if_autocast_enabled(
+                rearrange(apply_rotary_pos_emb(key_layer, rotary_pos_emb[1]), 'sk b np hn -> b sk np hn')
+            )
+            v = _cast_if_autocast_enabled(rearrange(value_layer, 'sk b np hn -> b sk np hn'))
+            context_layer = flash_attn_with_kvcache(
+                q=q, k_cache=k, v_cache=v, causal=self.attn_mask_type == AttnMaskType.causal,
+            )
+            context_layer = rearrange(context_layer, 'b sq np hn -> sq b (np hn)')
+
+        elif checkpoint_core_attention:
+            context_layer = self._checkpointed_attention_forward(
+                query_layer,
+                key_layer,
+                value_layer,
+                attention_mask,
+                rotary_pos_emb=rotary_pos_emb,
+                relative_position_bias=relative_position_bias,
+                headscale_tensor=self.head_scale_tensor if self.headscale else None,
+                inference_mode=inference_max_sequence_len is not None and query_layer.shape[0] == 1,
+            )
+        else:
+            context_layer = self.core_attention.infer(
+                query_layer,
+                key_layer,
+                value_layer,
+                attention_mask,
+                layer_past=layer_past,
+                get_key_value=get_key_value,
+                rotary_pos_emb=rotary_pos_emb,
+                relative_position_bias=relative_position_bias,
+                headscale_tensor=self.head_scale_tensor if self.headscale else None,
+                inference_mode=inference_max_sequence_len is not None and query_layer.shape[0] == 1,
+                return_scores=return_scores,
+                mask_slice_idx = mask_slice_idx
+            )
+            if return_scores:
+                context_layer, attention_probs = context_layer
+
+        # =================
+        # Output. [sq, b, h]
+        # =================
+
+        output, bias = self.dense(context_layer)
+        #bias = self.dense.bias
+
+        if get_key_value:
+            output_ = [output, present]
+
+        if return_scores:
+            output_ = (output, attention_probs)
+            return output_, bias, inference_current_sequence_len
+        return output, bias, inference_current_sequence_len
+
+
 
 class ParallelChunkedCrossAttention(MegatronModule):
     """Parallel chunked cross-attention layer class.
@@ -995,18 +1227,152 @@ class CoreAttention(MegatronModule):
         else:
             return context_layer
 
-    def torch_attention(self, query_layer, key_layer, value_layer, attention_mask, attention_bias, inference_mode):
+    def infer(
+        self,
+        query_layer,
+        key_layer,
+        value_layer,
+        attention_mask,
+        layer_past=None,
+        get_key_value=False,
+        rotary_pos_emb=None,
+        relative_position_bias=None,
+        headscale_tensor=None,
+        inference_mode=None,
+        return_scores=None,
+        mask_slice_idx=torch.tensor(-1)
+    ):
+        b, np, sq, sk, hn = (
+            query_layer.size(1),
+            query_layer.size(2),
+            query_layer.size(0),
+            key_layer.size(0),
+            query_layer.size(3),
+        )
+        slice_idx = mask_slice_idx.item()
+        if not torch.jit.is_scripting():
+            torch._check_is_size(slice_idx)
+
+        # ==================================================
+        # Update attention mask for inference. [b, np, sq, sk]
+        # ==================================================
+        if get_key_value:
+            with torch.no_grad():
+                if layer_past is not None:
+                    attention_mask = attention_mask[..., sq - 1, :sk].unsqueeze(2)
+                else:
+                    attention_mask = attention_mask[..., :sq, :sk]
+
+        # ==================================================
+        # Update attention bias. [b, np, sq, sk]
+        # ==================================================
+        if relative_position_bias is not None and relative_position_bias.any():
+            relative_position_bias = relative_position_bias[
+                :,
+                self.num_attention_heads_partition_offset : self.num_attention_heads_partition_offset
+                + self.num_attention_heads_per_partition,
+                -sq:,
+                -sk:,
+            ]
+
+        # ==================================================
+        # Update query_layer, key_layer, value_layer
+        # ==================================================
+        # TODO: figure out how to do this
+        # apply relative positional encoding (rotary embedding)
+        if rotary_pos_emb is not None:
+            q_pos_emb, k_pos_emb = rotary_pos_emb
+            query_layer = apply_rotary_pos_emb(query_layer, q_pos_emb)
+            key_layer = apply_rotary_pos_emb(key_layer, k_pos_emb)
+            # TODO, can apply positional embedding to value_layer so it has
+            # absolute positional embedding.
+            # otherwise, only relative positional embedding takes effect
+            # value_layer = apply_rotary_pos_emb(value_layer, k_pos_emb)
+
+        if self.position_embedding_type.lower() == 'xpos':
+            query_layer = self.xpos(query_layer, offset=key_layer.shape[-2] - query_layer.shape[-2], downscale=False)
+            key_layer = self.xpos(key_layer, offset=0, downscale=True)
+
+        # ==================================================
+        # query_layer [sq, b, np, hn]
+        # key_layer   [sk, b, np, hn]
+        # value_layer [sk, b, np, hn]
+        # attention_mask [b, 1, sq, sk] or [b, s]
+        # relative_position_bias [b, np, sq, sk]
+        # context_layer [b, np, sq, hn]
+        # ==================================================
+        if not return_scores:
+            logging.debug(
+                f"not returning scores: attn_type={self.attention_type} | attn_fn={self.attn_fn} | return_scores={return_scores}"
+            )
+            context_layer = self.attn_fn(
+                query_layer, key_layer, value_layer, attention_mask, relative_position_bias, inference_mode,
+                slice_idx=slice_idx
+            )
+        else:
+            # SpeechLLM TTS modifications
+            if return_scores or relative_position_bias is not None:
+                logging.debug(
+                    f"torch a: return_scores: {return_scores}, relative_position_bias is not None: {relative_position_bias is not None}"
+                )
+                context_layer = self.torch_attention_with_prior(
+                    query_layer,
+                    key_layer,
+                    value_layer,
+                    attention_mask,
+                    relative_position_bias,
+                    inference_mode,
+                    return_scores=return_scores,
+                    slice_idx=slice_idx
+                )
+                context_layer, attention_probs = context_layer
+            else:
+                logging.debug(
+                    f"attn_fn: {self.attn_fn}, return_scores: {return_scores}, relative_position_bias is not None: {relative_position_bias is not None}"
+                )
+                context_layer = self.attn_fn(
+                    query_layer, key_layer, value_layer, attention_mask, relative_position_bias, inference_mode,
+                )
+
+        if headscale_tensor is not None:
+            context_layer = context_layer * headscale_tensor
+
+        # [b, np, sq, hn] --> [sq, b, np, hn]
+        context_layer = context_layer.permute(2, 0, 1, 3).contiguous()
+
+        # [sq, b, np, hn] --> [sq, b, hp]
+        new_context_layer_shape = context_layer.size()[:-2] + (self.hidden_size_per_partition,)
+        context_layer = context_layer.view(new_context_layer_shape)
+
+        if return_scores:
+            return context_layer, attention_probs
+        else:
+            return context_layer
+
+
+    def torch_attention(self, query_layer, key_layer, value_layer, attention_mask, attention_bias, inference_mode, slice_idx=-1):
         sq, b, np, hn = query_layer.shape
         sk = key_layer.shape[0]
 
+        sv, hnv = value_layer.shape[0], value_layer.shape[-1]
+
+        if slice_idx > -1:
+            attention_mask = attention_mask[:, :, :slice_idx, :]
         if self.multi_query_attention:
-            query_layer = rearrange(query_layer, 'sq b np hn -> b (np sq) hn')
-            key_layer = rearrange(key_layer, 'sk b 1 hn -> b hn sk')
-            value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            #query_layer = rearrange(query_layer, 'sq b np hn -> b (np sq) hn')
+            #key_layer = rearrange(key_layer, 'sk b 1 hn -> b hn sk')
+            #value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            query_layer = query_layer.permute(1, 2, 0, 3).reshape(b, -1, hn)
+            key_layer = key_layer.squeeze(2).permute(1, 2, 0)
+            value_layer = value_layer.permute(1, 2, 0, 3).view(-1, sv, hnv)
         else:
-            query_layer = rearrange(query_layer, 'sq b np hn -> (b np) sq hn')
-            key_layer = rearrange(key_layer, 'sk b np hn -> (b np) hn sk')
-            value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            #query_layer = rearrange(query_layer, 'sq b np hn -> (b np) sq hn')
+            #key_layer = rearrange(key_layer, 'sk b np hn -> (b np) hn sk')
+            #value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            query_layer = query_layer.permute(1, 2, 0, 3).view(-1, sq, hn)
+            key_layer = key_layer.permute(1, 2, 3, 0).view(-1, hn, sk)
+            value_layer = value_layer.permute(1, 2, 0, 3).view(-1, sv, hnv)
+
 
         matmul_input_buffer = torch.empty(
             query_layer.shape[0],
@@ -1031,9 +1397,6 @@ class CoreAttention(MegatronModule):
             attention_scores += attention_bias
 
         attention_probs = self.scale_mask_softmax(attention_scores, attention_mask)
-        logging.debug(f"attention_type={self.attention_type}")
-        logging.debug(f"attention_scores.shape={attention_scores.shape}")
-        logging.debug(f"attention_mask.shape={attention_mask.shape}")
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
 
@@ -1044,30 +1407,40 @@ class CoreAttention(MegatronModule):
             attention_probs = self.attention_dropout(attention_probs)
 
         # change view [b * np, sq, sk]
-        attention_probs = rearrange(attention_probs, 'b np sq sk -> (b np) sq sk')
+        #attention_probs = rearrange(attention_probs, 'b np sq sk -> (b np) sq sk')
+        attention_probs = attention_probs.view(-1, sq, sk)
 
         # matmul: [b * np, sq, hn]
         context_layer = torch.bmm(attention_probs, value_layer)
 
         # change view [b, np, sq, hn]
-        context_layer = rearrange(context_layer, '(b np) sq hn -> b np sq hn', np=np)
+        #context_layer = rearrange(context_layer, '(b np) sq hn -> b np sq hn', np=np)
+        context_layer = context_layer.view(b, np, sq, hn)
 
         return context_layer
 
     def torch_attention_with_prior(
-        self, query_layer, key_layer, value_layer, attention_mask, attention_bias, inference_mode, return_scores=False
+        self, query_layer, key_layer, value_layer, attention_mask, attention_bias, inference_mode, return_scores=False, slice_idx=-1
     ):
         sq, b, np, hn = query_layer.shape
         sk = key_layer.shape[0]
-
+        
+        if slice_idx > -1:
+            attention_mask = attention_mask[:, :, :slice_idx, :]
         if self.multi_query_attention:
-            query_layer = rearrange(query_layer, 'sq b np hn -> b (np sq) hn')
-            key_layer = rearrange(key_layer, 'sk b 1 hn -> b hn sk')
-            value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            #query_layer = rearrange(query_layer, 'sq b np hn -> b (np sq) hn')
+            #key_layer = rearrange(key_layer, 'sk b 1 hn -> b hn sk')
+            #value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            query_layer = query_layer.permute(1, 2, 0, 3).reshape(b, -1, hn)
+            key_layer = key_layer.squeeze(2).permute(1, 2, 0)
+            value_layer = value_layer.permute(1, 2, 0, 3).view(-1, sv, hnv)
         else:
-            query_layer = rearrange(query_layer, 'sq b np hn -> (b np) sq hn')
-            key_layer = rearrange(key_layer, 'sk b np hn -> (b np) hn sk')
-            value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            #query_layer = rearrange(query_layer, 'sq b np hn -> (b np) sq hn')
+            #key_layer = rearrange(key_layer, 'sk b np hn -> (b np) hn sk')
+            #value_layer = rearrange(value_layer, 'sv b np hn -> (b np) sv hn')
+            query_layer = query_layer.permute(1, 2, 0, 3).view(-1, sq, hn)
+            key_layer = key_layer.permute(1, 2, 3, 0).view(-1, hn, sk)
+            value_layer = value_layer.permute(1, 2, 0, 3).view(b * np, -1, hn)
 
         matmul_input_buffer = torch.empty(
             query_layer.shape[0],

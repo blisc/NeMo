@@ -172,7 +172,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
-        use_flash_attention=False,
+        use_flash_attention=False
     ):
         super(ParallelTransformerLayer_, self).__init__(config=config)
 
@@ -260,7 +260,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 headscale=headscale,
                 position_embedding_type=position_embedding_type,
                 normalize_attention_scores=normalize_attention_scores,
-                use_flash_attention=use_flash_attention,
+                use_flash_attention=use_flash_attention
             )
 
             if transformer_block_type == 'normformer':
@@ -331,7 +331,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 megatron_legacy=megatron_legacy,
                 bias=bias,
                 headscale=headscale,
-                normalize_attention_scores=normalize_attention_scores,
+                normalize_attention_scores=normalize_attention_scores
             )
             # Normformer normalization
             if transformer_block_type == 'normformer':
@@ -439,7 +439,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 normalization=normalization,
                 layernorm_epsilon=layernorm_epsilon,
                 persist_layer_norm=persist_layer_norm,
-                dropout=ffn_dropout,
+                dropout=ffn_dropout
             )
 
     def _get_bias_droput_add_func(self, transformer_block_type='pre_ln', position_after='attention'):
@@ -650,6 +650,209 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         return output
 
 
+    def infer(
+        self,
+        hidden_states,
+        attention_mask,
+        encoder_output:torch.Tensor=torch.tensor([]),
+        enc_dec_attn_mask=None,
+        layer_past:bool=False,
+        get_key_value:bool=False,
+        set_inference_key_value_memory:bool=False,
+        set_xa_inference_key_value_memory:bool=False,
+        inference_max_sequence_len:int=0,
+        rotary_pos_emb=None,  # list of positional embedding tensors, first one self attention, second one and third one are for cross attention (q, k)
+        self_attention_relative_position_bias=None,
+        cross_attention_relative_position_bias=None,
+        checkpoint_core_attention:bool=False,
+        return_crossattention_scores=False,
+        return_selfattention_scores=False,
+        decoder_max_sequence_len=None,
+        encoder_max_sequence_len=None,
+        current_enc_step=None,
+        current_dec_step=torch.tensor(-1),
+        inference_key_memory=None,
+        inference_value_memory=None,
+        inference_current_sequence_lens=None
+    ):
+        # Self attention.
+        if rotary_pos_emb is not None:
+            # self attention pos_emb is (q, q)
+            self_attention_pos_emb = (rotary_pos_emb[0], rotary_pos_emb[0])
+            cross_attention_pos_emb = (rotary_pos_emb[1], rotary_pos_emb[2])
+        else:
+            self_attention_pos_emb = None
+            cross_attention_pos_emb = None
+
+        if self.layer_type != LayerType.retrieval_decoder_after_self_attn:
+            # hidden_states: [b, s, h]
+
+            # Pre-LN: x -> LN -> MHA -> Residual -> LN -> MLP -> Residual
+            # Post-LN: x -> MHA -> Residual -> LN -> MLP -> Residual -> LN
+            # Normformer: x -> LN -> MHA -> LN -> Residual -> MLP (w/LN) -> Residual
+
+            residual = hidden_states
+            # Layer norm at the beginning of the transformer layer.
+            if self.transformer_block_type in ['pre_ln', 'normformer']:
+                hidden_states = self.input_layernorm(hidden_states)
+
+            attention_output, attention_bias, curr_inf_len = self.self_attention.infer(
+                hidden_states,
+                attention_mask,
+                layer_past=layer_past,
+                get_key_value=get_key_value,
+                set_inference_key_value_memory=set_inference_key_value_memory,
+                inference_max_sequence_len=inference_max_sequence_len or decoder_max_sequence_len,
+                rotary_pos_emb=self_attention_pos_emb,
+                relative_position_bias=self_attention_relative_position_bias,
+                checkpoint_core_attention=checkpoint_core_attention,
+                return_scores=return_selfattention_scores,
+                current_enc_step=current_enc_step,
+                current_dec_step=current_dec_step,
+                inference_key_memory=inference_key_memory[0],
+                inference_value_memory=inference_value_memory[0],
+                inference_current_sequence_len=inference_current_sequence_lens[0]
+            )
+            return_curr_inf_len = [curr_inf_len]
+            
+            if return_selfattention_scores:
+                attention_output, attention_probs = attention_output
+
+            if get_key_value:
+                attention_output, presents = attention_output
+
+            # If normformer, apply norm on the output of the self attention.
+            if self.transformer_block_type == 'normformer':
+                # Normformer normalization
+                attention_output = (
+                    attention_output + attention_bias if attention_bias is not None else attention_output
+                )
+                attention_output = self.post_attention_normformer_norm(attention_output)
+                attention_bias = None
+
+            # jit scripting for a nn.module (with dropout) is not
+            # trigerring the fusion kernel. For now, we use two
+            # different nn.functional routines to account for varying
+            # dropout semantics during training and inference phases.
+
+            bias_dropout_add_func = self._get_bias_droput_add_func(
+                transformer_block_type=self.transformer_block_type, position_after='attention'
+            )
+            if attention_bias is not None:
+                attention_bias = attention_bias.expand_as(residual)
+
+            if self.is_adapter_available():
+                adapter_1 = self.get_adapter_module(AdapterName.PRE_ATTN_ADAPTER)
+                if adapter_1:
+                    attention_output = (
+                        adapter_1(attention_output) + attention_output
+                    )  # simple adapter call with residual connection
+
+            layernorm_input = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
+            # print(f"Layer: {self.layer_number} Attention checksum {layernorm_input.sum()}")
+
+            # Post-LN normalization after residual
+            if self.transformer_block_type == 'post_ln':
+                normalization_output = self.input_layernorm(layernorm_input)
+                layernorm_input = normalization_output
+            elif self.transformer_block_type in ['pre_ln', 'normformer']:
+                # Layer norm post the self attention.
+                normalization_output = self.post_attention_layernorm(layernorm_input)
+        else:
+            layernorm_input, normalization_output = hidden_states
+
+        if self.layer_type == LayerType.decoder_pre_mlp:
+            return layernorm_input, normalization_output, return_curr_inf_len
+
+        if (
+            self.layer_type == LayerType.decoder
+            or self.layer_type == LayerType.retrieval_decoder
+            or self.layer_type == LayerType.retrieval_encoder
+            or self.layer_type == LayerType.retrieval_decoder_after_self_attn
+        ):
+            if (
+                self.layer_type == LayerType.retrieval_decoder
+                or self.layer_type == LayerType.retrieval_decoder_after_self_attn
+            ):
+                attention_output, attention_bias, curr_inf_len = self.inter_attention(
+                    normalization_output,
+                    enc_dec_attn_mask,
+                    encoder_output=encoder_output,
+                    rotary_pos_emb=cross_attention_pos_emb,
+                    checkpoint_core_attention=checkpoint_core_attention,
+                )
+            else:
+                # Return Scores is being passed only for inter_attention and not self attention
+                attention_output, attention_bias, curr_inf_len = self.inter_attention.infer(
+                    normalization_output,
+                    enc_dec_attn_mask,
+                    encoder_output=encoder_output,
+                    rotary_pos_emb=cross_attention_pos_emb,
+                    relative_position_bias=cross_attention_relative_position_bias,
+                    checkpoint_core_attention=checkpoint_core_attention,
+                    return_scores=return_crossattention_scores,
+                    set_inference_key_value_memory=set_inference_key_value_memory,
+                    inference_max_sequence_len=encoder_max_sequence_len,
+                    current_enc_step=current_enc_step,
+                    current_dec_step=current_dec_step,
+                    inference_key_memory=inference_key_memory[1],
+                    inference_value_memory=inference_value_memory[1],
+                    inference_current_sequence_len=inference_current_sequence_lens[1]
+                )
+            if return_crossattention_scores:
+                attention_output, attention_probs = attention_output
+            return_curr_inf_len.append(curr_inf_len)
+
+            # If normformer, apply norm on the output of the self attention.
+            if self.transformer_block_type == 'normformer':
+                # Normformer normalization
+                attention_output = (
+                    attention_output + attention_bias if attention_bias is not None else attention_output
+                )
+                attention_output = self.post_inter_attention_normformer_norm(attention_output)
+                attention_bias = None
+
+            residual = layernorm_input
+
+            bias_dropout_add_func = self._get_bias_droput_add_func(
+                transformer_block_type=self.transformer_block_type, position_after='attention'
+            )
+            
+            layernorm_input = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
+            # print(f"Layer: {self.layer_number} Cross-Attention checksum {layernorm_input.sum()}")
+            normalization_output = self.post_inter_attention_layernorm(layernorm_input)
+            # Post-LN normalization after residual
+            if self.transformer_block_type == 'post_ln':
+                layernorm_input = normalization_output
+        # MLP.
+        mlp_output, mlp_bias = self.mlp(normalization_output)
+        if self.is_adapter_available():
+            # TODO: (@adithyre) was able to move adapter_2 back to the end of the transformer after ptl 1.7 update.
+            adapter_2 = self.get_adapter_module(AdapterName.POST_ATTN_ADAPTER)
+            if adapter_2:
+                mlp_output = adapter_2(mlp_output) + mlp_output  # simple adapter call with residual connection
+
+        residual = layernorm_input
+
+        bias_dropout_add_func = self._get_bias_droput_add_func(
+            transformer_block_type=self.transformer_block_type, position_after='mlp'
+        )
+
+        output = bias_dropout_add_func(mlp_output, mlp_bias, residual, self.hidden_dropout)
+
+        if self.transformer_block_type == 'post_ln':
+            output = self.post_attention_layernorm(output)
+
+        #if get_key_value:
+        #    output = (output, output, presents)
+        if return_crossattention_scores or return_selfattention_scores:
+            output = (output, attention_probs, return_curr_inf_len)
+        else:
+            output = (output, output, return_curr_inf_len)
+
+        return output
+
+
 class ParallelTransformerLayer(ParallelTransformerLayer_):
     def __init__(
         self,
@@ -690,7 +893,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
-        use_flash_attention=False,
+        use_flash_attention=False
     ):
         super(ParallelTransformerLayer, self).__init__(
             config=config,
@@ -730,7 +933,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
             num_moe_experts=num_moe_experts,
             moe_frequency=moe_frequency,
             moe_dropout=moe_dropout,
-            use_flash_attention=use_flash_attention,
+            use_flash_attention=use_flash_attention
         )
 
         # Dtype for forward pass - ignore amp O2
@@ -793,6 +996,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
                 decoder_max_sequence_len=decoder_max_sequence_len,
                 encoder_max_sequence_len=encoder_max_sequence_len,
             )
+
 
 
 class AutocastTransformerLayer(TransformerLayer):
@@ -979,7 +1183,7 @@ class ParallelTransformer(MegatronModule):
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
-        use_flash_attention=False,
+        use_flash_attention=False
     ):
         super(ParallelTransformer, self).__init__(config=config)
 
@@ -1196,7 +1400,7 @@ class ParallelTransformer(MegatronModule):
                     num_moe_experts=num_moe_experts,
                     moe_frequency=moe_frequency,
                     moe_dropout=moe_dropout,
-                    use_flash_attention=use_flash_attention,
+                    use_flash_attention=use_flash_attention
                 )
 
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
@@ -1763,6 +1967,270 @@ class ParallelTransformer(MegatronModule):
             else:
                 self.is_first_train_microbatch = False
         self.is_prev_microbatch_training = self.training
+
+        output = hidden_states
+
+        # Final layer norm.
+        if self.post_process:
+            # only apply the final_layernorm for pre-ln
+            if self.transformer_block_type != 'post_ln':
+                output = self.final_layernorm(hidden_states)
+
+        if get_key_value:
+            output = [output, presents]
+
+        if return_all_crossattention_probs or return_all_selfattention_probs:
+            output = [output, attention_probs_list]
+
+        return output
+
+
+    def infer(
+        self,
+        hidden_states,
+        attention_mask,
+        layer_past=None,
+        get_key_value=False,
+        text_encoded=None,
+        speaker_encoded=None,                        
+        text_attn_mask=None,
+        speaker_attn_mask=None,
+        set_inference_key_value_memory=False,
+        inference_max_sequence_len=None,
+        rotary_pos_emb=None,  # list of positional embedding tensors, first one self attention, second one and third one are for cross attention (q, k)
+        retrieved_emb=None,  # tensor of retrieved embedding of shape [b, k, r, n, d]
+        self_attention_relative_position_bias=None,
+        text_cross_attention_relation_position_bias=None,
+        spk_cross_attention_relative_position_bias=None,
+        checkpoint_activations_all_layers=None,
+        return_all_crossattention_probs=False,
+        return_all_selfattention_probs=False,
+        decoder_max_sequence_len=None,
+        encoder_max_sequence_len=None,
+        enc_output_to_layers=None,
+        current_enc_step=None,
+        current_dec_step=torch.tensor(-1),
+        inference_key_memory=None,
+        inference_value_memory=None,
+        inference_current_sequence_lens=None
+    ):
+        if return_all_crossattention_probs and return_all_selfattention_probs:
+            raise NotImplementedError(
+                "We can only return 1 of cross attention probs or self attention probs. Not both yet."
+            )
+        # Checks.
+        if inference_max_sequence_len:
+            assert self.activations_checkpoint_method is None, 'inference does not work with activation checkpointing'
+
+        if layer_past is not None:
+            assert get_key_value, 'for not None values in layer_past, ' 'expected get_key_value to be set'
+        if get_key_value:
+            assert self.activations_checkpoint_method is None, (
+                'get_key_value does not work with ' 'activation checkpointing'
+            )
+
+        if self.pre_process:
+            if self.transformer_block_type == 'post_ln':
+                hidden_states = self.initial_layernorm(hidden_states)
+        else:
+            # See set_input_tensor()
+            hidden_states = self.input_tensor
+
+        # TODO: @Yi Dong, what should this be?
+        if retrieved_emb is not None:
+            assert len(retrieved_emb.shape) == 5
+            # this is retrieval decoder, need special transpose
+            encoder_output = rearrange(retrieved_emb, 'b k r n d -> k r n b d').contiguous()
+
+        """
+        is_first_microbatch is an optimization parameter for transformer engine.
+        It indicates if the current step in the forward pass is the first in a gradient accumulation cycle.
+        If set, FP8 weights are cached and some minor optimizations are applied to fuse_wgrad_accumulation
+        """
+
+        if self.activations_checkpoint_granularity == 'full' and self.activations_checkpoint_num_layers > 0:
+            hidden_states = self._checkpointed_forward(
+                hidden_states,
+                attention_mask,
+                encoder_output,
+                enc_dec_attn_mask,
+                rotary_pos_emb,
+                self_attention_relative_position_bias,
+                cross_attention_relative_position_bias,
+                checkpoint_activations_all_layers,
+            )
+        else:
+            if get_key_value:
+                presents = []
+
+            if self.transformer_engine:
+                # Pass key value information to TE through inference_params to pre-allocate memory
+                if set_inference_key_value_memory:
+                    self.inference_params = type('', (), {})()
+                    self.inference_params.max_sequence_len = inference_max_sequence_len
+                    self.inference_params.max_batch_size = hidden_states.size(1)
+                    self.inference_params.batch_size_offset = 0
+                    self.inference_params.key_value_memory_dict = {}
+                    self.inference_params.sequence_len_offset = 0
+                    self.inference_current_sequence_len = 0
+
+                if self.inference_params != None:
+                    self.inference_params.sequence_len_offset = self.inference_current_sequence_len
+
+            attention_probs_list = []
+            if self.return_select_layer < 0:
+                assert (
+                    parallel_state.get_pipeline_model_parallel_world_size() == 1
+                ), f"##{parallel_state.get_pipeline_model_parallel_world_size}"
+                if self.num_layers + self.return_select_layer < 0:
+                    logging.warning("Returning embeddings states only!")
+                    return hidden_states
+
+            layer_to_encoder_num_mapping = {}
+            for encoder_idx in range(len(enc_output_to_layers)):
+                enc_out_layers = enc_output_to_layers[encoder_idx]
+                for layer_idx in enc_out_layers:
+                        layer_to_encoder_num_mapping[layer_idx] = encoder_idx
+                    
+            for index in range(self.num_layers):
+                layer = self._get_layer(index)
+                past = None
+
+                _encoder_output = text_encoded
+                _enc_dec_attn_mask = text_attn_mask
+                _cross_attention_relative_position_bias = text_cross_attention_relation_position_bias
+                _encoder_max_sequence_len = encoder_max_sequence_len[1]
+                _current_enc_step = current_enc_step[1]
+                if index in layer_to_encoder_num_mapping.keys():
+                    if layer_to_encoder_num_mapping[index] == 0:
+                        _cross_attention_relative_position_bias = spk_cross_attention_relative_position_bias
+                        _encoder_output = speaker_encoded #encoder_output[self.layer_to_encoder_num_mapping[index]]
+                        _enc_dec_attn_mask = speaker_attn_mask #enc_dec_attn_mask[self.layer_to_encoder_num_mapping[index]]
+                        _encoder_max_sequence_len = encoder_max_sequence_len[0]
+                        _current_enc_step = current_enc_step[0]
+
+
+                if layer_past is not None:
+                    past = layer_past[index]
+
+                if self.activations_checkpoint_granularity == 'selective':
+                    # When pipeline-parallel size > 1 and 'num_micro_batches_with_partial_activation_checkpoints' = int,
+                    # pipeline scheduling can force to checkpoint all layers or partial layers in a micro-batch.
+                    if (
+                        checkpoint_activations_all_layers == True
+                        or self.activations_checkpoint_method == 'uniform'
+                    ):
+                        checkpoint_core_attention = True
+                    elif self.activations_checkpoint_method == 'block':
+                        activations_checkpoint_num_layers = self.activations_checkpoint_num_layers
+                        # Decrease the number of layers to checkpoint at later pipeline stages
+                        if self.activations_checkpoint_layers_per_pipeline is not None:
+                            activations_checkpoint_num_layers -= int(
+                                parallel_state.get_pipeline_model_parallel_rank()
+                                * self.activations_checkpoint_layers_per_pipeline
+                            )
+                        checkpoint_core_attention = index < activations_checkpoint_num_layers
+                else:
+                    checkpoint_core_attention = False
+
+                # Cache FP8 weight and transpose at (1) the first micro-batch in each global-batch
+                # in training, (2) the first micro-batch in each validation and test routine.
+                # The caching happens in TransformerEngine when passing `is_first_microbatch=True`.
+                is_first_microbatch = (self.is_first_train_microbatch and self.training) or (
+                    self.is_prev_microbatch_training and not self.training
+                )
+                if self.transformer_engine:
+                    hidden_states = layer(
+                        hidden_states,
+                        attention_mask,
+                        encoder_output=_encoder_output,
+                        enc_dec_attn_mask=_enc_dec_attn_mask,
+                        inference_params=self.inference_params,
+                        is_first_microbatch=is_first_microbatch,
+                        checkpoint_core_attention=checkpoint_core_attention,
+                    )
+                else:
+                    if layer.layer_type == LayerType.decoder and return_all_crossattention_probs:
+                        hidden_states, attention_probs, inference_past_seq_len = layer.infer(
+                            hidden_states,
+                            attention_mask,
+                            encoder_output=_encoder_output,
+                            enc_dec_attn_mask=_enc_dec_attn_mask,
+                            layer_past=past,
+                            set_inference_key_value_memory=set_inference_key_value_memory,
+                            inference_max_sequence_len=inference_max_sequence_len,
+                            rotary_pos_emb=rotary_pos_emb,
+                            self_attention_relative_position_bias=self_attention_relative_position_bias,
+                            cross_attention_relative_position_bias=_cross_attention_relative_position_bias,
+                            checkpoint_core_attention=checkpoint_core_attention,
+                            return_crossattention_scores=return_all_crossattention_probs,
+                            decoder_max_sequence_len=decoder_max_sequence_len,
+                            encoder_max_sequence_len=_encoder_max_sequence_len,
+                            current_enc_step=_current_enc_step,
+                            current_dec_step=current_dec_step,
+                            inference_key_memory=inference_key_memory[index],
+                            inference_value_memory=inference_value_memory[index],
+                            inference_current_sequence_lens=inference_current_sequence_lens[index]
+                        )
+                        attention_probs_list.append(attention_probs)
+                    elif layer.layer_type == LayerType.encoder and return_all_selfattention_probs:
+                        hidden_states, attention_probs, inference_past_seq_len = layer.infer(
+                            hidden_states,
+                            attention_mask,
+                            encoder_output=_encoder_output,
+                            enc_dec_attn_mask=_enc_dec_attn_mask,
+                            layer_past=past,
+                            get_key_value=get_key_value,
+                            set_inference_key_value_memory=set_inference_key_value_memory,
+                            inference_max_sequence_len=inference_max_sequence_len,
+                            rotary_pos_emb=rotary_pos_emb,
+                            self_attention_relative_position_bias=self_attention_relative_position_bias,
+                            cross_attention_relative_position_bias=_cross_attention_relative_position_bias,
+                            checkpoint_core_attention=checkpoint_core_attention,
+                            return_selfattention_scores=return_all_selfattention_probs,
+                            decoder_max_sequence_len=decoder_max_sequence_len,
+                            encoder_max_sequence_len=_encoder_max_sequence_len,
+                            current_enc_step=_current_enc_step,
+                            current_dec_step=current_dec_step,
+                            inference_key_memory=inference_key_memory[index],
+                            inference_value_memory=inference_value_memory[index],
+                            inference_current_sequence_lens=inference_current_sequence_lens[index]
+                        )
+                        attention_probs_list.append(attention_probs)
+                    else:
+                        hidden_states, _, inference_past_seq_len = layer.infer(
+                            hidden_states,
+                            attention_mask,
+                            encoder_output=_encoder_output,
+                            enc_dec_attn_mask=_enc_dec_attn_mask,
+                            layer_past=past,
+                            get_key_value=get_key_value,
+                            set_inference_key_value_memory=set_inference_key_value_memory,
+                            inference_max_sequence_len=inference_max_sequence_len,
+                            rotary_pos_emb=rotary_pos_emb,
+                            self_attention_relative_position_bias=self_attention_relative_position_bias,
+                            cross_attention_relative_position_bias=_cross_attention_relative_position_bias,
+                            checkpoint_core_attention=checkpoint_core_attention,
+                            decoder_max_sequence_len=decoder_max_sequence_len,
+                            encoder_max_sequence_len=_encoder_max_sequence_len,
+                            current_enc_step=_current_enc_step,
+                            current_dec_step=current_dec_step,
+                            inference_key_memory=inference_key_memory[index],
+                            inference_value_memory=inference_value_memory[index],
+                            inference_current_sequence_lens=inference_current_sequence_lens[index]
+                        )
+                    inference_current_sequence_lens[index] = inference_past_seq_len
+
+                if self.return_select_layer < 0:
+                    assert (
+                        parallel_state.get_pipeline_model_parallel_world_size() == 1
+                    ), f"##{parallel_state.get_pipeline_model_parallel_world_size}"
+                    if index == self.num_layers + self.return_select_layer:
+                        return hidden_states
+
+            # Update current sequence length outside of the loops
+            if self.transformer_engine:
+                self.inference_current_sequence_len += hidden_states.size(0)
 
         output = hidden_states
 

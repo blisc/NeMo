@@ -83,7 +83,7 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
         normalization='layernorm',
         layernorm_epsilon=1e-5,
         persist_layer_norm=False,
-        dropout=0.0,
+        dropout=0.0
     ):
         super(ParallelMLP, self).__init__(config=config)
         self.activation = activation
