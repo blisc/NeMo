@@ -375,12 +375,12 @@ class T5TTSDataset(TextToSpeechDataset):
         self.pad_context_text_to_max_duration = pad_context_text_to_max_duration
         self.context_duration_min = context_duration_min
         self.context_duration_max = context_duration_max
-    
+
     def get_num_audio_samples_to_slice(self, duration, sample_rate):
         num_codec_frames = int(duration * sample_rate / self.codec_model_downsample_factor)
         num_audio_samples = num_codec_frames * self.codec_model_downsample_factor
         return num_audio_samples
-    
+
     def __getitem__(self, index):
         data = self.data_samples[index]
         tokenizer_name = "english_phoneme" # Default to english phoneme tokenizer
@@ -429,7 +429,7 @@ class T5TTSDataset(TextToSpeechDataset):
             example['audio'] = audio
             example['audio_len'] = audio_len
             spec_len = int(audio_len / self.codec_model_downsample_factor) + 1 # +1 for EOS
-        
+
         if self.load_cached_codes_if_available and 'context_audio_codes_path' in data.manifest_entry:
             context_audio_codes_path = data.manifest_entry['context_audio_codes_path']
             context_audio_codes = torch.load(context_audio_codes_path).long() # (8, T)
@@ -445,7 +445,7 @@ class T5TTSDataset(TextToSpeechDataset):
                 # context_audio_codes is a tensor of shape (num_codebooks, T)
                 context_audio_codes_repeated = context_audio_codes.repeat(1, _num_repeats)
                 context_audio_codes = context_audio_codes_repeated[:, :_num_frames_to_slice]
-            
+
             context_bos_tensor = torch.full((context_audio_codes.shape[0], 1), self.context_audio_bos_id, dtype=context_audio_codes.dtype)
             context_eos_tensor = torch.full((context_audio_codes.shape[0], 1), self.context_audio_eos_id, dtype=context_audio_codes.dtype)
             context_audio_codes = torch.cat([context_bos_tensor, context_audio_codes, context_eos_tensor], dim=1)
@@ -512,7 +512,7 @@ class T5TTSDataset(TextToSpeechDataset):
             audio_len_16khz = audio_16khz.shape[0]
             example['audio_16khz'] = audio_16khz
             example['audio_len_16khz'] = audio_len_16khz
-        
+
         if self.use_text_conditioning_tokenizer:
             if 'context_text' in data.manifest_entry:
                 context_tokens = self.text_conditioning_tokenizer(data.manifest_entry['context_text'])['input_ids']
@@ -541,12 +541,12 @@ class T5TTSDataset(TextToSpeechDataset):
             example["align_prior"] = align_prior
 
         example['raw_text'] = data.text
-        
+
         if "reward" in data.manifest_entry:
             example["reward"] = data.manifest_entry["reward"]
 
         return example
-    
+
     def collate_fn(self, batch: List[dict]):
         dataset_name_list = []
         audio_filepath_list = []
@@ -587,7 +587,7 @@ class T5TTSDataset(TextToSpeechDataset):
             if 'audio_codes' in example:
                 audio_codes_list.append(example['audio_codes'])
                 audio_codes_len_list.append(example['audio_codes_len'])
-            
+
             if 'context_audio' in example:
                 context_audio_list.append(example['context_audio'])
                 context_audio_len_list.append(example['context_audio_len'])
@@ -600,13 +600,13 @@ class T5TTSDataset(TextToSpeechDataset):
                 context_text_tokens_list.append(example['context_text_tokens'])
                 context_text_tokens_len_list.append(example['context_text_len'])
                 context_has_text_context_list.append(example['has_text_context'])
-            
+
             if 'reward' in example:
                 reward_list.append(example['reward'])
 
             if self.include_align_prior:
                 prior_list.append(example["align_prior"])
-            
+
         batch_token_len = torch.IntTensor(token_len_list)
         token_max_len = int(batch_token_len.max().item())
         batch_tokens = stack_tensors(token_list, max_lens=[token_max_len], pad_value=self.text_tokenizer.pad)
@@ -625,35 +625,35 @@ class T5TTSDataset(TextToSpeechDataset):
             batch_audio = stack_tensors(audio_list, max_lens=[audio_max_len])
             batch_dict['audio'] = batch_audio
             batch_dict['audio_lens'] = batch_audio_len
-        
+
         if len(audio_list_16khz) > 0:
             batch_audio_len_16khz = torch.IntTensor(audio_len_list_16khz)
             audio_max_len_16khz = int(batch_audio_len_16khz.max().item())
             batch_audio_16khz = stack_tensors(audio_list_16khz, max_lens=[audio_max_len_16khz])
             batch_dict['audio_16khz'] = batch_audio_16khz
             batch_dict['audio_lens_16khz'] = batch_audio_len_16khz
-        
+
         if len(audio_codes_list) > 0:
             batch_audio_codes_len = torch.IntTensor(audio_codes_len_list)
             audio_codes_max_len = int(batch_audio_codes_len.max().item())
             batch_audio_codes = stack_tensors(audio_codes_list, max_lens=[audio_codes_max_len])
             batch_dict['audio_codes'] = batch_audio_codes
             batch_dict['audio_codes_lens'] = batch_audio_codes_len
-        
+
         if len(context_audio_list) > 0:
             batch_context_audio_len = torch.IntTensor(context_audio_len_list)
             context_audio_max_len = int(batch_context_audio_len.max().item())
             batch_context_audio = stack_tensors(context_audio_list, max_lens=[context_audio_max_len])
             batch_dict['context_audio'] = batch_context_audio
             batch_dict['context_audio_lens'] = batch_context_audio_len
-        
+
         if len(context_audio_codes_list) > 0:
             batch_context_audio_codes_len = torch.IntTensor(context_audio_codes_len_list)
             context_audio_codes_max_len = int(batch_context_audio_codes_len.max().item())
             batch_context_audio_codes = stack_tensors(context_audio_codes_list, max_lens=[context_audio_codes_max_len])
             batch_dict['context_audio_codes'] = batch_context_audio_codes
             batch_dict['context_audio_codes_lens'] = batch_context_audio_codes_len
-        
+
         if self.use_text_conditioning_tokenizer:
             batch_context_text_tokens_len = torch.IntTensor(context_text_tokens_len_list)
             context_text_tokens_max_len = int(batch_context_text_tokens_len.max().item())
@@ -666,13 +666,13 @@ class T5TTSDataset(TextToSpeechDataset):
             spec_max_len = max([prior.shape[0] for prior in prior_list])
             text_max_len = max([prior.shape[1] for prior in prior_list])
             batch_dict["align_prior_matrix"] = stack_tensors(prior_list, max_lens=[text_max_len, spec_max_len],)
-        
+
         if len(reward_list) > 0:
             batch_dict['rewards'] = torch.FloatTensor(reward_list)
-        
+
         # Assert only ONE of context_audio or context_audio_codes in the batch
         assert ('audio' in batch_dict) ^ ('audio_codes' in batch_dict)
-        
+
         # Assert only ONE of context_audio or context_audio_codes in the batch
         if 'context_audio' in batch_dict:
             assert 'context_audio_codes' not in batch_dict
@@ -684,10 +684,10 @@ class T5TTSDataset(TextToSpeechDataset):
 class T5TTSDatasetDPO(T5TTSDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-    
+
     def __len__(self):
         return len(self.data_samples)//2
-    
+
     def __getitem__(self, index):
         chosen_example = super().__getitem__(index*2)
         rejected_example = super().__getitem__(index*2 + 1)
@@ -697,7 +697,7 @@ class T5TTSDatasetDPO(T5TTSDataset):
             "chosen": chosen_example,
             "rejected": rejected_example
         }
-    
+
     def collate_fn(self, batch: List[dict]):
         chosen_batch = [example['chosen'] for example in batch]
         rejected_batch = [example['rejected'] for example in batch]
