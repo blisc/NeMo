@@ -128,7 +128,7 @@ def run_inference(
                 audio_eos_id=model.audio_eos_id,
                 num_audio_codebooks=model_cfg.num_audio_codebooks,
                 prior_scaling_factor=None,
-                load_cached_codes_if_available=dataset_meta_info[dataset].get('load_cached_codes_if_available', True),
+                load_cached_codes_if_available=False,
                 dataset_type='test',
                 tokenizer_config=None,
                 load_16khz_audio=model.model_type == 'single_encoder_sv_tts',

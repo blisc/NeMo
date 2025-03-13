@@ -1278,6 +1278,7 @@ class MagpieTTS_Model(ModelPT):
                 if self.model_type == 'multi_encoder_context_tts':
                     attn_prior = [attn_prior, None]
 
+
                 if use_cfg:
                     batch_size = audio_codes_embedded.size(0)
                     if isinstance(context_tensors['cond'], list):
@@ -1304,6 +1305,10 @@ class MagpieTTS_Model(ModelPT):
                             dummy_addition_dec_mask
                         )
 
+                    # print(f"step {idx}")
+                    # print(f"use_cfg {use_cfg}")
+                    # print(f"shape {cfg_audio_codes_embedded.shape}")
+                    # print(f"use kv cahce? {self.use_kv_cache_for_inference}")
                     combined_logits, attn_probs, dec_out = self.forward(
                         dec_input_embedded=cfg_audio_codes_embedded,
                         dec_input_mask=cfg_audio_codes_mask,
