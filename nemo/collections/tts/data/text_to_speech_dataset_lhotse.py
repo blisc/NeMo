@@ -65,8 +65,7 @@ def build_lhotse_dataloader(dataset, data_cfg, is_eval=False):
     )
 
 
-@experimental
-class T5TTSLhotseDataset(torch.utils.data.Dataset):
+class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
     """
     Class for processing and loading text to speech training examples.
 
@@ -197,7 +196,7 @@ class T5TTSLhotseDataset(torch.utils.data.Dataset):
                     else:
                         context_text = self.text_conditioning_tokenizer("[NO TEXT CONTEXT]")['input_ids']
                         has_text_context_list.append(False)
-                    
+
                     if self.pad_context_text_to_max_duration:
                         _required_len = int(self.context_duration_max * self.sample_rate / self.codec_model_downsample_factor) + 2 # +2 for BOS and EOS
                         if len(context_text) < _required_len:
@@ -300,7 +299,7 @@ class T5TTSLhotseDataset(torch.utils.data.Dataset):
 
         if self.include_align_prior:
             batch_dict["align_prior_matrix"] = align_priors
-        
+
         if self.load_16khz_audio:
             batch_dict['audio_16khz'] = target_audios_16khz
             batch_dict['audio_lens_16khz'] = target_audios_16khz_lens

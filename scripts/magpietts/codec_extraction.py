@@ -55,7 +55,7 @@ class AudioDataset(Dataset):
             "file_path": file_path,
             "codec_file_path": os.path.join(self.out_dir, dataset_name, codec_file_path_rel)
         }
-    
+
     def collate_fn(self, batch):
         audios_padded = []
         audio_lengths = []
@@ -70,7 +70,7 @@ class AudioDataset(Dataset):
             audio_lengths.append(item["audio_length"])
             file_paths.append(item["file_path"])
             codec_file_paths.append(item["codec_file_path"])
-        
+
         return {
             "audios": torch.stack(audios_padded),
             "audio_lengths": torch.stack(audio_lengths),
@@ -134,7 +134,7 @@ def update_manifests(manifests, save_dir, dataset_names, codec_model_name):
                 record["context_audio_codes_path"] = context_audio_codes_path
                 if ridx % 10 == 0:
                     assert os.path.exists(context_audio_codes_path), "Context audio codes not found: {}".format(context_audio_codes_path)
-        
+
         write_manifest(manifest.replace(".json", "_withAudioCodes_{}.json".format(codec_model_name)), records)
 
 def prepare_directories(base_save_dir, codec_model_name, manifests, audio_base_dirs, dataset_names):
@@ -161,7 +161,7 @@ def prepare_directories(base_save_dir, codec_model_name, manifests, audio_base_d
 if __name__ == "__main__":
     """
     Usage:
-    python scripts/t5tts/codec_extraction.py \
+    python scripts/magpietts/codec_extraction.py \
         --manifests /home/pneekhara/2023/SimpleT5NeMo/manifests/smallvctk__phoneme__nemo_audio_21fps_8codebooks_2kcodes_v2bWithWavLM_simplet5_withcontextaudiopaths.json \
         --audio_base_dirs /datap/misc/Datasets/VCTK-Corpus \
         --codec_model_name codec21Khz_no_eliz \
@@ -171,7 +171,7 @@ if __name__ == "__main__":
         --sample_rate 22050 \
         --pad_multiple 1024 \
         --devices -1 \
-        --num_nodes 1 
+        --num_nodes 1
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifests", type=str)
@@ -197,7 +197,7 @@ if __name__ == "__main__":
         max_epochs=1,
         logger=False,
     )
-    
+
     audio_base_dirs = args.audio_base_dirs.split(",")
     dataset_names = args.dataset_names.split(",")
     manifests = args.manifests.split(",")
