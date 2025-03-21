@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytorch_lightning as pl
+from lightning.pytorch.trainer.trainer import Trainer
 from omegaconf import OmegaConf, open_dict
 
 from nemo.collections.tts.models import MagpieTTS_Model, MagpieTTS_ModelInference, MagpieTTS_Model_PrefDataGen, MagpieTTS_Model_OfflinePO, MagpieTTS_Model_OnlinePO
@@ -29,7 +29,7 @@ def main(cfg):
 
         mp.set_start_method("spawn", force=True)
 
-    trainer = pl.Trainer(**cfg.trainer)
+    trainer = Trainer(**cfg.trainer)
     exp_manager(trainer, cfg.get("exp_manager", None))
 
     if cfg.get('mode', 'train') == 'train':
