@@ -30,7 +30,7 @@ from nemo.utils.exp_manager import exp_manager
 @hydra_runner(config_path="conf/magpietts", config_name="magpietts_en")
 def main(cfg):
     logging.info('\nConfig Params:\n%s', OmegaConf.to_yaml(cfg, resolve=True))
-    if not cfg.model.get('use_lthose', False):
+    if not cfg.model.get('use_lhotse', False):
         import torch.multiprocessing as mp
 
         mp.set_start_method("spawn", force=True)

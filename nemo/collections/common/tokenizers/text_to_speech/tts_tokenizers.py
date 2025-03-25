@@ -21,6 +21,8 @@ from typing import List, Optional, Union
 
 from transformers import PreTrainedTokenizerBase
 
+# from nemo.collections.common.tokenizers.aggregate_tokenizer import TokenizerWrapper
+# from nemo.collections.common.tokenizers.tokenizer_spec import TokenizerSpec
 from nemo.collections.common.tokenizers.text_to_speech.ipa_lexicon import (
     get_grapheme_character_set,
     get_ipa_punctuation_list,
@@ -1086,6 +1088,8 @@ class JapanesePhonemeTokenizer(BaseTokenizer):
         return [self._token2id[p] for p in ps]
 
 
+# TODO @xueyang: subclassing from `nemo/collections/common/tokenizers/tokenizer_spec.py::TokenizerSpec`, and/or
+#  adjust to reuse `nemo/collections/common/tokenizers/aggregate_tokenizer.py::AggregateTokenizer`
 class AggregatedTTSTokenizer:
     def __init__(self, tokenizers: List[Union[BaseTokenizer, PreTrainedTokenizerBase]], tokenizer_names: List[str]):
         """A simple aggregated tokenizer. Aggregates multiple tokenizers into one by combining (simply concatenating)
@@ -1126,3 +1130,21 @@ class AggregatedTTSTokenizer:
     def decode(self, tokens: List[int], tokenizer_name: str) -> str:
         tokenizer = self.tokenizers[tokenizer_name]
         return tokenizer.decode([token - self.toknizer_offsets[tokenizer_name] for token in tokens])
+
+
+# class TTSTokenizerWrapper(TokenizerWrapper):
+#     """
+#     this class follows `nemo/collections/common/tokenizers/aggregate_tokenizer.py::TokenizerWrapper`
+#     Provide a unified interface for NeMo Tokenizer, AggregateTokenizer, and (char) Parser.
+#     """
+
+#     def __init__(self, tokenizer):
+#         super().__init__(tokenizer)
+#         if isinstance(tokenizer, AggregatedTTSTokenizer):
+#             self._impl = self._call_tts_agg_tokenizer
+#         else:
+#             raise ValueError(f"Invalid tokenizer not an instance of `AggregatedTTSTokenizer`: {tokenizer}.")
+
+#     def _call_tts_agg_tokenizer(self, text: str, tokenizer_name: str) -> List[int]:
+#         assert tokenizer_name is not None, "Expected 'tokenizer_name' to be set for AggregatedTTSTokenizer."
+#         return self._tokenizer.encode(text=text, tokenizer_name=tokenizer_name)

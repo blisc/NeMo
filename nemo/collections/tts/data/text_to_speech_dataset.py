@@ -376,7 +376,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         prior_scaling_factor: float = None,
         load_cached_codes_if_available: bool = True,
         dataset_type: str = 'train',
-        tokenizer_config=None,
+        tokenizer_config=None,  # TODO @xueyang: this should be removed since no other places used it.
         load_16khz_audio: bool = True,
         use_text_conditioning_tokenizer: bool = False,
         pad_context_text_to_max_duration: bool = False,
@@ -408,7 +408,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         self.prior_scaling_factor = prior_scaling_factor
         self.load_cached_codes_if_available = load_cached_codes_if_available
         self.dataset_type = dataset_type
-        self.tokenizer_config = tokenizer_config
+        self.tokenizer_config = tokenizer_config  # TODO @xueyang: this should be removed since no other places used it.
         self.text_tokenizer = None  # Assigned in worker_init_fn in model file
         self.load_16khz_audio = load_16khz_audio
         self.use_text_conditioning_tokenizer = use_text_conditioning_tokenizer
@@ -720,6 +720,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         if len(context_audio_codes_list) > 0:
             batch_context_audio_codes_len = torch.IntTensor(context_audio_codes_len_list)
             context_audio_codes_max_len = int(batch_context_audio_codes_len.max().item())
+            # TODO @xueyang: verify if batch_context_audio_codes are integer.
             batch_context_audio_codes = stack_tensors(context_audio_codes_list, max_lens=[context_audio_codes_max_len])
             batch_dict['context_audio_codes'] = batch_context_audio_codes
             batch_dict['context_audio_codes_lens'] = batch_context_audio_codes_len
@@ -727,6 +728,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         if self.use_text_conditioning_tokenizer:
             batch_context_text_tokens_len = torch.IntTensor(context_text_tokens_len_list)
             context_text_tokens_max_len = int(batch_context_text_tokens_len.max().item())
+            # TODO @xueyang: potential bugs if self.tokenizer.pad is not 0.0. verify if batch_context_text_tokens are integer.
             batch_context_text_tokens = stack_tensors(context_text_tokens_list, max_lens=[context_text_tokens_max_len])
             batch_dict['context_text_tokens'] = batch_context_text_tokens
             batch_dict['context_text_tokens_lens'] = batch_context_text_tokens_len

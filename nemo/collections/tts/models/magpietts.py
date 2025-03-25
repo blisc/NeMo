@@ -32,7 +32,9 @@ from transformers import AutoTokenizer, T5Tokenizer
 
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.metrics.wer import word_error_rate
+from nemo.collections.common.data.lhotse import get_lhotse_dataloader_from_config
 from nemo.collections.common.tokenizers.text_to_speech.tts_tokenizers import AggregatedTTSTokenizer
+from nemo.collections.tts.data.text_to_speech_dataset_lhotse import MagpieTTSMonologueLhotseDataset
 from nemo.collections.tts.losses.aligner_loss import ForwardSumLoss
 from nemo.collections.tts.models import AudioCodecModel
 from nemo.collections.tts.modules import transformer_2501
@@ -68,6 +70,7 @@ def setup_tokenizers(all_tokenizers_config, use_text_conditioning_tokenizer, mod
             if "g2p" in tokenizer_config:
                 text_tokenizer_kwargs["g2p"] = instantiate(tokenizer_config.g2p)
             tokenizer = instantiate(tokenizer_config, **text_tokenizer_kwargs)
+            # TODO @xueyang: is it really necessary to set phone probability to 1.0 for test mode?
             if mode == 'test' and hasattr(tokenizer, "set_phone_prob"):
                 tokenizer.set_phone_prob(1.0)
         tokenizers.append(tokenizer)
@@ -135,9 +138,11 @@ class MagpieTTSModel(ModelPT):
                 del cfg['text_tokenizer']
 
         self.use_text_conditioning_encoder = cfg.get('use_text_conditioning_encoder', False)
-        tokenizer, text_conditioning_tokenizer = self._setup_tokenizers(cfg)
-        self.tokenizer = tokenizer
-        self.text_conditioning_tokenizer = text_conditioning_tokenizer
+        self.tokenizer, self.text_conditioning_tokenizer = setup_tokenizers(
+            all_tokenizers_config=cfg.text_tokenizers,
+            use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+            mode='train',
+        )
 
         num_tokens_tokenizer = len(self.tokenizer.tokens)
         num_tokens = num_tokens_tokenizer + 2  # +2 for BOS and EOS
@@ -265,11 +270,12 @@ class MagpieTTSModel(ModelPT):
         # Override to load all the keys except _speaker_verification_model and _codec_model
         super().load_state_dict(state_dict, strict=False)
 
-    def _setup_tokenizers(self, cfg, mode='test'):
-        tokenizer, text_conditioning_tokenizer = setup_tokenizers(
-            cfg.text_tokenizers, cfg.use_text_conditioning_encoder, mode=mode
-        )
-        return tokenizer, text_conditioning_tokenizer
+    # @staticmethod
+    # def _setup_tokenizers(cfg, mode='test'):
+    #     tokenizer, text_conditioning_tokenizer = setup_tokenizers(
+    #         cfg.text_tokenizers, cfg.use_text_conditioning_encoder, mode=mode
+    #     )
+    #     return tokenizer, text_conditioning_tokenizer
 
     def audio_to_codes(self, audio, audio_len, audio_type='target'):
         # audio: (B, T)
@@ -430,7 +436,6 @@ class MagpieTTSModel(ModelPT):
 
     def sample_codes_from_local_transformer(self, dec_output, temperature=0.7, topk=80, unfinished_items={}, finished_items={}, use_cfg=False, cfg_scale=1.0):
         # dec_output: (B, E)
-        # import ipdb; ipdb.set_trace()
         self.local_transformer.reset_cache(use_cache=True)
         dec_output = dec_output.unsqueeze(1) # (B, 1, E)
         local_transformer_input = self.local_transformer_in_projection(dec_output) # (B, 1, 128)
@@ -1507,9 +1512,9 @@ class MagpieTTSModel(ModelPT):
             self.log("val/local_transformer_loss", val_local_transformer_loss, prog_bar=True, sync_dist=True)
         self.validation_step_outputs.clear()  # free memory
 
-    def get_dataset(self, cfg, dataset_type):
+    def get_dataset(self, dataset_cfg, dataset_type):
         dataset = instantiate(
-            cfg.dataset,
+            dataset_cfg.dataset,
             bos_id=self.bos_id,
             eos_id=self.eos_id,
             audio_bos_id=self.audio_bos_id,
@@ -1532,38 +1537,100 @@ class MagpieTTSModel(ModelPT):
         )  # This will be used in worker_init_fn for instantiating tokenizer
         return dataset
 
-    def setup_training_data(self, cfg):
-        dataset = self.get_dataset(cfg, dataset_type='train')
-        sampler = dataset.get_sampler(cfg.dataloader_params.batch_size, world_size=self.trainer.world_size)
-        persistent_workers = True
-        if cfg.dataloader_params.num_workers == 0:
-            persistent_workers = False
-            # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
-            dataset.text_tokenizer, dataset.text_conditioning_tokenizer = self._setup_tokenizers(self.cfg)
-        self._train_dl = torch.utils.data.DataLoader(
-            dataset,
-            collate_fn=dataset.collate_fn,
-            sampler=sampler,
-            **cfg.dataloader_params,
-            worker_init_fn=worker_init_fn,
-            persistent_workers=persistent_workers,
+    def get_lhotse_dataloader(self, dataset_cfg, mode='train') -> torch.utils.data.DataLoader:
+        # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
+        #   cfg is a classifier-free guidance.
+        # text_tokenizer = TTSTokenizerWrapper(self.tokenizer)
+        text_tokenizer, text_conditioning_tokenizer = setup_tokenizers(
+            all_tokenizers_config=self.cfg.text_tokenizers,
+            use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+            mode=mode,
         )
-
-    def _setup_test_dataloader(self, cfg) -> torch.utils.data.DataLoader:
-        dataset = self.get_dataset(cfg, dataset_type='test')
-        persistent_workers = True
-        if cfg.dataloader_params.num_workers == 0:
-            persistent_workers = False
-            # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
-            dataset.text_tokenizer, dataset.text_conditioning_tokenizer = self._setup_tokenizers(self.cfg, mode='test')
-
-        data_loader = torch.utils.data.DataLoader(
-            dataset,
-            collate_fn=dataset.collate_fn,
-            **cfg.dataloader_params,
-            worker_init_fn=worker_init_fn,
-            persistent_workers=persistent_workers,
+        dataset = MagpieTTSMonologueLhotseDataset(
+            sample_rate=self.cfg.sample_rate,
+            # min_duration=dataset_cfg.min_duration,
+            # max_duration=dataset_cfg.max_duration,
+            volume_norm=dataset_cfg.volume_norm,
+            codec_model_downsample_factor=self.cfg.codec_model_downsample_factor,
+            codec_model_name=self.cfg.codec_model_name,
+            bos_id=self.bos_id,
+            eos_id=self.eos_id,
+            pad_id=text_tokenizer.pad,
+            audio_bos_id=self.audio_bos_id,
+            audio_eos_id=self.audio_eos_id,
+            context_audio_bos_id=self.context_audio_bos_id,
+            context_audio_eos_id=self.context_audio_eos_id,
+            num_audio_codebooks=self.cfg.num_audio_codebooks,
+            prior_scaling_factor=self.cfg.prior_scaling_factor,
+            load_cached_codes_if_available=self.cfg.load_cached_codes_if_available,
+            dataset_type='train',  # train or test used for setting phone prob to 1.0 in test dataset (worker_init_fn)
+            load_16khz_audio=(self.model_type == 'single_encoder_sv_tts'),
+            pad_context_text_to_max_duration=self.pad_context_text_to_max_duration,
+            context_duration_min=self.cfg.context_duration_min,
+            context_duration_max=self.cfg.context_duration_max,
+            # tokenizer_config=self.cfg.text_tokenizers,
+            use_text_conditioning_tokenizer=self.cfg.use_text_conditioning_encoder,
+            # text_tokenizer=self.tokenizer,
+            # text_conditioning_tokenizer=None,  # TODO @xueyang: do not support text conditioning tokenizer for lhotse dataset.
         )
+        data_loader = get_lhotse_dataloader_from_config(
+            config=dataset_cfg.dataset,
+            global_rank=self.global_rank,
+            world_size=self.world_size,
+            dataset=dataset,
+            tokenizer=text_tokenizer,
+            # TODO @xueyang: so far not supporting one tokenizer for transcript. If needing extra, we can aggregate as well with correct offset.
+        )
+        return data_loader
+
+    def setup_training_data(self, dataset_cfg):
+        if dataset_cfg.get("use_lhotse", False):
+            # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
+            #   cfg is a classifier-free guidance.
+            self._train_dl = self.get_lhotse_dataloader(dataset_cfg, mode='train')
+        else:
+            dataset = self.get_dataset(dataset_cfg, dataset_type='train')
+            sampler = dataset.get_sampler(dataset_cfg.dataloader_params.batch_size, world_size=self.trainer.world_size)
+            persistent_workers = True
+            if dataset_cfg.dataloader_params.num_workers == 0:
+                persistent_workers = False
+                # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
+                dataset.text_tokenizer, dataset.text_conditioning_tokenizer = setup_tokenizers(
+                    all_tokenizers_config=self.cfg.text_tokenizers,
+                    use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+                    mode='train',
+                )
+            self._train_dl = torch.utils.data.DataLoader(
+                dataset,
+                collate_fn=dataset.collate_fn,
+                sampler=sampler,
+                **dataset_cfg.dataloader_params,
+                worker_init_fn=worker_init_fn,
+                persistent_workers=persistent_workers,
+            )
+
+    def _setup_test_dataloader(self, dataset_cfg) -> torch.utils.data.DataLoader:
+        if dataset_cfg.get("use_lhotse", False):
+            data_loader = self.get_lhotse_dataloader(dataset_cfg, mode='test')
+        else:
+            dataset = self.get_dataset(dataset_cfg, dataset_type='test')
+            persistent_workers = True
+            if dataset_cfg.dataloader_params.num_workers == 0:
+                persistent_workers = False
+                # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
+                dataset.text_tokenizer, dataset.text_conditioning_tokenizer = setup_tokenizers(
+                    all_tokenizers_config=self.cfg.text_tokenizers,
+                    use_text_conditioning_tokenizer=self.use_kv_cache_for_inference,
+                    mode='test'
+                )
+
+            data_loader = torch.utils.data.DataLoader(
+                dataset,
+                collate_fn=dataset.collate_fn,
+                **dataset_cfg.dataloader_params,
+                worker_init_fn=worker_init_fn,
+                persistent_workers=persistent_workers,
+            )
         return data_loader
 
     def setup_validation_data(self, cfg):

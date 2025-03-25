@@ -12,21 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
-from pathlib import Path
-from typing import List, Optional
+import random
+import re
+from typing import Dict, List, Optional, Union
 
 import librosa
+import numpy as np
 import torch
-import random
+from lhotse import CutSet
+from lhotse.dataset.collation import collate_matrices
 from lhotse.dataset.collation import collate_vectors as collate_vectors_lhotse
 from megatron.core import parallel_state
-from omegaconf.omegaconf import OmegaConf
 
 from nemo.collections.common.data.lhotse import get_lhotse_dataloader_from_config
-from nemo.collections.tts.parts.utils.tts_dataset_utils import beta_binomial_prior_distribution, stack_tensors
+from nemo.collections.tts.parts.utils.tts_dataset_utils import (
+    beta_binomial_prior_distribution,
+    normalize_volume,
+    stack_tensors,
+)
 from nemo.utils import logging
-from nemo.utils.decorators import experimental
+
+SUPPORTED_CODEC_MODEL_NAMES = ["21fpsCausalDecoder", "12fpsCausalDecoder"]
+
+
+def check_speaker_format(item: str):
+    # enforce the format as example like "| Language:en Dataset:HiFiTTS Speaker:9136_other |".
+    pattern = r"\| Language:\w+ Dataset:[\w\d\W]+ Speaker:[\w\d\W]+ \|"
+    return bool(re.match(pattern, item))
 
 
 def collate_vectors(items, max_length: int, padding_value):
@@ -107,7 +119,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
         use_text_conditioning_tokenizer: bool = False,
         pad_context_text_to_max_duration: bool = False,
         context_duration_min: float = 3.0,
-        context_duration_max: float = 10.0
+        context_duration_max: float = 10.0,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -314,3 +326,362 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
 
     def collate_fn(self, batch: List[dict]):
         return batch
+
+
+class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        # dataset_meta: Dict,
+        sample_rate: int,
+        # weighted_sampling_steps_per_epoch: Optional[int] = None, TODO @xueyang: this should be moved to lhotse sampler.
+        # min_duration: Optional[float] = None,
+        # max_duration: Optional[float] = None,
+        volume_norm: bool = True,
+        codec_model_downsample_factor: int = None,
+        codec_model_name: str = "21fpsCausalDecoder",
+        bos_id: int = None,
+        eos_id: int = None,
+        pad_id: int = None,
+        audio_bos_id: int = None,
+        audio_eos_id: int = None,
+        context_audio_bos_id: int = None,
+        context_audio_eos_id: int = None,
+        num_audio_codebooks: int = None,
+        prior_scaling_factor: float = None,
+        load_cached_codes_if_available: bool = True,
+        dataset_type: str = 'train',
+        load_16khz_audio: bool = True,
+        pad_context_text_to_max_duration: bool = False,
+        context_duration_min: float = 3.0,
+        context_duration_max: float = 10.0,
+        # tokenizer_name: str = "english_phoneme",
+        # tokenizer_config=None,
+        use_text_conditioning_tokenizer: bool = False,
+        # text_tokenizer=None,
+        # text_conditioning_tokenizer=None,
+    ):
+        super().__init__()
+        self.sample_rate = sample_rate
+        # self.min_duration = min_duration
+        # self.max_duration = max_duration
+        # self.text_tokenizer = text_tokenizer
+        self.volume_norm = volume_norm
+        self.bos_id = bos_id
+        self.eos_id = eos_id
+        self.pad_id = pad_id
+        self.audio_bos_id = audio_bos_id
+        self.audio_eos_id = audio_eos_id
+        self.context_audio_bos_id = context_audio_bos_id
+        self.context_audio_eos_id = context_audio_eos_id
+
+        if codec_model_name not in SUPPORTED_CODEC_MODEL_NAMES:
+            raise ValueError(f"Invalid `codec_model_name`: {codec_model_name}.")
+        self.codec_model_name = codec_model_name
+        self.codec_model_downsample_factor = codec_model_downsample_factor
+        self.num_audio_codebooks = num_audio_codebooks
+
+        self.include_align_prior = prior_scaling_factor is not None
+        self.prior_scaling_factor = prior_scaling_factor
+        self.load_cached_codes_if_available = load_cached_codes_if_available
+        self.dataset_type = dataset_type
+        # self.tokenizer_config = tokenizer_config
+        self.load_16khz_audio = load_16khz_audio
+        if use_text_conditioning_tokenizer is True:
+            raise NotImplementedError("Initialization of text context tokenizer has not been implemented yet.")
+        self.use_text_conditioning_tokenizer = use_text_conditioning_tokenizer
+        # self.text_conditioning_tokenizer = text_conditioning_tokenizer
+        self.pad_context_text_to_max_duration = pad_context_text_to_max_duration
+        self.context_duration_min = context_duration_min
+        self.context_duration_max = context_duration_max
+        # self.tokenizer_name = tokenizer_name
+
+    def get_num_audio_samples_to_slice(self, duration, sample_rate):
+        num_codec_frames = int(duration * sample_rate / self.codec_model_downsample_factor)
+        num_audio_samples = num_codec_frames * self.codec_model_downsample_factor
+        return num_audio_samples
+
+    def __getitem__(self, cuts: CutSet) -> Dict[str, Union[torch.Tensor, List]]:
+        # TODO @xueyang: need to confirm where to add such filter.
+        # filtered_cuts_in_duration = cuts.filter(
+        #     lambda x: self.min_duration <= x.recording.duration <= self.max_duration
+        # )
+
+        # define list to store batched information
+        dataset_name_list = []
+        audio_list = []
+        audio_len_list = []
+        audio_list_16khz = []
+        audio_len_list_16khz = []
+        token_list = []
+        token_len_list = []
+        prior_list = []
+        audio_codes_list = []
+        audio_codes_len_list = []
+        context_audio_list = []
+        context_audio_len_list = []
+        context_audio_codes_list = []
+        context_audio_codes_len_list = []
+        context_text_tokens_list = []
+        context_text_tokens_len_list = []
+        context_has_text_context_list = []
+        reward_list = []
+        raw_text_list = []
+        target_codes_field = f"codes_{self.codec_model_name}"
+        context_codes_field = f"context_codes_{self.codec_model_name}"
+        for cut in cuts:
+            speaker = cut.supervisions[0].speaker
+            if not check_speaker_format(speaker):
+                raise ValueError(f"Invalid format in cut.supervisions[0].speaker: {speaker}")
+            dataset_name = speaker.strip().split()[2].split(":")[-1]
+            dataset_name_list.append(dataset_name)
+
+            # target audio or target codes
+            if self.load_cached_codes_if_available and cut.has_custom(target_codes_field):
+                audio_codes = torch.from_numpy(cut.load_custom(target_codes_field)).long()  # (8, T)
+                audio_bos_tensor = torch.full((audio_codes.shape[0], 1), self.audio_bos_id, dtype=audio_codes.dtype)
+                audio_eos_tensor = torch.full((audio_codes.shape[0], 1), self.audio_eos_id, dtype=audio_codes.dtype)
+                audio_codes = torch.cat([audio_bos_tensor, audio_codes, audio_eos_tensor], dim=1)
+                audio_codes_len = audio_codes.shape[1]
+                spec_len = audio_codes.shape[1] + 1  # +1 for EOS
+                audio_codes_list.append(
+                    audio_codes.T
+                )  # transpose to (T, 8) in order to use collate_matrices to process batch.
+                audio_codes_len_list.append(audio_codes_len)
+            else:
+                # Only load audio if codes are not available
+                audio_array = cut.recording.resample(self.sample_rate).load_audio().squeeze(0)
+                if self.volume_norm:
+                    audio_array = normalize_volume(audio_array)
+                audio = torch.from_numpy(audio_array)
+                # Pad audio to be multiple of downsample factor
+                audio = torch.nn.functional.pad(
+                    audio,
+                    (0, self.codec_model_downsample_factor - (audio.shape[0] % self.codec_model_downsample_factor)),
+                    value=0,
+                )
+                audio_len = audio.shape[0]
+                spec_len = int(audio_len / self.codec_model_downsample_factor) + 1  # +1 for EOS
+                audio_list.append(audio)
+                audio_len_list.append(audio_len)
+
+            # context audio or context codes
+            if self.load_cached_codes_if_available and cut.has_custom(context_codes_field):
+                # TODO @xueyang: dev branch applied Tensor.long(), i.e. torch.int64 which is not necessary.
+                # load audios and text
+                context_audio_codes = torch.from_numpy(cut.load_custom(context_codes_field)).long()  # (8, T)
+                # Sample random duration between self.context_duration_min and self.context_duration_max
+                _context_duration_to_slice = random.uniform(self.context_duration_min, self.context_duration_max)
+                _num_frames_to_slice = int(
+                    _context_duration_to_slice * self.sample_rate / self.codec_model_downsample_factor
+                )
+                if _num_frames_to_slice < context_audio_codes.shape[1]:
+                    start_idx = random.randint(0, context_audio_codes.shape[1] - _num_frames_to_slice)
+                    context_audio_codes = context_audio_codes[:, start_idx : start_idx + _num_frames_to_slice]
+                else:
+                    # Repeat the audio if it is shorter than the desired duration
+                    _num_repeats = int(np.ceil(_num_frames_to_slice / context_audio_codes.shape[1]))
+                    # context_audio_codes is a tensor of shape (num_codebooks, T)
+                    context_audio_codes_repeated = context_audio_codes.repeat(1, _num_repeats)
+                    context_audio_codes = context_audio_codes_repeated[:, :_num_frames_to_slice]
+
+                context_bos_tensor = torch.full(
+                    (context_audio_codes.shape[0], 1), self.context_audio_bos_id, dtype=context_audio_codes.dtype
+                )
+                context_eos_tensor = torch.full(
+                    (context_audio_codes.shape[0], 1), self.context_audio_eos_id, dtype=context_audio_codes.dtype
+                )
+                context_audio_codes = torch.cat([context_bos_tensor, context_audio_codes, context_eos_tensor], dim=1)
+                context_audio_codes_len = context_audio_codes.shape[1]
+                context_audio_codes_list.append(
+                    context_audio_codes.T
+                )  # transpose to (T, 8) in order to use collate_matrices to process batch.
+                context_audio_codes_len_list.append(context_audio_codes_len)
+            elif cut.has_custom("context_recording"):
+                # Only load audio if codes are not available
+                context_audio_array = cut.context_recording.resample(self.sample_rate).load_audio().squeeze(0)
+                if self.volume_norm:
+                    context_audio_array = normalize_volume(context_audio_array)
+                _context_duration_to_slice = random.uniform(self.context_duration_min, self.context_duration_max)
+                _num_samples_to_slice = self.get_num_audio_samples_to_slice(
+                    _context_duration_to_slice, self.sample_rate
+                )
+                if _num_samples_to_slice < len(context_audio_array):
+                    start_idx = random.randint(0, len(context_audio_array) - _num_samples_to_slice)
+                    context_audio_array = context_audio_array[start_idx : start_idx + _num_samples_to_slice]
+                else:
+                    # Repeat the audio if it is shorter than the desired duration
+                    _num_repeats = int(np.ceil(_num_samples_to_slice / len(context_audio_array)))
+                    context_audio_array = np.tile(context_audio_array, _num_repeats)
+                    context_audio_array = context_audio_array[:_num_samples_to_slice]
+                context_audio = torch.from_numpy(context_audio_array)
+                context_audio_len = context_audio.shape[0]
+                context_audio_list.append(context_audio)
+                context_audio_len_list.append(context_audio_len)
+            else:
+                # We always want to have context_audio_codes if available for multi-encoder model. These are ignored
+                # for singlencoder model.
+                # If context audio is not available, just use a dummy context_audio_codes
+                # (Will be used in text context scenario)
+                # TODO @xueyang: verified that this block should cover below 3 conditions which were handled well.
+                #  1. load_cached_codes_if_available and ["context_audio_codes_path", "context_audio_filepath"] not in data.manifest_entry;
+                #        assign to example["context_audio_codes"] and example["context_audio_codes_len"]
+                #  2. load_cached_codes_if_available is not True and "context_audio_codes_path" in data.manifest_entry;
+                #        assign to example["context_audio"] and example["context_audio_len"]
+                #  3. load_cached_codes_if_available is not True and ["context_audio_codes_path", "context_audio_filepath"] not in data.manifest_entry;
+                #        assign to example["context_audio"] and example["context_audio_len"]
+                if self.load_cached_codes_if_available:
+                    context_bos_tensor = torch.full(
+                        (self.num_audio_codebooks, 1), self.context_audio_bos_id, dtype=torch.int32
+                    )
+                    context_eos_tensor = torch.full(
+                        (self.num_audio_codebooks, 1), self.context_audio_eos_id, dtype=torch.int32
+                    )
+                    context_audio_codes = torch.cat([context_bos_tensor, context_eos_tensor], dim=1)
+                    context_audio_codes_len = context_audio_codes.shape[1]
+                    context_audio_codes_list.append(
+                        context_audio_codes.T
+                    )  # transpose to (T, 8) in order to use collate_matrices to process batch.
+                    context_audio_codes_len_list.append(context_audio_codes_len)
+                else:
+                    # @shehzeenh: Added this condition so that a batch does not have a mix of context_audio and context_audio_codes
+                    context_audio = torch.zeros(self.codec_model_downsample_factor, dtype=torch.float32)
+                    context_audio_len = context_audio.shape[0]
+                    context_audio_list.append(context_audio)
+                    context_audio_len_list.append(context_audio_len)
+
+            if self.load_16khz_audio:
+                if cut.has_custom("context_recording"):
+                    # use context audio for SV model
+                    audio_array_16khz = cut.context_recording.resample(16_000).load_audio().squeeze(0)
+                    if self.volume_norm:
+                        audio_array_16khz = normalize_volume(audio_array_16khz)
+                else:
+                    # Otherwise, load the target audio for SV model.
+                    audio_array_16khz = cut.recording.resample(16_000).load_audio().squeeze(0)
+                    if self.volume_norm:
+                        audio_array_16khz = normalize_volume(audio_array_16khz)
+                _context_duration_to_slice = random.uniform(self.context_duration_min, self.context_duration_max)
+                _num_samples_to_slice = int(_context_duration_to_slice * 16_000)
+                if _num_samples_to_slice < len(audio_array_16khz):
+                    start_idx = random.randint(0, len(audio_array_16khz) - _num_samples_to_slice)
+                    audio_array_16khz = audio_array_16khz[start_idx : start_idx + _num_samples_to_slice]
+                audio_16khz = torch.from_numpy(audio_array_16khz)
+                audio_len_16khz = audio_16khz.shape[0]
+                audio_list_16khz.append(audio_16khz)
+                audio_len_list_16khz.append(audio_len_16khz)
+
+            if self.use_text_conditioning_tokenizer:
+                raise NotImplementedError("Initialization of text context tokenizer has not been implemented yet.")
+                if cut.supervisions[0].has_custom("context_text"):
+                    context_text_tokens = self.text_conditioning_tokenizer(cut.supervisions[0].context_text)[
+                        'input_ids'
+                    ]
+                    has_text_context = True
+                else:
+                    context_text_tokens = self.text_conditioning_tokenizer("[NO TEXT CONTEXT]")['input_ids']
+                    has_text_context = False
+                if self.pad_context_text_to_max_duration:
+                    _required_len = (
+                        int(self.context_duration_max * self.sample_rate / self.codec_model_downsample_factor) + 2
+                    )  # +2 for BOS and EOS
+                    if len(context_text_tokens) < _required_len:
+                        _pad_id = self.text_conditioning_tokenizer.pad_token_id
+                        context_text_tokens += [_pad_id] * (_required_len - len(context_text_tokens))
+                    else:
+                        # TODO @xueyang: It seems counter intuition if trimming the text context tokens to the required
+                        #  context length. For example, the context_tokens after trimming may correspond to the partial
+                        #  context_text like "Speaker and Emotion: | Language:en Dataset(trimmed :Riva Speaker:Rodney_DROP |)"
+                        context_text_tokens = context_text_tokens[:_required_len]
+                context_text_tokens = torch.tensor(context_text_tokens, dtype=torch.int32)
+                context_text_tokens_len = context_text_tokens.shape[0]
+                context_text_tokens_list.append(context_text_tokens)
+                context_text_tokens_len_list.append(context_text_tokens_len)
+                context_has_text_context_list.append(has_text_context)
+
+            # tokenize transcript
+            # TODO @xueyang: temporally apply raw text. will check to change if normalized text is available.
+            raw_text = cut.supervisions[0].text
+            raw_text_list.append(raw_text)
+            # if cut.supervisions[0].has_custom("tokenizer_names"):
+                # Pick a random tokenizer from the list of tokenizers
+                # self.tokenizer_name =
+                # random.choice(cut.supervisions[0].tokenizer_names)
+            # import ipdb; ipdb.set_trace()
+            # if cut.tokenizer_names:
+                # Pick a random tokenizer from the list of tokenizers
+                # self.tokenizer_name = random.choice(cut.tokenizer_names)
+            # tokens = self.text_tokenizer.encode(text=raw_text, tokenizer_name=self.tokenizer_name)
+            # tokens = self.text_tokenizer(text=raw_text, tokenizer_name=self.tokenizer_name)
+            # cut.tokens is obtained from nemo/collections/common/data/lhotse/dataloader.py::tokenize
+            tokens = cut.tokens + [self.eos_id]  # Not adding BOS id
+            tokens = torch.tensor(tokens, dtype=torch.int32)
+            text_len = tokens.shape[0]
+            token_list.append(tokens)
+            token_len_list.append(text_len)
+
+            if self.include_align_prior:
+                # align_prior = self.beta_binomial_interpolator(spec_len, text_len)
+                align_prior = beta_binomial_prior_distribution(
+                    phoneme_count=text_len, mel_count=spec_len, scaling_factor=self.prior_scaling_factor
+                )
+                align_prior = torch.tensor(align_prior, dtype=torch.float32)
+                prior_list.append(align_prior)
+
+            if cut.supervisions[0].has_custom("reward"):
+                reward = cut.supervisions[0].reward
+                reward_list.append(reward)
+
+        # collate vectors and matrices here.
+        batch_dict = {
+            "dataset_names": dataset_name_list,
+            "raw_texts": raw_text_list,
+            "text": collate_vectors_lhotse(token_list, padding_value=self.pad_id),  # (B, max_len)
+            "text_lens": torch.IntTensor(token_len_list),
+        }
+
+        # audio for SV.
+        if len(audio_list_16khz) > 0:
+            batch_dict["audio_16khz"] = collate_vectors_lhotse(audio_list_16khz, padding_value=0.0)
+            batch_dict["audio_lens_16khz"] = torch.IntTensor(audio_len_list_16khz)
+
+        # target audio and codes
+        if len(audio_list) > 0:
+            batch_dict["audio"] = collate_vectors_lhotse(audio_list, padding_value=0.0)
+            batch_dict["audio_lens"] = torch.IntTensor(audio_len_list)
+        if len(audio_codes_list) > 0:
+            # transpose back to (B, 8, T) from (B, T, 8).
+            batch_dict["audio_codes"] = collate_matrices(audio_codes_list, padding_value=0).transpose(1, 2)
+            batch_dict["audio_codes_lens"] = torch.IntTensor(audio_codes_len_list)
+
+        # context audio and codes
+        if len(context_audio_list) > 0:
+            batch_dict["context_audio"] = collate_vectors_lhotse(context_audio_list, padding_value=0.0)
+            batch_dict["context_audio_lens"] = torch.IntTensor(context_audio_len_list)
+        if len(context_audio_codes_list) > 0:
+            # transpose back to (B, 8, T) from (B, T, 8).
+            batch_dict["context_audio_codes"] = collate_matrices(context_audio_codes_list, padding_value=0).transpose(1, 2)
+            batch_dict["context_audio_codes_lens"] = torch.IntTensor(context_audio_codes_len_list)
+
+        if self.use_text_conditioning_tokenizer:
+            batch_dict['context_text_tokens'] = collate_vectors_lhotse(context_text_tokens_list, padding_value=self.text_conditioning_tokenizer.pad_token_id)
+            batch_dict['context_text_tokens_lens'] = torch.IntTensor(context_text_tokens_len_list)
+            batch_dict['has_text_context'] = torch.BoolTensor(context_has_text_context_list)
+
+        if self.include_align_prior:
+            spec_max_len = max([prior.shape[0] for prior in prior_list])
+            text_max_len = max([prior.shape[1] for prior in prior_list])
+            batch_dict["align_prior_matrix"] = stack_tensors(prior_list, max_lens=[text_max_len, spec_max_len])
+
+        if len(reward_list) > 0:
+            batch_dict['rewards'] = torch.FloatTensor(reward_list)
+
+        # Assert only ONE of context_audio or context_audio_codes in the batch
+        assert ('audio' in batch_dict) ^ ('audio_codes' in batch_dict)
+
+        # Assert only ONE of context_audio or context_audio_codes in the batch
+        if 'context_audio' in batch_dict:
+            assert 'context_audio_codes' not in batch_dict
+        if 'context_audio_codes' in batch_dict:
+            assert 'context_audio' not in batch_dict
+
+        return batch_dict
