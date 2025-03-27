@@ -63,6 +63,12 @@ def run_inference(
             model_cfg.text_tokenizer.g2p.phoneme_probability = 1.0
         model_cfg.train_ds = None
         model_cfg.validation_ds = None
+        if "t5_encoder" in model_cfg:
+            model_cfg.encoder = model_cfg.t5_encoder
+            del model_cfg.t5_encoder
+        if "t5_decoder" in model_cfg:
+            model_cfg.decoder = model_cfg.t5_decoder
+            del model_cfg.t5_decoder
 
 
     model = MagpieTTS_Model(cfg=model_cfg)
