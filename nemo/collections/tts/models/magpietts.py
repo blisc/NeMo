@@ -232,7 +232,7 @@ class MagpieTTS_Model(ModelPT):
                 multi_encoder_mapping[layer] = 1
             self.multi_encoder_mapping = multi_encoder_mapping
             self.context_encoder = transformer_2501.Transformer(**dict(cfg.context_encoder))
-        elif self.model_type == 'decoder_context_tts':
+        elif self.model_type in ['decoder_context_tts', 'decoder_wocontext_tts']:
             self.transcript_decoder_layers = [
                 idx for idx in range(cfg.decoder.n_layers)
             ]  # All layers are used for text
@@ -719,6 +719,11 @@ class MagpieTTS_Model(ModelPT):
                 multi_encoder_mapping = None
                 additional_decoder_input = context_embeddings
                 addtional_decoder_mask = context_mask
+        elif self.model_type == 'decoder_wocontext_tts':
+            cond = text_encoder_out
+            cond_mask = text_mask
+            multi_encoder_mapping = None
+            attn_prior = _attn_prior
         elif self.model_type == 'decoder_pretrain_synthesizer':
             pass
         else:
