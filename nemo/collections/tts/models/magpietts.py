@@ -24,7 +24,7 @@ import soundfile as sf
 import torch
 from hydra.utils import instantiate
 from lightning.pytorch import Trainer
-from lightning.pytorch.loggers import TensorBoardLogge
+from lightning.pytorch.loggers import TensorBoardLogger
 from omegaconf import DictConfig, open_dict
 from torch import nn
 from torch.utils.data import get_worker_info
