@@ -207,13 +207,13 @@ class MagpieTTSModel(ModelPT):
         # del codec discriminator to free memory
         del codec_model.discriminator
         self._codec_model = codec_model
-        self._codec_model.freeze()
+        self._codec_model.freeze()  #Lightning does requires_grad = False and self.eval()
 
         if self.model_type == 'single_encoder_sv_tts':
             self._speaker_verification_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
                 model_name='titanet_large'
             )
-            self._speaker_verification_model.freeze()
+            self._speaker_verification_model.freeze()  #Lightning does requires_grad = False and self.eval()
             self.speaker_projection_layer = nn.Linear(cfg.speaker_emb_dim, cfg.embedding_dim)
             self.transcript_decoder_layers = [
                 idx for idx in range(cfg.decoder.n_layers)
