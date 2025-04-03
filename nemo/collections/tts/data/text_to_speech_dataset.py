@@ -396,7 +396,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
             max_duration=max_duration,
             volume_norm=volume_norm,
         )
-        self.bos_id = bos_id
+        self.bos_id = bos_id # TODO @xueyang: this should be removed since no other places used it.
         self.eos_id = eos_id
         self.audio_bos_id = audio_bos_id
         self.audio_eos_id = audio_eos_id
