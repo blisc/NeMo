@@ -331,11 +331,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
 class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        # dataset_meta: Dict,
         sample_rate: int,
-        # weighted_sampling_steps_per_epoch: Optional[int] = None, TODO @xueyang: this should be moved to lhotse sampler.
-        # min_duration: Optional[float] = None,
-        # max_duration: Optional[float] = None,
         volume_norm: bool = True,
         codec_model_downsample_factor: int = None,
         codec_model_name: str = "21fpsCausalDecoder",
@@ -354,17 +350,10 @@ class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
         pad_context_text_to_max_duration: bool = False,
         context_duration_min: float = 3.0,
         context_duration_max: float = 10.0,
-        # tokenizer_name: str = "english_phoneme",
-        # tokenizer_config=None,
         use_text_conditioning_tokenizer: bool = False,
-        # text_tokenizer=None,
-        # text_conditioning_tokenizer=None,
     ):
         super().__init__()
         self.sample_rate = sample_rate
-        # self.min_duration = min_duration
-        # self.max_duration = max_duration
-        # self.text_tokenizer = text_tokenizer
         self.volume_norm = volume_norm
         self.bos_id = bos_id
         self.eos_id = eos_id
@@ -384,16 +373,13 @@ class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
         self.prior_scaling_factor = prior_scaling_factor
         self.load_cached_codes_if_available = load_cached_codes_if_available
         self.dataset_type = dataset_type
-        # self.tokenizer_config = tokenizer_config
         self.load_16khz_audio = load_16khz_audio
         if use_text_conditioning_tokenizer is True:
             raise NotImplementedError("Initialization of text context tokenizer has not been implemented yet.")
         self.use_text_conditioning_tokenizer = use_text_conditioning_tokenizer
-        # self.text_conditioning_tokenizer = text_conditioning_tokenizer
         self.pad_context_text_to_max_duration = pad_context_text_to_max_duration
         self.context_duration_min = context_duration_min
         self.context_duration_max = context_duration_max
-        # self.tokenizer_name = tokenizer_name
 
     def get_num_audio_samples_to_slice(self, duration, sample_rate):
         num_codec_frames = int(duration * sample_rate / self.codec_model_downsample_factor)
@@ -401,11 +387,6 @@ class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
         return num_audio_samples
 
     def __getitem__(self, cuts: CutSet) -> Dict[str, Union[torch.Tensor, List]]:
-        # TODO @xueyang: need to confirm where to add such filter.
-        # filtered_cuts_in_duration = cuts.filter(
-        #     lambda x: self.min_duration <= x.recording.duration <= self.max_duration
-        # )
-
         # define list to store batched information
         dataset_name_list = []
         audio_list = []
@@ -572,31 +553,31 @@ class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
 
             if self.use_text_conditioning_tokenizer:
                 raise NotImplementedError("Initialization of text context tokenizer has not been implemented yet.")
-                if cut.supervisions[0].has_custom("context_text"):
-                    context_text_tokens = self.text_conditioning_tokenizer(cut.supervisions[0].context_text)[
-                        'input_ids'
-                    ]
-                    has_text_context = True
-                else:
-                    context_text_tokens = self.text_conditioning_tokenizer("[NO TEXT CONTEXT]")['input_ids']
-                    has_text_context = False
-                if self.pad_context_text_to_max_duration:
-                    _required_len = (
-                        int(self.context_duration_max * self.sample_rate / self.codec_model_downsample_factor) + 2
-                    )  # +2 for BOS and EOS
-                    if len(context_text_tokens) < _required_len:
-                        _pad_id = self.text_conditioning_tokenizer.pad_token_id
-                        context_text_tokens += [_pad_id] * (_required_len - len(context_text_tokens))
-                    else:
-                        # TODO @xueyang: It seems counter intuition if trimming the text context tokens to the required
-                        #  context length. For example, the context_tokens after trimming may correspond to the partial
-                        #  context_text like "Speaker and Emotion: | Language:en Dataset(trimmed :Riva Speaker:Rodney_DROP |)"
-                        context_text_tokens = context_text_tokens[:_required_len]
-                context_text_tokens = torch.tensor(context_text_tokens, dtype=torch.int32)
-                context_text_tokens_len = context_text_tokens.shape[0]
-                context_text_tokens_list.append(context_text_tokens)
-                context_text_tokens_len_list.append(context_text_tokens_len)
-                context_has_text_context_list.append(has_text_context)
+                # if cut.supervisions[0].has_custom("context_text"):
+                #     context_text_tokens = self.text_conditioning_tokenizer(cut.supervisions[0].context_text)[
+                #         'input_ids'
+                #     ]
+                #     has_text_context = True
+                # else:
+                #     context_text_tokens = self.text_conditioning_tokenizer("[NO TEXT CONTEXT]")['input_ids']
+                #     has_text_context = False
+                # if self.pad_context_text_to_max_duration:
+                #     _required_len = (
+                #         int(self.context_duration_max * self.sample_rate / self.codec_model_downsample_factor) + 2
+                #     )  # +2 for BOS and EOS
+                #     if len(context_text_tokens) < _required_len:
+                #         _pad_id = self.text_conditioning_tokenizer.pad_token_id
+                #         context_text_tokens += [_pad_id] * (_required_len - len(context_text_tokens))
+                #     else:
+                #         # TODO @xueyang: It seems counter intuition if trimming the text context tokens to the required
+                #         #  context length. For example, the context_tokens after trimming may correspond to the partial
+                #         #  context_text like "Speaker and Emotion: | Language:en Dataset(trimmed :Riva Speaker:Rodney_DROP |)"
+                #         context_text_tokens = context_text_tokens[:_required_len]
+                # context_text_tokens = torch.tensor(context_text_tokens, dtype=torch.int32)
+                # context_text_tokens_len = context_text_tokens.shape[0]
+                # context_text_tokens_list.append(context_text_tokens)
+                # context_text_tokens_len_list.append(context_text_tokens_len)
+                # context_has_text_context_list.append(has_text_context)
 
             # tokenize transcript
             # TODO @xueyang: temporally apply raw text. will check to change if normalized text is available.
@@ -606,7 +587,6 @@ class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
                 # Pick a random tokenizer from the list of tokenizers
                 # self.tokenizer_name =
                 # random.choice(cut.supervisions[0].tokenizer_names)
-            # import ipdb; ipdb.set_trace()
             # if cut.tokenizer_names:
                 # Pick a random tokenizer from the list of tokenizers
                 # self.tokenizer_name = random.choice(cut.tokenizer_names)

@@ -1540,7 +1540,6 @@ class MagpieTTSModel(ModelPT):
     def get_lhotse_dataloader(self, dataset_cfg, mode='train') -> torch.utils.data.DataLoader:
         # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
         #   cfg is a classifier-free guidance.
-        # text_tokenizer = TTSTokenizerWrapper(self.tokenizer)
         text_tokenizer, text_conditioning_tokenizer = setup_tokenizers(
             all_tokenizers_config=self.cfg.text_tokenizers,
             use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
@@ -1548,8 +1547,6 @@ class MagpieTTSModel(ModelPT):
         )
         dataset = MagpieTTSMonologueLhotseDataset(
             sample_rate=self.cfg.sample_rate,
-            # min_duration=dataset_cfg.min_duration,
-            # max_duration=dataset_cfg.max_duration,
             volume_norm=dataset_cfg.volume_norm,
             codec_model_downsample_factor=self.cfg.codec_model_downsample_factor,
             codec_model_name=self.cfg.codec_model_name,
@@ -1568,10 +1565,7 @@ class MagpieTTSModel(ModelPT):
             pad_context_text_to_max_duration=self.pad_context_text_to_max_duration,
             context_duration_min=self.cfg.context_duration_min,
             context_duration_max=self.cfg.context_duration_max,
-            # tokenizer_config=self.cfg.text_tokenizers,
             use_text_conditioning_tokenizer=self.cfg.use_text_conditioning_encoder,
-            # text_tokenizer=self.tokenizer,
-            # text_conditioning_tokenizer=None,  # TODO @xueyang: do not support text conditioning tokenizer for lhotse dataset.
         )
         data_loader = get_lhotse_dataloader_from_config(
             config=dataset_cfg.dataset,
