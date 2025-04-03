@@ -1540,11 +1540,16 @@ class MagpieTTSModel(ModelPT):
     def get_lhotse_dataloader(self, dataset_cfg, mode='train') -> torch.utils.data.DataLoader:
         # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
         #   cfg is a classifier-free guidance.
-        text_tokenizer, text_conditioning_tokenizer = setup_tokenizers(
-            all_tokenizers_config=self.cfg.text_tokenizers,
-            use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
-            mode=mode,
-        )
+        if mode == 'train':
+            # reuse the tokenizers from the model initilization.
+            text_tokenizer = self.tokenizer
+            text_conditioning_tokenizer = self.text_conditioning_tokenizer
+        else:
+            text_tokenizer, text_conditioning_tokenizer = setup_tokenizers(
+                all_tokenizers_config=self.cfg.text_tokenizers,
+                use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+                mode=mode,
+            )
         dataset = MagpieTTSMonologueLhotseDataset(
             sample_rate=self.cfg.sample_rate,
             volume_norm=dataset_cfg.volume_norm,
@@ -1560,7 +1565,7 @@ class MagpieTTSModel(ModelPT):
             num_audio_codebooks=self.cfg.num_audio_codebooks,
             prior_scaling_factor=self.cfg.prior_scaling_factor,
             load_cached_codes_if_available=self.cfg.load_cached_codes_if_available,
-            dataset_type='train',  # train or test used for setting phone prob to 1.0 in test dataset (worker_init_fn)
+            dataset_type=mode,  # train or test used for setting phone prob to 1.0 in test dataset (worker_init_fn)
             load_16khz_audio=(self.model_type == 'single_encoder_sv_tts'),
             pad_context_text_to_max_duration=self.pad_context_text_to_max_duration,
             context_duration_min=self.cfg.context_duration_min,
