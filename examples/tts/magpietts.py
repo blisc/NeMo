@@ -32,13 +32,13 @@ def main(cfg):
     logging.info('\nConfig Params:\n%s', OmegaConf.to_yaml(cfg, resolve=True))
 
     # forcing "spawn" method for multiprocessing over "fork" when choosing multiple
-    # worker processes for dataloaders. By default, multiprocessing uses "fork" to create 
+    # worker processes for dataloaders. By default, multiprocessing uses "fork" to create
     # worker processes, which inherit the memory state of the main process, including its
     # already initialized CUDA state. When the worker processes trieds to use
     # CUDA, it runs into conflicts with the inherited, now potentially invalid,
     # CUDA context, resuling in the CUDA initialization error. When
-    # num_workers=0, all dataloading happens in the main process, so there is no 
-    # process forking and no CUDA context conflict. When num_workers>0, the standard way 
+    # num_workers=0, all dataloading happens in the main process, so there is no
+    # process forking and no CUDA context conflict. When num_workers>0, the standard way
     # to fix this is to use "spawn" to create a completely new and clean python process for
     # each worker, avoding the problematic CUDA state inheritance.
     mp.set_start_method("spawn", force=True)

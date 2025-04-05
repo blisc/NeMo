@@ -215,15 +215,18 @@ class SharPredictionWriter(BasePredictionWriter):
                 language=lang,
                 custom={key: val[idx] for key, val in meta_fields.items()} if meta_fields else None,
             )
-            for idx, (rec, text, spk, lang) in enumerate(zip(
-                target_recordings,
-                prediction["text"],
-                prediction["speaker"],
-                prediction["language"]
-            ))
+            for idx, (rec, text, spk, lang) in enumerate(
+                zip(target_recordings, prediction["text"], prediction["speaker"], prediction["language"])
+            )
         ]
 
         # Create cuts in batch
+        # TODO @xueyang: should file a bug report to `attach_tensor` function. When `temporal_dim=-1`, the tensor is not
+        # attached correctly. For example, I found that `cuts[0].codes_21fpsCausalDecoder.load()` and
+        # `cuts[0].load_custom("codes_21fpsCausalDecoder")` returns different arrays, with different shapes. But the former
+        # returned expected (8,5) shape, while the latter returned (5,5). I also find that, after write shar files, and
+        # when i load codes using `CutSet.from_shar()` and no matter which load functions I used, they are all shape of (5,5)
+        # instead of (8,5). In any case, using default `temporal_dim` and `frame_shift` addressed this issue.
         cuts = [
             MonoCut(
                 id=f"cut-{rec.id}",
@@ -232,24 +235,24 @@ class SharPredictionWriter(BasePredictionWriter):
                 recording=rec,
                 channel=0,
                 supervisions=[sup],
-                custom={"context_recording": context_rec}
+                custom={"context_recording": context_rec},
             ).attach_tensor(
                 name=f"codes_{self.codec_model_name}",
                 data=target_code,
-                temporal_dim=1,
-                frame_shift=1 / self.codec_frame_rate
+                # temporal_dim=1,
+                # frame_shift=1 / self.codec_frame_rate
             ).attach_tensor(
                 name=f"context_codes_{self.codec_model_name}",
                 data=context_code,
-                temporal_dim=1,
-                frame_shift=1 / self.codec_frame_rate
+                # temporal_dim=1,
+                # frame_shift=1 / self.codec_frame_rate
             )
             for rec, sup, context_rec, target_code, context_code in zip(
                 target_recordings,
                 supervisions,
                 context_recordings,
                 prediction["target_codes"],
-                prediction["context_codes"]
+                prediction["context_codes"],
             )
         ]
 
