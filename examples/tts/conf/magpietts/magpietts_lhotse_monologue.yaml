@@ -1,6 +1,7 @@
 name: MagpieTTS-EN-Lhotse
 
 batch_duration: ???   # in seconds. Adjust based on your GPU memory.
+quadratic_duration: 20
 sample_rate: 22_050
 
 codecmodel_path: ???
@@ -76,6 +77,7 @@ model:
       min_duration: 0.2
       sample_rate: ${sample_rate}  # need to override the default sample rate of 16000
       batch_duration : ${batch_duration}
+      quadratic_duration: ${quadratic_duration}
       use_bucketing: true
       num_buckets: 10
       bucket_buffer_size: 20_000
@@ -100,6 +102,7 @@ model:
       min_duration: 0.2
       sample_rate: ${sample_rate}
       batch_duration: ${batch_duration}
+      quadratic_duration: ${quadratic_duration}
       use_bucketing: false
       force_finite: true
       drop_last: false
