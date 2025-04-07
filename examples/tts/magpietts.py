@@ -44,6 +44,7 @@ def main(cfg):
     mp.set_start_method("spawn", force=True)
 
     trainer = pl.Trainer(**cfg.trainer)
+    trainer.callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='step', log_weight_decay=True))
     exp_manager(trainer, cfg.get("exp_manager", None))
 
     if cfg.get('mode', 'train') == 'train':
