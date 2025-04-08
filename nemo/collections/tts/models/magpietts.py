@@ -1054,6 +1054,8 @@ class MagpieTTS_Model(ModelPT):
 
     def validation_step(self, batch, batch_idx):
         batch_output = self.process_batch(batch, mode="val")
+        # self.process_batch returns a dict. We currently only log "logits" which come from the parallel prediction
+        # head. If we use local_transformer, then the local_transformer returns "local_transformer_logits"
         loss = batch_output['loss']
         codebook_loss = batch_output['codebook_loss']
         alignment_loss = batch_output['alignment_loss']
@@ -1074,7 +1076,7 @@ class MagpieTTS_Model(ModelPT):
         if batch_idx == 0 and self.global_rank == 0:
             self.log_train_val_audio_example(
                 logits, audio_codes_target, audio_codes_lens_target, context_audio_codes, context_audio_codes_lens
-            )
+            )  # Currently, only logs parallel prediction (logits). No local transformer results
             if (
                 self.model_type != 'decoder_pretrain_synthesizer'
                 and len(attn_info[self.transcript_decoder_layers[0]]['cross_attn_probabilities']) > 1
