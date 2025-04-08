@@ -115,6 +115,7 @@ def run_inference(
         sv_model
     )
     dataset_meta_info = evalset_config.dataset_meta_info
+    # model.model_type = 'decoder_context_tts'
     for dataset in datasets:
         metrics_n_repeated = []
         manifest_records = read_manifest(dataset_meta_info[dataset]['manifest_path'])
