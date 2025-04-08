@@ -307,11 +307,17 @@ class MagpieTTSModel(ModelPT):
         # codes_len: (B,)
         self._codec_model.eval()
         with torch.no_grad():
-            # Replace eos and bos tokens with padding in codes tensor
-            codes[codes == self.audio_bos_id] = 0  # zero is the padding token in the audio codebook
-            codes[codes == self.audio_eos_id] = 0
-            # self.additional_models['codec'] = self.additional_models['codec'].to(codes.device)
-            audio, audio_len = self._codec_model.decode(tokens=codes, tokens_len=codes_len)
+            # Make a copy to avoid modifying the original tensor if it's used elsewhere
+            codes_copy = codes.clone()
+            # Replace eos and bos tokens with padding in the copied tensor
+            codes_copy[codes == self.audio_bos_id] = 0  # zero is the padding token
+            codes_copy[codes == self.audio_eos_id] = 0
+
+            # Force fp32 for the internal operations of the codec decoding
+            with torch.autocast(device_type=codes.device.type, enabled=False):
+                # Pass the modified integer token IDs
+                audio, audio_len = self._codec_model.decode(tokens=codes_copy, tokens_len=codes_len)
+
             # audio: (B, T)
             # audio_len: (B,)
             return audio, audio_len
