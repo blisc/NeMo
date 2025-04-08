@@ -376,7 +376,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         prior_scaling_factor: float = None,
         load_cached_codes_if_available: bool = True,
         dataset_type: str = 'train',
-        tokenizer_config=None,  # TODO @xueyang: this should be removed since no other places used it.
+        tokenizer_config=None,
         load_16khz_audio: bool = True,
         use_text_conditioning_tokenizer: bool = False,
         pad_context_text_to_max_duration: bool = False,
@@ -408,7 +408,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         self.prior_scaling_factor = prior_scaling_factor
         self.load_cached_codes_if_available = load_cached_codes_if_available
         self.dataset_type = dataset_type
-        self.tokenizer_config = tokenizer_config  # TODO @xueyang: this should be removed since no other places used it.
+        self.tokenizer_config = tokenizer_config
         self.text_tokenizer = None  # Assigned in worker_init_fn in model file
         self.load_16khz_audio = load_16khz_audio
         self.use_text_conditioning_tokenizer = use_text_conditioning_tokenizer

@@ -241,13 +241,6 @@ class MagpieTTSModel(ModelPT):
         # Override to load all the keys except _speaker_verification_model and _codec_model
         super().load_state_dict(state_dict, strict=False)
 
-    # @staticmethod
-    # def _setup_tokenizers(cfg, mode='test'):
-    #     tokenizer, text_conditioning_tokenizer = setup_tokenizers(
-    #         cfg.text_tokenizers, cfg.use_text_conditioning_encoder, mode=mode
-    #     )
-    #     return tokenizer, text_conditioning_tokenizer
-
     def audio_to_codes(self, audio, audio_len, audio_type='target'):
         # audio: (B, T)
         # audio_len: (B,)

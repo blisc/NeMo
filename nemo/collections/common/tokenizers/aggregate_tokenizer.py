@@ -17,7 +17,6 @@ from typing import Dict, List, Union
 import numpy as np
 import torch
 
-from nemo.collections.common.tokenizers.text_to_speech.tts_tokenizers import AggregatedTTSTokenizer
 from nemo.collections.common.tokenizers.tokenizer_spec import TokenizerSpec
 from nemo.utils import logging
 
@@ -248,9 +247,7 @@ class TokenizerWrapper:
 
     def __init__(self, tokenizer):
         self._tokenizer = tokenizer
-        if isinstance(tokenizer, AggregatedTTSTokenizer):
-            self._impl = self._call_tts_agg_tokenizer
-        elif isinstance(tokenizer, AggregateTokenizer):
+        if isinstance(tokenizer, AggregateTokenizer):
             self._impl = self._call_agg_tokenizer
         elif isinstance(tokenizer, TokenizerSpec):
             self._impl = self._call_tokenizer
@@ -259,10 +256,6 @@ class TokenizerWrapper:
 
     def __call__(self, text: str, lang: str | None = None):
         return self._impl(text, lang)
-
-    def _call_tts_agg_tokenizer(self, text: str, tokenizer_name: str) -> List[int]:
-        assert tokenizer_name is not None, "Expected 'tokenizer_name' to be set for AggregatedTTSTokenizer."
-        return self._tokenizer.encode(text=text, tokenizer_name=tokenizer_name)
 
     def _call_agg_tokenizer(self, text: str, lang: str | None = None):
         assert lang is not None, "Expected 'lang' to be set for AggregateTokenizer."

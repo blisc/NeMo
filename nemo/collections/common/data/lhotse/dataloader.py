@@ -535,8 +535,6 @@ def get_lhotse_sampler_from_config(config, global_rank, world_size, tokenizer=No
 
     # Duration filtering, same as native NeMo dataloaders.
     # We can filter after the augmentations because they are applied only when calling load_audio().
-    # TODO @xueyang: TTS directly deals with audio codes instead of audio, so filtering min max dur would not work as expected.
-    #    probably, we should rely on TokenCountFilter about codes instead.
     cuts = cuts.filter(DurationFilter(config.min_duration, config.max_duration))
     cuts = cuts.filter(
         TokenCountFilter(config.min_tokens, config.max_tokens, measure_total_length=config.measure_total_length)
@@ -757,15 +755,9 @@ def make_structured_with_schema_warnings(config: Union[DictConfig, dict]) -> Dic
 def tokenize(example, tokenizer):
     """Return the text in the example according to the provided tokenizer."""
     if isinstance(example, Cut):
-        if example.has_custom("tokenizer_names"):
-            # Pick a random tokenizer from the list of tokenizers
-            tokenizer_name = random.choice(example.tokenizer_names)
-            example.tokens = tokenizer(text=example.supervisions[0].text, lang=tokenizer_name)
-        else:
-            for s in example.supervisions:
-                if s.text is not None:
-                    # TODO @xueyang: modify here to replace language with tokenizer_name.
-                    s.tokens = np.asarray(tokenizer(s.text, s.language))
+        for s in example.supervisions:
+            if s.text is not None:
+                s.tokens = np.asarray(tokenizer(s.text, s.language))
     elif hasattr(example, "tokenize") and callable(example.tokenize):
         example = example.tokenize(tokenizer)
     else:
