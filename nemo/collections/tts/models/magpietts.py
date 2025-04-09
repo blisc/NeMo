@@ -230,7 +230,7 @@ class MagpieTTSModel(ModelPT):
                 multi_encoder_mapping[layer] = 1
             self.multi_encoder_mapping = multi_encoder_mapping
             self.context_encoder = transformer_2501.Transformer(**dict(cfg.context_encoder))
-        elif self.model_type == 'decoder_context_tts':
+        elif self.model_type in ['decoder_context_tts', 'decoder_wocontext_tts']:
             self.transcript_decoder_layers = [
                 idx for idx in range(cfg.decoder.n_layers)
             ]  # All layers are used for text
@@ -284,39 +284,39 @@ class MagpieTTSModel(ModelPT):
             raise ValueError(f"Received audio_type of {audio_type}. Must be `target` or `context`")
 
         self._codec_model.eval()
-        with torch.cuda.amp.autocast(enabled=False):
-            with torch.no_grad():
-                codes, codes_len = self._codec_model.encode(audio=audio, audio_len=audio_len)
-                # Add a timestep to begining and end of codes tensor
-                bos_tensor = torch.full(
-                    (codes.size(0), codes.size(1), 1), audio_bos_id, dtype=codes.dtype, device=codes.device
-                )
-                pad_tensor = torch.full(
-                    (codes.size(0), codes.size(1), 1), 0, dtype=codes.dtype, device=codes.device
-                )  # 0 is the padding token in the audio codebook
-                codes = torch.cat([bos_tensor, codes, pad_tensor], dim=-1)
-                # codes: (B, C, T')
-                # codes_len: (B,)
-                for idx in range(codes.size(0)):
-                    codes[idx, :, codes_len[idx] + 1] = audio_eos_id
-                codes_len = codes_len + 2
+        with torch.no_grad(), torch.autocast(device_type=str(audio.device), dtype=torch.float32):
+            codes, codes_len = self._codec_model.encode(audio=audio, audio_len=audio_len)
+            # Add a timestep to begining and end of codes tensor
+            bos_tensor = torch.full(
+                (codes.size(0), codes.size(1), 1), audio_bos_id, dtype=codes.dtype, device=codes.device
+            )
+            pad_tensor = torch.full(
+                (codes.size(0), codes.size(1), 1), 0, dtype=codes.dtype, device=codes.device
+            )  # 0 is the padding token in the audio codebook
+            codes = torch.cat([bos_tensor, codes, pad_tensor], dim=-1)
+            # codes: (B, C, T')
+            # codes_len: (B,)
+            for idx in range(codes.size(0)):
+                codes[idx, :, codes_len[idx] + 1] = audio_eos_id
+            codes_len = codes_len + 2
 
-                return codes.long(), codes_len.long()
+            return codes.long(), codes_len.long()
 
     def codes_to_audio(self, codes, codes_len):
         # codes: (B, C, T')
         # codes_len: (B,)
         self._codec_model.eval()
-        with torch.cuda.amp.autocast(enabled=False):
-            with torch.no_grad():
-                # Replace eos and bos tokens with padding in codes tensor
-                codes[codes == self.audio_bos_id] = 0  # zero is the padding token in the audio codebook
-                codes[codes == self.audio_eos_id] = 0
-                # self.additional_models['codec'] = self.additional_models['codec'].to(codes.device)
-                audio, audio_len = self._codec_model.decode(tokens=codes, tokens_len=codes_len)
-                # audio: (B, T)
-                # audio_len: (B,)
-                return audio, audio_len
+        with torch.no_grad(), torch.autocast(device_type=str(codes.device), dtype=torch.float32):
+            # Make a copy to avoid modifying the original tensor if it's used elsewhere
+            codes_copy = codes.clone()
+            # Replace eos and bos tokens with padding in the copied tensor
+            codes_copy[codes == self.audio_bos_id] = 0  # zero is the padding token
+            codes_copy[codes == self.audio_eos_id] = 0
+            # Pass the modified integer token IDs
+            audio, audio_len = self._codec_model.decode(tokens=codes_copy, tokens_len=codes_len)
+            # audio: (B, T)
+            # audio_len: (B,)
+            return audio, audio_len
 
     def embed_audio_tokens(self, audio_tokens):
         # audio_tokens: (B, C, T')
@@ -740,6 +740,11 @@ class MagpieTTSModel(ModelPT):
                 multi_encoder_mapping = None
                 additional_decoder_input = context_embeddings
                 addtional_decoder_mask = context_mask
+        elif self.model_type == 'decoder_wocontext_tts':
+            cond = text_encoder_out
+            cond_mask = text_mask
+            multi_encoder_mapping = None
+            attn_prior = _attn_prior
         elif self.model_type == 'decoder_pretrain_synthesizer':
             pass
         else:
@@ -1044,6 +1049,8 @@ class MagpieTTSModel(ModelPT):
 
     def validation_step(self, batch, batch_idx):
         batch_output = self.process_batch(batch, mode="val")
+        # self.process_batch returns a dict. We currently only log "logits" which come from the parallel prediction
+        # head. If we use local_transformer, then the local_transformer returns "local_transformer_logits"
         loss = batch_output['loss']
         codebook_loss = batch_output['codebook_loss']
         alignment_loss = batch_output['alignment_loss']
@@ -1064,7 +1071,7 @@ class MagpieTTSModel(ModelPT):
         if batch_idx == 0 and self.global_rank == 0:
             self.log_train_val_audio_example(
                 logits, audio_codes_target, audio_codes_lens_target, context_audio_codes, context_audio_codes_lens
-            )
+            )  # Currently, only logs parallel prediction (logits). No local transformer results
             if (
                 self.model_type != 'decoder_pretrain_synthesizer'
                 and len(attn_info[self.transcript_decoder_layers[0]]['cross_attn_probabilities']) > 1
