@@ -32,6 +32,7 @@ def compute_mean_and_confidence_interval(metrics_list, metric_keys, confidence=0
     return metrics
 
 def update_config(model_cfg, codecmodel_path):
+    ''' helper function to rename older yamls from t5 to magpie '''
     model_cfg.codecmodel_path = codecmodel_path
     if hasattr(model_cfg, 'text_tokenizer'):
         # Backward compatibility for models trained with absolute paths in text_tokenizer

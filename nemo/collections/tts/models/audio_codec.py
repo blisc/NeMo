@@ -21,11 +21,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from hydra.utils import instantiate
-# latest pytorch versions
-try:
-    from lightning.pytorch import Trainer
-except:
-    from pytorch_lightning import Trainer
+from lightning.pytorch import Trainer
 
 from omegaconf import DictConfig, OmegaConf, open_dict
 

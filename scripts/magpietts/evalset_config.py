@@ -244,9 +244,4 @@ dataset_meta_info = {
         'whisper_language': 'pl',
         'load_cached_codes_if_available': False
     },
-    'j_data': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/rivaLindyRodney__phoneme__nemo_audio_21fps_8codebooks_2kcodes_v2bWithWavLM_simplet5_withContextAudioPaths.json',
-        'audio_dir' : '/home/jasoli/data_prime/RIVA-TTS/en/',
-        'feature_dir' : '/home/jasoli/data_prime/codecs',
-    },
 }
