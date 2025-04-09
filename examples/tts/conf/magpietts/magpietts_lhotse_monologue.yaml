@@ -1,10 +1,7 @@
 name: MagpieTTS-EN-Lhotse
 
-batch_duration: ???   # in seconds. Adjust based on your GPU memory.
-quadratic_duration: 20
+quadratic_duration: 20  # both training and validation datasets can apply same quadratic_duration.
 sample_rate: 22_050
-
-codecmodel_path: ???
 
 model:
   use_lhotse: true
@@ -26,7 +23,7 @@ model:
   indefinite_prior_prob: 0.0 # If > 0, then prior will be applied after prior_end_step with this probability.
   alignment_loss_scale: 0.0
   embedding_dim: 768
-  codecmodel_path: ${codecmodel_path}
+  codecmodel_path: ???
   sample_rate: ${sample_rate}
   cfg_unconditional_prob: 0.1  # enable classifier-free guidance during traing by dropping out conditionals with this probability
 
@@ -76,15 +73,17 @@ model:
     dataset:
       min_duration: 0.2
       sample_rate: ${sample_rate}  # need to override the default sample rate of 16000
-      batch_duration : ${batch_duration}
+      batch_duration : ???  # in seconds. Adjust based on your GPU memory.
       quadratic_duration: ${quadratic_duration}
       use_bucketing: true
       num_buckets: 10
       bucket_buffer_size: 20_000
+      shuffle_buffer_size: 20_000
+      num_cuts_for_bins_estimate: 20_000
       shard_seed: "trng"
       drop_last: true
       shuffle: true
-      num_workers: 4 
+      num_workers: 4
       pin_memory: true
 
       input_cfg:
@@ -101,13 +100,13 @@ model:
     dataset:
       min_duration: 0.2
       sample_rate: ${sample_rate}
-      batch_duration: ${batch_duration}
+      batch_duration: ???   # recommend to use smaller batch_duration for validation dataset than training dataset.
       quadratic_duration: ${quadratic_duration}
       use_bucketing: false
       force_finite: true
       drop_last: false
       shuffle: false
-      num_workers: 4 
+      num_workers: 4
       pin_memory: true
 
       input_cfg:
@@ -178,7 +177,7 @@ trainer:
   accelerator: gpu
   strategy: ddp_find_unused_parameters_true
   precision: bf16-mixed
-  max_steps: 250_000
+  max_steps: ???
   accumulate_grad_batches: 1
   enable_checkpointing: false  # Provided by exp_manager
   logger: false  # Provided by exp_manager
