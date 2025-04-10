@@ -375,6 +375,70 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
 
 
 class MagpieTTSMonologueLhotseDataset(torch.utils.data.Dataset):
+    """
+    A PyTorch Dataset for loading and processing Text-to-Speech data for
+    MagpieTTS models using Lhotse CutSets, specifically designed for datasets
+    with text or audio context. But either context can be optional.
+
+    This dataset expects Lhotse Cut objects where each cut represents a
+    target utterance along with its preceding context. Context can be
+    audio (preferred) or text. It handles loading either pre-computed audio
+    codes or raw audio waveforms, applying volume normalization, and tokenizing
+    text transcripts. Context audio/codes are sliced or repeated to fit within
+    a specified duration range. Optionally, it loads 16kHz audio suitable for
+    speaker verification models and calculates alignment priors.
+
+    Tokenizers (for target text and optional context text) are initialized lazily
+    within each dataloader worker process upon first access.
+
+    Args:
+        sample_rate (int): Target sample rate for loading audio. Audio will be
+            resampled if necessary.
+        volume_norm (bool): If True, applies peak volume normalization to audio
+            waveforms. Defaults to True.
+        codec_model_downsample_factor (int): The total downsampling factor of the
+            audio codec model used to generate codes. Used for padding audio
+            and calculating number of codec frames.
+        codec_model_name (str): Name identifier for the codec model, used to
+            determine the field name for loading cached codes (e.g., "codes_21fpsCausalDecoder").
+            Defaults to "21fpsCausalDecoder". Supported values defined in
+            `SUPPORTED_CODEC_MODEL_NAMES`.
+        audio_bos_id (int): Token ID representing the beginning-of-sequence (BOS) for
+            target audio codes.
+        audio_eos_id (int): Token ID representing the end-of-sequence (EOS) for target
+            audio codes.
+        context_audio_bos_id (int): Token ID representing the beginning-of-sequence (BOS)
+            for context audio codes.
+        context_audio_eos_id (int): Token ID representing the end-of-sequence (EOS)for
+            context audio codes.
+        num_audio_codebooks (int): Number of codebooks used by the audio codec model.
+            Needed for creating dummy context codes if necessary.
+        prior_scaling_factor (Optional[float]): Scaling factor for the beta-binomial
+            alignment prior calculation. If None, priors are not computed. Defaults to None.
+        load_cached_codes_if_available (bool): If True, attempts to load pre-computed
+            audio codes from custom fields in the Lhotse Cut (e.g., 'codes_21fpsCausalDecoder',
+            'context_codes_21fpsCausalDecoder'). Falls back to loading audio if codes
+            are not found. Defaults to True.
+        dataset_type (str): Specifies the mode ('train' or 'test'), mainly affecting
+            tokenizer settings like phoneme probability. Defaults to 'train'.
+        load_16khz_audio (bool): If True, loads 16kHz audio suitable for speaker
+            verification models. It prioritizes context audio ('context_recording' field)
+            if available, otherwise uses the target audio ('recording' field).
+            Defaults to True.
+        pad_context_text_to_max_duration (bool): If True and `use_text_conditioning_tokenizer`
+            is True, pads the tokenized context text to a length derived from
+            `context_duration_max`. Defaults to False.
+        context_duration_min (float): Minimum duration (in seconds) for the context
+            audio/codes. Context shorter than this will be repeated. Defaults to 3.0.
+        context_duration_max (float): Maximum duration (in seconds) for the context
+            audio/codes. Context longer than this will be sliced randomly. Defaults to 10.0.
+        use_text_conditioning_tokenizer (bool): If True, enables processing of context
+            text using a separate tokenizer (currently T5Tokenizer). Expects context text
+            in `cut.supervisions[0].custom['context_text']`. Defaults to False.
+        tokenizer_config (Optional[DictConfig]): Configuration for the text tokenizers.
+            Used for lazy initialization within workers. Must be provided if tokenizers
+            are not set externally. Defaults to None.
+    """
     def __init__(
         self,
         sample_rate: int,
