@@ -470,37 +470,39 @@ class MagpieTTSModel(ModelPT):
 
     def log_attention_probs(self, attention_prob_matrix, audio_codes_lens, text_lens, prefix="", dec_context_size=0):
         # attention_prob_matrix List of (B, C, audio_timesteps, text_timesteps)
+        wandb_images_log = {}
+
         with torch.no_grad():
             attention_prob_matrix = torch.cat(attention_prob_matrix, dim=1)  # (B, C, audio_timesteps, text_timesteps)
             attention_prob_matrix_mean = attention_prob_matrix.mean(dim=1)  # (B, audio_timesteps, text_timesteps)
 
-            images = list()
+            is_wandb = isinstance(self.logger, WandbLogger) and HAVE_WANDB
+            is_tb = isinstance(self.logger, TensorBoardLogger)
+
+            if not is_wandb and not is_tb:
+                 raise ValueError(f"Invalid logger type for image logging: {type(self.logger)}")
+
+            wandb_images_log[f"Image/{prefix}/attention_matrix"] = list()
             for idx in range(min(3, attention_prob_matrix_mean.size(0))):
                 item_attn_matrix = attention_prob_matrix_mean[idx][
                     dec_context_size : dec_context_size + audio_codes_lens[idx], : text_lens[idx]
                 ]
                 item_attn_matrix = item_attn_matrix.detach().cpu().numpy()
-                images.append(plot_alignment_to_numpy(item_attn_matrix.T))
+                img_np = plot_alignment_to_numpy(item_attn_matrix.T)
 
-            if isinstance(self.logger, WandbLogger) and HAVE_WANDB:
-                self.logger.log_image(
-                    key=f"Image/{prefix}/attention_matrix",
-                    images=images,
-                    step=self.global_step,
-                    caption=[f"Example_{idx}" for idx in range(len(images))],
-                )
-            elif isinstance(self.logger, TensorBoardLogger):
-                for idx, img in enumerate(images):
+                if is_wandb:
+                    wandb_images_log[f"Image/{prefix}/attention_matrix"].append(wandb.Image(img_np, caption=f"Example_{idx}"))
+                if is_tb:
                     self.logger.experiment.add_image(
                         f'{prefix}/attention_matrix/Example_{idx}',
-                        img,
+                        img_np,
                         global_step=self.global_step,
                         dataformats="HWC",
                     )
-            else:
-                ValueError(f"Invalid logger: {self.logger}")
 
-    def log_train_val_audio_example(
+        return wandb_images_log
+
+    def log_val_audio_example(
         self,
         logits,
         target_audio_codes,
@@ -508,6 +510,8 @@ class MagpieTTSModel(ModelPT):
         context_audio_codes=None,
         context_audio_codes_lens=None,
     ):
+        wandb_audio_log = {}
+
         pred_audio_codes = self.logits_to_audio_codes(logits, audio_codes_lens_target)
         pred_audio, pred_audio_lens = self.codes_to_audio(pred_audio_codes, audio_codes_lens_target)
         target_audio, target_audio_lens = self.codes_to_audio(target_audio_codes, audio_codes_lens_target)
@@ -516,6 +520,12 @@ class MagpieTTSModel(ModelPT):
         if context_audio_codes is not None and context_audio_codes.shape[2] > 3:
             # > 3 ensures, it is a valid context audio tensor (and not dummy tensor used in text context)
             context_audio, context_audio_lens = self.codes_to_audio(context_audio_codes, context_audio_codes_lens)
+
+        is_wandb = isinstance(self.logger, WandbLogger) and HAVE_WANDB
+        is_tb = isinstance(self.logger, TensorBoardLogger)
+
+        if not is_wandb and not is_tb:
+             raise ValueError(f"Invalid logger type for audio logging: {type(self.logger)}")
 
         for idx in range(min(3, pred_audio.size(0))):
             pred_audio_np = pred_audio[idx].float().detach().cpu().numpy()
@@ -527,23 +537,14 @@ class MagpieTTSModel(ModelPT):
                 context_audio_np = context_audio[idx].float().detach().cpu().numpy()
                 context_audio_np = context_audio_np[: context_audio_lens[idx]]
 
-            if isinstance(self.logger, WandbLogger) and HAVE_WANDB:
+            if is_wandb:
+                wandb_audio_log[f"Audio/Example_{idx}"] = list()
                 if context_audio_np is not None:
-                    audios_np = [context_audio_np]
-                    captions = ["context"]
-                else:
-                    audios_np = list()
-                    captions = list()
-                audios_np = audios_np + [pred_audio_np, target_audio_np]
-                captions = captions + ["prediction", "target"]
-                self.logger.log_audio(
-                    key=f"Audio/Example_{idx}",
-                    audios=audios_np,
-                    step=self.global_step,
-                    sample_rate=[self.cfg.sample_rate] * len(audios_np),
-                    caption=captions,
-                )
-            elif isinstance(self.logger, TensorBoardLogger):
+                    wandb_audio_log[f"Audio/Example_{idx}"].append(wandb.Audio(context_audio_np, sample_rate=self.cfg.sample_rate, caption="context"))
+                wandb_audio_log[f"Audio/Example_{idx}"].append(wandb.Audio(pred_audio_np, sample_rate=self.cfg.sample_rate, caption="prediction"))
+                wandb_audio_log[f"Audio/Example_{idx}"].append(wandb.Audio(target_audio_np, sample_rate=self.cfg.sample_rate, caption="target"))
+
+            if is_tb:
                 if context_audio_np is not None:
                     self.logger.experiment.add_audio(
                         f'Example_{idx}/context',
@@ -563,8 +564,8 @@ class MagpieTTSModel(ModelPT):
                     global_step=self.global_step,
                     sample_rate=self.cfg.sample_rate,
                 )
-            else:
-                ValueError(f"Invalid logger: {self.logger}")
+
+        return wandb_audio_log
 
     def scale_prior(self, prior, global_step):
         if prior is None:
@@ -1033,9 +1034,17 @@ class MagpieTTSModel(ModelPT):
             aligner_encoder_loss = torch.tensor(0.0, device=loss.device)
 
         if batch_idx == 0 and self.global_rank == 0:
-            self.log_train_val_audio_example(
-                logits, audio_codes_target, audio_codes_lens_target, context_audio_codes, context_audio_codes_lens
-            )  # Currently, only logs parallel prediction (logits). No local transformer results
+            # Prepare dictionary for aggregated wandb logging
+            wandb_log_dict = {}
+
+            # Get audio data for logging
+            wandb_log_dict.update(
+                self.log_val_audio_example(
+                    logits, audio_codes_target, audio_codes_lens_target, context_audio_codes, context_audio_codes_lens
+                )
+            )
+
+            # Get attention image data for logging
             if (
                 self.model_type != 'decoder_pretrain_synthesizer'
                 and len(attn_info[self.transcript_decoder_layers[0]]['cross_attn_probabilities']) > 1
@@ -1043,32 +1052,51 @@ class MagpieTTSModel(ModelPT):
                 # cross_attn_probabilities only returned when not using flash attention
                 ctc_prior_layer_ids = self.cfg.get('ctc_prior_layer_ids', self.transcript_decoder_layers)
                 cross_attention_probs = [attn['cross_attn_probabilities'][0] for layer_idx, attn in enumerate(attn_info) if layer_idx in ctc_prior_layer_ids]
-                self.log_attention_probs(
-                    cross_attention_probs,
-                    audio_codes_lens_target,
-                    text_lens,
-                    prefix="val",
-                    dec_context_size=dec_context_size,
-                )
-                for layer_idx in self.transcript_decoder_layers:
-                    cross_attention_probs = [ attn_info[layer_idx]['cross_attn_probabilities'][0] ]
-                    self.log_attention_probs(cross_attention_probs, audio_codes_lens_target, text_lens, prefix=f"val/layer_{layer_idx}", dec_context_size=dec_context_size)
-
-                if batch_output['aligner_attn_soft'] is not None:
+                wandb_log_dict.update(
                     self.log_attention_probs(
-                        [batch_output['aligner_attn_soft']],
+                        cross_attention_probs,
                         audio_codes_lens_target,
                         text_lens,
-                        prefix=f"val/aligner_encoder_attn",
+                        prefix="val",
+                        dec_context_size=dec_context_size,
+                    )
+                )
+
+                for layer_idx in self.transcript_decoder_layers:
+                    cross_attention_probs = [ attn_info[layer_idx]['cross_attn_probabilities'][0] ]
+                    wandb_log_dict.update(
+                        self.log_attention_probs(
+                            cross_attention_probs,
+                            audio_codes_lens_target,
+                            text_lens,
+                            prefix=f"val/layer_{layer_idx}",
+                            dec_context_size=dec_context_size
+                        )
+                    )
+
+                if batch_output['aligner_attn_soft'] is not None:
+                    wandb_log_dict.update(
+                        self.log_attention_probs(
+                            [batch_output['aligner_attn_soft']],
+                            audio_codes_lens_target,
+                            text_lens,
+                            prefix=f"val/aligner_encoder_attn",
+                        )
                     )
 
                 if batch_output['aligner_attn_hard'] is not None:
-                    self.log_attention_probs(
-                        [batch_output['aligner_attn_hard'].unsqueeze(1)],
-                        audio_codes_lens_target,
-                        text_lens,
-                        prefix=f"val/aligner_encoder_attn_hard",
+                    wandb_log_dict.update(
+                        self.log_attention_probs(
+                            [batch_output['aligner_attn_hard'].unsqueeze(1)],
+                            audio_codes_lens_target,
+                            text_lens,
+                            prefix=f"val/aligner_encoder_attn_hard",
+                        )
                     )
+
+            # Perform single wandb log call if wandb is active and there is data
+            if isinstance(self.logger, WandbLogger) and HAVE_WANDB and wandb_log_dict:
+                self.logger.experiment.log(wandb_log_dict)
 
         local_transformer_loss = batch_output['local_transformer_loss']
         val_output = {
