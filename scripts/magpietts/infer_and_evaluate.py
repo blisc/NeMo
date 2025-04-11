@@ -1,20 +1,23 @@
-from nemo.collections.tts.models import MagpieTTS_Model
-from nemo.collections.tts.data.text_to_speech_dataset import MagpieTTSDataset
-from omegaconf.omegaconf import OmegaConf, open_dict
-import os
-import glob
-import torch
-import soundfile as sf
-import evaluate_generated_audio
-import evalset_config
-import json
 import argparse
+import copy
+import glob
+import json
+import os
+import shutil
+
+import evalset_config
+import evaluate_generated_audio
 import numpy as np
 import scipy.stats as stats
-import copy
-import shutil
-from nemo.collections.asr.parts.utils.manifest_utils import read_manifest
+import soundfile as sf
+import torch
+from omegaconf.omegaconf import OmegaConf, open_dict
 from PIL import Image
+
+from nemo.collections.asr.parts.utils.manifest_utils import read_manifest
+from nemo.collections.tts.data.text_to_speech_dataset import MagpieTTSDataset
+from nemo.collections.tts.models import MagpieTTSModel
+
 
 def compute_mean_and_confidence_interval(metrics_list, metric_keys, confidence=0.90):
     metrics = {}
@@ -29,6 +32,7 @@ def compute_mean_and_confidence_interval(metrics_list, metric_keys, confidence=0
     return metrics
 
 def update_config(model_cfg, codecmodel_path):
+    ''' helper function to rename older yamls from t5 to magpie '''
     model_cfg.codecmodel_path = codecmodel_path
     if hasattr(model_cfg, 'text_tokenizer'):
         # Backward compatibility for models trained with absolute paths in text_tokenizer
@@ -99,7 +103,6 @@ def run_inference(
     print("Loaded weights.")
     model.cuda()
     model.eval()
-    # import ipdb; ipdb.set_trace()
 
     checkpoint_name = "{}_Temp{}_Topk{}_Cfg_{}_{}_Prior_{}_{}_{}_start{}_Estlayers{}_PrLayers{}_LT_{}_sv_{}".format(
         checkpoint_name,
@@ -401,7 +404,6 @@ def main():
             print(f"Running command: {scp_command_hparams}")
             os.system(scp_command_hparams)
             print("Copied hparams file.")
-            # import ipdb; ipdb.set_trace()
             print("Hparams file path: ", hparams_copy_path)
             print("Checkpoint file path: ", checkpoint_copy_path)
             run_inference(

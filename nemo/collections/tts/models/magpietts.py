@@ -28,11 +28,11 @@ from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from omegaconf import DictConfig, open_dict
 from torch import nn
 from torch.utils.data import get_worker_info
-from transformers import AutoTokenizer, T5Tokenizer
 
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.metrics.wer import word_error_rate
-from nemo.collections.common.tokenizers.text_to_speech.tts_tokenizers import AggregatedTTSTokenizer
+from nemo.collections.common.data.lhotse import get_lhotse_dataloader_from_config
+from nemo.collections.tts.data.text_to_speech_dataset_lhotse import MagpieTTSLhotseDataset, setup_tokenizers
 from nemo.collections.tts.losses.aligner_loss import ForwardSumLoss
 from nemo.collections.tts.models import AudioCodecModel
 from nemo.collections.tts.modules import transformer_2501
@@ -54,36 +54,6 @@ except ModuleNotFoundError:
     HAVE_WANDB = False
 
 
-def setup_tokenizers(all_tokenizers_config, use_text_conditioning_tokenizer, mode='train'):
-    # Being used in both model and worker_init_fn, so it is defined here
-    # Returns two tokenizers: one for TTS transcript and one for conditioning text (if needed)
-    tokenizers = []
-    tokenizer_names = []
-    for tokenizer_name in all_tokenizers_config:
-        tokenizer_config = all_tokenizers_config[tokenizer_name]
-        if tokenizer_config._target_ == 'AutoTokenizer':
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.pretrained_model)
-        else:
-            text_tokenizer_kwargs = {}
-            if "g2p" in tokenizer_config:
-                text_tokenizer_kwargs["g2p"] = instantiate(tokenizer_config.g2p)
-            tokenizer = instantiate(tokenizer_config, **text_tokenizer_kwargs)
-            if mode == 'test' and hasattr(tokenizer, "set_phone_prob"):
-                tokenizer.set_phone_prob(1.0)
-        tokenizers.append(tokenizer)
-        tokenizer_names.append(tokenizer_name)
-
-    aggregated_tokenizer = AggregatedTTSTokenizer(tokenizers, tokenizer_names)  # TTS Transcript tokenizer
-    text_conditioning_tokenizer = None
-
-    if use_text_conditioning_tokenizer:
-        # TODO: make this configurable
-        # Conditioning text tokenizer
-        text_conditioning_tokenizer = T5Tokenizer.from_pretrained("google-t5/t5-small")
-
-    return aggregated_tokenizer, text_conditioning_tokenizer
-
-
 def worker_init_fn(worker_id):
     # For mp.set_start_method("spawn", force=True)
     # The dataset class should be picklable, so we initialize non-picklable objects here
@@ -97,7 +67,7 @@ def worker_init_fn(worker_id):
     dataset.text_conditioning_tokenizer = text_conditioning_tokenizer
 
 
-class MagpieTTS_Model(ModelPT):
+class MagpieTTSModel(ModelPT):
     """
     Magpie-TTS Model Base Class used for training a TTS model that can generate audio codes from transcript and a context
     audio/text
@@ -135,9 +105,14 @@ class MagpieTTS_Model(ModelPT):
                 del cfg['text_tokenizer']
 
         self.use_text_conditioning_encoder = cfg.get('use_text_conditioning_encoder', False)
-        tokenizer, text_conditioning_tokenizer = self._setup_tokenizers(cfg)
-        self.tokenizer = tokenizer
-        self.text_conditioning_tokenizer = text_conditioning_tokenizer
+        # TODO @xueyang: both tokenizers are only used to get some token ids. We
+        # should kill them to save a small mount of mem resources since dataloader will initialize them
+        # again after the worker processes are spawned.
+        self.tokenizer, self.text_conditioning_tokenizer = setup_tokenizers(
+            all_tokenizers_config=cfg.text_tokenizers,
+            use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+            mode='train',
+        )
 
         num_tokens_tokenizer = len(self.tokenizer.tokens)
         num_tokens = num_tokens_tokenizer + 2  # +2 for BOS and EOS
@@ -148,6 +123,10 @@ class MagpieTTS_Model(ModelPT):
         self.audio_eos_id = cfg.num_audio_tokens_per_codebook - 1
         self.context_audio_bos_id = cfg.num_audio_tokens_per_codebook - 2  # For backward compatibility
         self.context_audio_eos_id = cfg.num_audio_tokens_per_codebook - 1  # For backward compatibility
+
+        if self.use_text_conditioning_encoder:
+            self.context_text_embedding = nn.Embedding(self.text_conditioning_tokenizer.vocab_size, cfg.embedding_dim)
+
         self.model_type = cfg.get('model_type', 'single_encoder_sv_tts')
 
         if self.model_type == 'decoder_context_tts':
@@ -206,17 +185,14 @@ class MagpieTTS_Model(ModelPT):
         codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False)
         # del codec discriminator to free memory
         del codec_model.discriminator
-        codec_model.eval()
-        self.freeze_model(codec_model)
         self._codec_model = codec_model
+        self._codec_model.freeze()  #Lightning does requires_grad = False and self.eval()
 
         if self.model_type == 'single_encoder_sv_tts':
-            speaker_verification_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
+            self._speaker_verification_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
                 model_name='titanet_large'
             )
-            speaker_verification_model.eval()
-            self.freeze_model(speaker_verification_model)
-            self._speaker_verification_model = speaker_verification_model
+            self._speaker_verification_model.freeze()  #Lightning does requires_grad = False and self.eval()
             self.speaker_projection_layer = nn.Linear(cfg.speaker_emb_dim, cfg.embedding_dim)
             self.transcript_decoder_layers = [
                 idx for idx in range(cfg.decoder.n_layers)
@@ -242,9 +218,6 @@ class MagpieTTS_Model(ModelPT):
         else:
             raise ValueError(f"Unsupported model type {self.model_type}")
 
-        if self.use_text_conditioning_encoder:
-            self.context_text_embedding = nn.Embedding(self.text_conditioning_tokenizer.vocab_size, cfg.embedding_dim)
-
         self.cross_entropy_loss = nn.CrossEntropyLoss(reduction='none')
         alignment_loss_scale = cfg.get('alignment_loss_scale', 0.0)
         alignment_encoder_loss_scale = cfg.get('alignment_encoder_loss_scale', 0.0)
@@ -252,10 +225,6 @@ class MagpieTTS_Model(ModelPT):
             self.alignment_loss = ForwardSumLoss(loss_scale=alignment_loss_scale)
         if alignment_encoder_loss_scale > 0.0:
             self.alignment_encoder_loss = ForwardSumLoss(loss_scale=alignment_encoder_loss_scale)
-
-    def freeze_model(self, model):
-        for param in model.parameters():
-            param.requires_grad = False
 
     def state_dict(self, destination=None, prefix='', keep_vars=False):
         if hasattr(self, '_no_state_dict') and self._no_state_dict:
@@ -272,12 +241,6 @@ class MagpieTTS_Model(ModelPT):
         # Override to load all the keys except _speaker_verification_model and _codec_model
         super().load_state_dict(state_dict, strict=False)
 
-    def _setup_tokenizers(self, cfg, mode='test'):
-        tokenizer, text_conditioning_tokenizer = setup_tokenizers(
-            cfg.text_tokenizers, cfg.use_text_conditioning_encoder, mode=mode
-        )
-        return tokenizer, text_conditioning_tokenizer
-
     def audio_to_codes(self, audio, audio_len, audio_type='target'):
         # audio: (B, T)
         # audio_len: (B,)
@@ -291,7 +254,7 @@ class MagpieTTS_Model(ModelPT):
             raise ValueError(f"Received audio_type of {audio_type}. Must be `target` or `context`")
 
         self._codec_model.eval()
-        with torch.no_grad(), torch.autocast(device_type=str(audio.device), dtype=torch.float32):
+        with torch.no_grad(), torch.autocast(device_type=audio.device.type, dtype=torch.float32):
             codes, codes_len = self._codec_model.encode(audio=audio, audio_len=audio_len)
             # Add a timestep to begining and end of codes tensor
             bos_tensor = torch.full(
@@ -313,12 +276,14 @@ class MagpieTTS_Model(ModelPT):
         # codes: (B, C, T')
         # codes_len: (B,)
         self._codec_model.eval()
-        with torch.no_grad(), torch.autocast(device_type=str(codes.device), dtype=torch.float32):
-            # Replace eos and bos tokens with padding in codes tensor
-            codes[codes == self.audio_bos_id] = 0  # zero is the padding token in the audio codebook
-            codes[codes == self.audio_eos_id] = 0
-            # self.additional_models['codec'] = self.additional_models['codec'].to(codes.device)
-            audio, audio_len = self._codec_model.decode(tokens=codes, tokens_len=codes_len)
+        with torch.no_grad(), torch.autocast(device_type=codes.device.type, dtype=torch.float32):
+            # Make a copy to avoid modifying the original tensor if it's used elsewhere
+            codes_copy = codes.clone()
+            # Replace eos and bos tokens with padding in the copied tensor
+            codes_copy[codes == self.audio_bos_id] = 0  # zero is the padding token
+            codes_copy[codes == self.audio_eos_id] = 0
+            # Pass the modified integer token IDs
+            audio, audio_len = self._codec_model.decode(tokens=codes_copy, tokens_len=codes_len)
             # audio: (B, T)
             # audio_len: (B,)
             return audio, audio_len
@@ -348,7 +313,7 @@ class MagpieTTS_Model(ModelPT):
 
     def compute_local_transformer_logits(self, dec_out, audio_codes_target):
         """
-        Loss from the autoregrssive codebook predictor (used per frame)
+        Loss from the autoregressive codebook predictor (used per frame)
         """
         # dec_out: (B, T', E)
         # audio_codes: (B, C, T')
@@ -437,7 +402,6 @@ class MagpieTTS_Model(ModelPT):
 
     def sample_codes_from_local_transformer(self, dec_output, temperature=0.7, topk=80, unfinished_items={}, finished_items={}, use_cfg=False, cfg_scale=1.0):
         # dec_output: (B, E)
-        # import ipdb; ipdb.set_trace()
         self.local_transformer.reset_cache(use_cache=True)
         dec_output = dec_output.unsqueeze(1) # (B, 1, E)
         local_transformer_input = self.local_transformer_in_projection(dec_output) # (B, 1, 128)
@@ -918,7 +882,7 @@ class MagpieTTS_Model(ModelPT):
                 max_codebook_val = self.cfg.get('dec_random_input_max', self.cfg.num_audio_tokens_per_codebook)
                 # @pneekhara: Keeping dec_random_input_max configurable since num_audio_tokens_per_codebook usually has padding tokens
                 # which can cause errors when doing codes_to_audio for audio_codes_input. We are not currently calling codes_to_audio on
-                # audio_codes_input so should not matter if we dont supply dec_random_input_max.
+                # audio_codes_input so should not matter if we don't supply dec_random_input_max.
                 random_audio_tokens = torch.randint(
                     0, max_codebook_val, audio_codes_input.size(), device=audio_codes_input.device
                 )
@@ -1521,9 +1485,9 @@ class MagpieTTS_Model(ModelPT):
             self.log("val/local_transformer_loss", val_local_transformer_loss, prog_bar=True, sync_dist=True)
         self.validation_step_outputs.clear()  # free memory
 
-    def get_dataset(self, cfg, dataset_type):
+    def get_dataset(self, dataset_cfg, dataset_type):
         dataset = instantiate(
-            cfg.dataset,
+            dataset_cfg.dataset,
             bos_id=self.bos_id,
             eos_id=self.eos_id,
             audio_bos_id=self.audio_bos_id,
@@ -1546,43 +1510,86 @@ class MagpieTTS_Model(ModelPT):
         )  # This will be used in worker_init_fn for instantiating tokenizer
         return dataset
 
-    def _setup_train_dataloader(self, cfg):
-        dataset = self.get_dataset(cfg, dataset_type='train')
-        sampler = dataset.get_sampler(cfg.dataloader_params.batch_size, world_size=self.trainer.world_size)
-        persistent_workers = True
-        if cfg.dataloader_params.num_workers == 0:
-            persistent_workers = False
-            # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
-            dataset.text_tokenizer, dataset.text_conditioning_tokenizer = self._setup_tokenizers(self.cfg)
-        data_loader = torch.utils.data.DataLoader(
-            dataset,
-            collate_fn=dataset.collate_fn,
-            sampler=sampler,
-            **cfg.dataloader_params,
-            worker_init_fn=worker_init_fn,
-            persistent_workers=persistent_workers,
+    def get_lhotse_dataloader(self, dataset_cfg, mode='train') -> torch.utils.data.DataLoader:
+        # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
+        #   cfg is a classifier-free guidance.
+        dataset = MagpieTTSLhotseDataset(
+            sample_rate=self.cfg.sample_rate,
+            volume_norm=dataset_cfg.volume_norm,
+            codec_model_downsample_factor=self.cfg.codec_model_downsample_factor,
+            codec_model_name=self.cfg.codec_model_name,
+            audio_bos_id=self.audio_bos_id,
+            audio_eos_id=self.audio_eos_id,
+            context_audio_bos_id=self.context_audio_bos_id,
+            context_audio_eos_id=self.context_audio_eos_id,
+            num_audio_codebooks=self.cfg.num_audio_codebooks,
+            prior_scaling_factor=self.cfg.prior_scaling_factor,
+            load_cached_codes_if_available=self.cfg.load_cached_codes_if_available,
+            dataset_type=mode,  # train or test used for setting phone prob to 1.0 in test dataset (worker_init_fn)
+            load_16khz_audio=(self.model_type == 'single_encoder_sv_tts'),
+            pad_context_text_to_max_duration=self.pad_context_text_to_max_duration,
+            context_duration_min=self.cfg.context_duration_min,
+            context_duration_max=self.cfg.context_duration_max,
+            use_text_conditioning_tokenizer=self.cfg.use_text_conditioning_encoder,
+            tokenizer_config=self.cfg.text_tokenizers,
+        )
+        data_loader = get_lhotse_dataloader_from_config(
+            config=dataset_cfg.dataset,
+            global_rank=self.global_rank,
+            world_size=self.world_size,
+            dataset=dataset,
         )
         return data_loader
 
-    def _setup_test_dataloader(self, cfg):
-        dataset = self.get_dataset(cfg, dataset_type='test')
-        persistent_workers = True
-        if cfg.dataloader_params.num_workers == 0:
-            persistent_workers = False
-            # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
-            dataset.text_tokenizer, dataset.text_conditioning_tokenizer = self._setup_tokenizers(self.cfg, mode='test')
+    def setup_training_data(self, dataset_cfg):
+        if dataset_cfg.get("use_lhotse", False):
+            # TODO @xueyang: better to distinguish cfg. self.cfg is the model cfg, while cfg here is train_ds cfg. Also
+            #   cfg is a classifier-free guidance.
+            self._train_dl = self.get_lhotse_dataloader(dataset_cfg, mode='train')
+        else:
+            dataset = self.get_dataset(dataset_cfg, dataset_type='train')
+            sampler = dataset.get_sampler(dataset_cfg.dataloader_params.batch_size, world_size=self.trainer.world_size)
+            persistent_workers = True
+            if dataset_cfg.dataloader_params.num_workers == 0:
+                persistent_workers = False
+                # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
+                dataset.text_tokenizer, dataset.text_conditioning_tokenizer = setup_tokenizers(
+                    all_tokenizers_config=self.cfg.text_tokenizers,
+                    use_text_conditioning_tokenizer=self.use_text_conditioning_encoder,
+                    mode='train',
+                )
+            self._train_dl = torch.utils.data.DataLoader(
+                dataset,
+                collate_fn=dataset.collate_fn,
+                sampler=sampler,
+                **dataset_cfg.dataloader_params,
+                worker_init_fn=worker_init_fn,
+                persistent_workers=persistent_workers,
+            )
 
-        data_loader = torch.utils.data.DataLoader(
-            dataset,
-            collate_fn=dataset.collate_fn,
-            **cfg.dataloader_params,
-            worker_init_fn=worker_init_fn,
-            persistent_workers=persistent_workers,
-        )
+    def _setup_test_dataloader(self, dataset_cfg) -> torch.utils.data.DataLoader:
+        if dataset_cfg.get("use_lhotse", False):
+            data_loader = self.get_lhotse_dataloader(dataset_cfg, mode='test')
+        else:
+            dataset = self.get_dataset(dataset_cfg, dataset_type='test')
+            persistent_workers = True
+            if dataset_cfg.dataloader_params.num_workers == 0:
+                persistent_workers = False
+                # For num workers > 0 tokenizer will be assigned in worker_init_fn (since it is not picklable)
+                dataset.text_tokenizer, dataset.text_conditioning_tokenizer = setup_tokenizers(
+                    all_tokenizers_config=self.cfg.text_tokenizers,
+                    use_text_conditioning_tokenizer=self.use_kv_cache_for_inference,
+                    mode='test'
+                )
+
+            data_loader = torch.utils.data.DataLoader(
+                dataset,
+                collate_fn=dataset.collate_fn,
+                **dataset_cfg.dataloader_params,
+                worker_init_fn=worker_init_fn,
+                persistent_workers=persistent_workers,
+            )
         return data_loader
-
-    def setup_training_data(self, cfg):
-        self._train_dl = self._setup_train_dataloader(cfg)
 
     def setup_validation_data(self, cfg):
         self._validation_dl = self._setup_test_dataloader(cfg)
@@ -1595,8 +1602,8 @@ class MagpieTTS_Model(ModelPT):
         return []
 
 
-class MagpieTTS_ModelInference(MagpieTTS_Model):
-    """Small override of MagpieTTS_Model for parallel multi-GPU inference and metrics calculation.
+class MagpieTTSModelInference(MagpieTTSModel):
+    """Small override of MagpieTTSModel for parallel multi-GPU inference and metrics calculation.
     This class is used in 'test' mode and leverages trainer.test() for multi-GPU/multi-node inference.
     Saves the predicted audio files and logs the CER/WER metrics as individual json files for each audio.
     """
@@ -1608,13 +1615,11 @@ class MagpieTTS_ModelInference(MagpieTTS_Model):
                 model_name="nvidia/parakeet-tdt-1.1b"
             )
             self.eval_asr_model.freeze()
-            self.eval_asr_model.eval()
 
         self.eval_speaker_verification_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
             model_name='titanet_large'
         )
         self.eval_speaker_verification_model.freeze()
-        self.eval_speaker_verification_model.eval()
 
         if cfg.get('load_whisper_model', False):
             from transformers import WhisperForConditionalGeneration, WhisperProcessor

@@ -396,7 +396,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
             max_duration=max_duration,
             volume_norm=volume_norm,
         )
-        self.bos_id = bos_id
+        self.bos_id = bos_id # TODO @xueyang: this should be removed since no other places used it.
         self.eos_id = eos_id
         self.audio_bos_id = audio_bos_id
         self.audio_eos_id = audio_eos_id
@@ -445,9 +445,9 @@ class MagpieTTSDataset(TextToSpeechDataset):
             audio_codes_path = data.manifest_entry['target_audio_codes_path']
             audio_codes = torch.load(audio_codes_path).long()  # (C, T)
             spec_len = audio_codes.shape[1] + 1  # +1 for EOS
-            auidio_bos_tensor = torch.full((audio_codes.shape[0], 1), self.audio_bos_id, dtype=audio_codes.dtype)
+            audio_bos_tensor = torch.full((audio_codes.shape[0], 1), self.audio_bos_id, dtype=audio_codes.dtype)
             audio_eos_tensor = torch.full((audio_codes.shape[0], 1), self.audio_eos_id, dtype=audio_codes.dtype)
-            audio_codes = torch.cat([auidio_bos_tensor, audio_codes, audio_eos_tensor], dim=1)
+            audio_codes = torch.cat([audio_bos_tensor, audio_codes, audio_eos_tensor], dim=1)
             audio_codes_len = audio_codes.shape[1]
             example['audio_codes'] = audio_codes
             example['audio_codes_len'] = audio_codes_len
@@ -720,6 +720,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         if len(context_audio_codes_list) > 0:
             batch_context_audio_codes_len = torch.IntTensor(context_audio_codes_len_list)
             context_audio_codes_max_len = int(batch_context_audio_codes_len.max().item())
+            # TODO @xueyang: verify if batch_context_audio_codes are integer.
             batch_context_audio_codes = stack_tensors(context_audio_codes_list, max_lens=[context_audio_codes_max_len])
             batch_dict['context_audio_codes'] = batch_context_audio_codes
             batch_dict['context_audio_codes_lens'] = batch_context_audio_codes_len
@@ -727,6 +728,7 @@ class MagpieTTSDataset(TextToSpeechDataset):
         if self.use_text_conditioning_tokenizer:
             batch_context_text_tokens_len = torch.IntTensor(context_text_tokens_len_list)
             context_text_tokens_max_len = int(batch_context_text_tokens_len.max().item())
+            # TODO @xueyang: potential bugs if self.tokenizer.pad is not 0.0. verify if batch_context_text_tokens are integer.
             batch_context_text_tokens = stack_tensors(context_text_tokens_list, max_lens=[context_text_tokens_max_len])
             batch_dict['context_text_tokens'] = batch_context_text_tokens
             batch_dict['context_text_tokens_lens'] = batch_context_text_tokens_len
