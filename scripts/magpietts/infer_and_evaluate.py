@@ -103,7 +103,6 @@ def run_inference(
     print("Loaded weights.")
     model.cuda()
     model.eval()
-    # import ipdb; ipdb.set_trace()
 
     checkpoint_name = "{}_Temp{}_Topk{}_Cfg_{}_{}_Prior_{}_{}_{}_start{}_Estlayers{}_PrLayers{}_LT_{}_sv_{}".format(
         checkpoint_name,
@@ -404,7 +403,6 @@ def main():
             print(f"Running command: {scp_command_hparams}")
             os.system(scp_command_hparams)
             print("Copied hparams file.")
-            # import ipdb; ipdb.set_trace()
             print("Hparams file path: ", hparams_copy_path)
             print("Checkpoint file path: ", checkpoint_copy_path)
             run_inference(

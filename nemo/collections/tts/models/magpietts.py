@@ -284,7 +284,7 @@ class MagpieTTSModel(ModelPT):
             raise ValueError(f"Received audio_type of {audio_type}. Must be `target` or `context`")
 
         self._codec_model.eval()
-        with torch.no_grad(), torch.autocast(device_type=str(audio.device), dtype=torch.float32):
+        with torch.no_grad(), torch.autocast(device_type=audio.device.type, dtype=torch.float32):
             codes, codes_len = self._codec_model.encode(audio=audio, audio_len=audio_len)
             # Add a timestep to begining and end of codes tensor
             bos_tensor = torch.full(
@@ -306,7 +306,7 @@ class MagpieTTSModel(ModelPT):
         # codes: (B, C, T')
         # codes_len: (B,)
         self._codec_model.eval()
-        with torch.no_grad(), torch.autocast(device_type=str(codes.device), dtype=torch.float32):
+        with torch.no_grad(), torch.autocast(device_type=codes.device.type, dtype=torch.float32):
             # Make a copy to avoid modifying the original tensor if it's used elsewhere
             codes_copy = codes.clone()
             # Replace eos and bos tokens with padding in the copied tensor
@@ -432,7 +432,6 @@ class MagpieTTSModel(ModelPT):
 
     def sample_codes_from_local_transformer(self, dec_output, temperature=0.7, topk=80, unfinished_items={}, finished_items={}, use_cfg=False, cfg_scale=1.0):
         # dec_output: (B, E)
-        # import ipdb; ipdb.set_trace()
         self.local_transformer.reset_cache(use_cache=True)
         dec_output = dec_output.unsqueeze(1) # (B, 1, E)
         local_transformer_input = self.local_transformer_in_projection(dec_output) # (B, 1, 128)
