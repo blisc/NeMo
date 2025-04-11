@@ -70,58 +70,84 @@ $ tree data_shar_train/
 ```
 
 When peek one of the item from `cuts.000000.jsonl.gz`, you should expect the structure as,
-```
+```python
 MonoCut(
-	id='cut-audio-11614_other-12352-prideofjennico_01_castle_0000', 
-	start=0, duration=6.16, 
-	channel=0, 
-	supervisions=[
-		SupervisionSegment(
-			id='sup-audio-11614_other-12352-prideofjennico_01_castle_0000',
-			recording_id='audio-11614_other-12352-prideofjennico_01_castle_0000', 
-			start=0.0, 
-			duration=6.16, 
-			channel=0, 
-			text='late in the year seventeen seventy one as the wind rattles the casements with impotent clutch', 
-			language='en', 
-			speaker='| Language:en Dataset:HiFiTTS Speaker:11614 |', 
-			gender=None, 
-			custom={}, 
-			alignment=None
-		)
-	], 
-	features=None, 
-	recording=Recording(
-		id='audio-11614_other-12352-prideofjennico_01_castle_0000', 
-		sources=[
-			AudioSource(type='shar', channels=[0], source='')
-		], 
-		sampling_rate=44100, 
-		num_samples=271656, 
-		duration=6.16, 
-		channel_ids=[0], 
-		transforms=None
-	), 
-	custom={
-		'codes_21fpsCausalDecoder': TemporalArray(
-			array=Array(
-				storage_type='shar', 
-				storage_path='', 
-				storage_key='', 
-				shape=[8, 133]
-			), 
-			start=0
-		), 
-		'context_codes_21fpsCausalDecoder': TemporalArray(
-			array=Array(
-				storage_type='shar', 
-				storage_path='', 
-				storage_key='', 
-				shape=[8, 138]
-			), 
-			start=0
-		)
-	}
+    id='cut-audio-11614_other-12352-prideofjennico_01_castle_0000',
+    start=0,
+    duration=6.16,
+    channel=0,
+    supervisions=[
+        SupervisionSegment(
+            id='sup-audio-11614_other-12352-prideofjennico_01_castle_0000',
+            recording_id='audio-11614_other-12352-prideofjennico_01_castle_0000',
+            start=0.0,
+            duration=6.16,
+            channel=0,
+            text='late in the year seventeen seventy one as the wind rattles the casements with impotent clutch',
+            language='en',
+            speaker='| Language:en Dataset:HiFiTTS Speaker:11614 |',
+            gender=None,
+            custom={},
+            alignment=None
+        )
+    ],
+    features=None,
+    recording=Recording(
+        id='audio-11614_other-12352-prideofjennico_01_castle_0000',
+        sources=[
+            AudioSource(
+                type='memory',
+                channels=[0],
+                source='<binary-data>'
+            )
+        ],
+        sampling_rate=44100,
+        num_samples=271656,
+        duration=6.16,
+        channel_ids=[0],
+        transforms=None
+    ),
+    custom={
+        'codes_21fpsCausalDecoder': TemporalArray(
+            array=Array(
+                storage_type='memory_npy',
+                storage_path='',
+                storage_key='<binary-data>',
+                shape=[8, 133]
+            ),
+            temporal_dim=1,
+            frame_shift=0.046511627906976744,
+            start=0
+        ),
+        'context_codes_21fpsCausalDecoder': TemporalArray(
+            array=Array(
+                storage_type='memory_npy',
+                storage_path='',
+                storage_key='<binary-data>',
+                shape=[8, 138]
+            ),
+            temporal_dim=1,
+            frame_shift=0.046511627906976744,
+            start=0
+        ),
+        'context_recording': Recording(
+            id='audio-11614_other-12220-barontrump_31_lockwood_0096',
+            sources=[
+                AudioSource(
+                    type='memory',
+                    channels=[0],
+                    source='<binary-data>'
+                )
+            ],
+            sampling_rate=44100,
+            num_samples=282240,
+            duration=6.4,
+            channel_ids=[0],
+            transforms=None
+        ),
+        'shard_origin': PosixPath('cuts.000000.jsonl.gz'),
+        'shar_epoch': 0
+    }
 )
 ```
 
