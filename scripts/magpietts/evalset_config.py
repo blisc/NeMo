@@ -249,4 +249,9 @@ dataset_meta_info = {
         'audio_dir' : '/home/jasoli/data_prime/RIVA-TTS/en/',
         'feature_dir' : '/home/jasoli/data_prime/codecs',
     },
+    'j_libri_unseen_test_no_codes': {
+        'manifest_path' : '/home/jasoli/data_prime/manifests/test_clean_withContextAudioPaths.json',
+        'audio_dir' : '/mnt/drive1/data/LibriTTS/',
+        'feature_dir' : '/mnt/drive1/data/LibriTTS/',
+    },
 }
