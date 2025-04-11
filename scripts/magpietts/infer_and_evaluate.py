@@ -75,7 +75,9 @@ def run_inference(
     ):
     # Load model
     if hparams_file is not None:
-        model_cfg = OmegaConf.load(hparams_file).cfg
+        model_cfg = OmegaConf.load(hparams_file)
+        if "cfg" in model_cfg:
+            model_cfg = model_cfg.cfg
 
         with open_dict(model_cfg):
             model_cfg = update_config(model_cfg, codecmodel_path)
@@ -94,7 +96,7 @@ def run_inference(
             model_cfg = update_config(model_cfg, codecmodel_path)
         model = MagpieTTS_Model.restore_from(nemo_file, override_config_path=model_cfg)
         model.use_kv_cache_for_inference = True
-        checkpoint_name = nemo_file.split(".nemo")[0]
+        checkpoint_name = nemo_file.split("/")[-1].split(".nemo")[0]
     else:
         raise ValueError("Need a checkpoint")
 
@@ -248,7 +250,7 @@ def run_inference(
             with open(os.path.join(eval_dir, f"{dataset}_rtf_metrics_{repeat_idx}.json"), "w") as f:
                 json.dump(mean_rtf_metrics, f, indent=4)
 
-            all_experiment_csv = os.path.join(out_dir, "all_experiment_metrics.csv")
+            all_experiment_csv = os.path.join(eval_dir, "all_experiment_metrics.csv")
             if not os.path.exists(all_experiment_csv):
                 with open(all_experiment_csv, "w") as f:
                     f.write("checkpoint_name,dataset,cer_filewise_avg,wer_filewise_avg,cer_cumulative,wer_cumulative,ssim_pred_gt_avg,ssim_pred_context_avg,ssim_gt_context_avg,ssim_pred_gt_avg_alternate,ssim_pred_context_avg_alternate,ssim_gt_context_avg_alternate,cer_gt_audio_cumulative,wer_gt_audio_cumulative\n")
