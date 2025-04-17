@@ -124,9 +124,6 @@ class MagpieTTSModel(ModelPT):
         self.context_audio_bos_id = cfg.num_audio_tokens_per_codebook - 2  # For backward compatibility
         self.context_audio_eos_id = cfg.num_audio_tokens_per_codebook - 1  # For backward compatibility
 
-        if self.use_text_conditioning_encoder:
-            self.context_text_embedding = nn.Embedding(self.text_conditioning_tokenizer.vocab_size, cfg.embedding_dim)
-
         self.model_type = cfg.get('model_type', 'single_encoder_sv_tts')
 
         if self.model_type == 'decoder_context_tts':
@@ -139,6 +136,9 @@ class MagpieTTSModel(ModelPT):
         self.use_kv_cache_for_inference = cfg.get('use_kv_cache_for_inference', False)
 
         super().__init__(cfg=cfg, trainer=trainer)
+
+        if self.use_text_conditioning_encoder:
+            self.context_text_embedding = nn.Embedding(self.text_conditioning_tokenizer.vocab_size, cfg.embedding_dim)
 
         audio_embeddings = []
         for _ in range(cfg.num_audio_codebooks):
@@ -427,7 +427,7 @@ class MagpieTTSModel(ModelPT):
             indices_to_remove = codebook_logits < codebook_logits_topk[:, -1].unsqueeze(-1) # (B, num_tokens_per_codebook)
             codebook_logits_rescored = codebook_logits.clone()
             codebook_logits_rescored[indices_to_remove] = float('-inf')
-            codebook_probs = torch.softmax(codebook_logits / temperature, dim=-1) # (B, num_tokens_per_codebook)
+            codebook_probs = torch.softmax(codebook_logits_rescored / temperature, dim=-1) # (B, num_tokens_per_codebook)
             codebook_preds = torch.multinomial(codebook_probs, 1) # (B, 1)
             if use_cfg:
                 codebook_preds[actual_batch_size:] = codebook_preds[:actual_batch_size]
@@ -462,7 +462,7 @@ class MagpieTTSModel(ModelPT):
             codebook_logits_rescored = codebook_logits.clone()
             codebook_logits_rescored[indices_to_remove] = float('-inf')
 
-            codebook_probs = torch.softmax(codebook_logits / temperature, dim=-1)  # (B, num_tokens_per_codebook)
+            codebook_probs = torch.softmax(codebook_logits_rescored / temperature, dim=-1)  # (B, num_tokens_per_codebook)
             codebook_preds = torch.multinomial(codebook_probs, 1)  # (B, 1)
             all_preds.append(codebook_preds)
         all_preds = torch.cat(all_preds, dim=1).long()  # (B, num_codebooks)
