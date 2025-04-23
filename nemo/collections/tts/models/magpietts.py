@@ -98,6 +98,13 @@ class MagpieTTSModel(ModelPT):
         if trainer is not None:
             self.world_size = trainer.num_nodes * trainer.num_devices
 
+        # load codec
+        codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False)
+        # del codec discriminator to free memory
+        del codec_model.discriminator
+        self._codec_model = codec_model
+        self._codec_model.freeze()  #Lightning does requires_grad = False and self.eval()
+
         # Reserve special tokens (appended at the end of the codebook after the codec tokens)
         # (the actual index is this value plus the number of codec tokens - do not use the Enum directy)
         class SpecialAudioToken(Enum):
@@ -106,15 +113,8 @@ class MagpieTTSModel(ModelPT):
             AUDIO_CONTEXT_BOS = 2
             AUDIO_CONTEXT_EOS = 3
             MASK_TOKEN = 4
-            NUM_SPECIAL_TOKENS = 5 # update this if you special tokens
+            NUM_SPECIAL_TOKENS = 5 # update this if you add more special tokens
 
-        # load codec
-        codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False)
-        # del codec discriminator to free memory
-        del codec_model.discriminator
-        self._codec_model = codec_model
-        self._codec_model.freeze()  #Lightning does requires_grad = False and self.eval()
-        
         # Set up codebook configuration
         # TODO @rfejgin: replace these to calls to an API at the codec (not quantizer) level once those are added
         self.num_audio_codebooks = self._codec_model.vector_quantizer.num_groups
