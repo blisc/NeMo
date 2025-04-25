@@ -47,6 +47,8 @@ def update_config(model_cfg, codecmodel_path):
     if "t5_decoder" in model_cfg:
         model_cfg.decoder = model_cfg.t5_decoder
         del model_cfg.t5_decoder
+    if hasattr(model_cfg, 'decoder') and hasattr(model_cfg.decoder, 'prior_eps'):
+        del model_cfg.decoder.prior_eps
     return model_cfg
 
 def run_inference(
@@ -165,7 +167,7 @@ def run_inference(
                 context_duration_max=context_durration_max,
             )
             assert len(test_dataset) == len(manifest_records), "Dataset length and manifest length should be the same. Dataset length: {}, Manifest length: {}".format(len(test_dataset), len(manifest_records))
-            
+
             test_dataset.text_tokenizer = model.tokenizer
             test_dataset.text_conditioning_tokenizer = model.text_conditioning_tokenizer
 
