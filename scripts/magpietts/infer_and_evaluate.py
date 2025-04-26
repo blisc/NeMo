@@ -48,17 +48,17 @@ def update_config(model_cfg, codecmodel_path, legacy_codebooks=False):
         model_cfg.decoder = model_cfg.t5_decoder
         del model_cfg.t5_decoder
     if legacy_codebooks:
-        print("Using legacy codebook indices for backward compatibility. Should only be used with old checkpoints.")
+        print("WARNING: Using legacy codebook indices for backward compatibility. Should only be used with old checkpoints.")
         num_audio_tokens_per_codebook = model_cfg.num_audio_tokens_per_codebook
         model_cfg.forced_num_all_tokens_per_codebook = num_audio_tokens_per_codebook
-        model_cfg.forced_audio_bos_id = num_audio_tokens_per_codebook - 2
         model_cfg.forced_audio_eos_id = num_audio_tokens_per_codebook - 1
+        model_cfg.forced_audio_bos_id = num_audio_tokens_per_codebook - 2
         if model_cfg.model_type == 'decoder_context_tts':
-            model_cfg.forced_context_audio_bos_id = num_audio_tokens_per_codebook - 4
             model_cfg.forced_context_audio_eos_id = num_audio_tokens_per_codebook - 3
+            model_cfg.forced_context_audio_bos_id = num_audio_tokens_per_codebook - 4
         else:
-            model_cfg.forced_context_audio_bos_id = num_audio_tokens_per_codebook - 2
             model_cfg.forced_context_audio_eos_id = num_audio_tokens_per_codebook - 1
+            model_cfg.forced_context_audio_bos_id = num_audio_tokens_per_codebook - 2
 
     return model_cfg
 
