@@ -38,14 +38,12 @@ With the most common codec setup (2016 codes), the layout used to look like this
 [2023]  RESERVED_3
 ```
 
-# How to train and load new checkpoint
-For new checkpoints all configuration is automatic:
-* The number of codebooks, codec codebooks size, and codec downsampling rate are all read from the codec checkpoint rather than configured.
-* The embedding table size is automatically set to codec_codebook_size + number_of_special_tokens (currently 2016+8=2024).
+# How to Train and Load a New Checkpoint
+For new trainings and inference all configuration is automatic:
+* The number of codebooks, codec codebooks size, and codec downsampling rate are all read from the codec checkpoint rather than configured in Magpie.
+* The embedding table size is automatically set to codec_codebook_size + number_of_special_tokens (currently 2016+8=2024). There is no risk of accidentally stepping on codec tokens since the table sizes gets automatically sized with enough room for the special tokens.
 
-There is no risk of accidentally stepping on codec tokens since the table sizes gets automatically sized with enough room for the special tokens.
-
-# How to load an old checkpoint
+# How to Load Old Checkpoints
 For checkpoints created before the change you can force legacy codebook layout in one of these ways:
 
 ## If using `infer_and_evaluate.py`
