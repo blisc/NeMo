@@ -1,9 +1,9 @@
 # Background
-Magpie-TTS uses special tokens like AUDIO_BOS and AUDIO_EOS for its operation. The indices of these tokens are after the audio codec tokens, at the end of the embeding table.
+Magpie-TTS uses special tokens like AUDIO_BOS and AUDIO_EOS for its operation. The indices of these tokens are after the audio codec tokens, at the end of the embedding table.
 
 In April 2025 we changed the layout of the embedding table in a non-backwards compatible way:
 
-## Old layout
+## Old Layout
 With the most common codec setup (2016 codes), the layout used to look like this:
 ```
 [0]     Codec Token 0 
@@ -21,16 +21,17 @@ With the most common codec setup (2016 codes), the layout used to look like this
 [2047]  Audio EOS          # also used for context audio EOS if model_type == `multi_encoder_context_tts` or `single_encoder_sv_tts`
 ```
 
-## New layout
+## New Layout
 ```
 [0]     Codec Token 0 
 [0]     Codec Token 1
 [2]     Codec Token 2 
 ...
-[2016]  Codec Token 2015 
-[2017]  Audio BOS
-[2018]  Audio EOS
-[2019]  Context Audio BOS
+[2015]  Codec Token 2015 
+[2016]  Audio BOS
+[2017]  Audio EOS
+[2018]  Context Audio BOS
+[2019]  Context Audio EOS
 [2020]  MASK token (MaskGit)
 [2021]  RESERVED_1
 [2022]  RESERVED_2
@@ -42,7 +43,7 @@ For new checkpoints all configuration is automatic:
 * The number of codebooks, codec codebooks size, and codec downsampling rate are all read from the codec checkpoint rather than configured.
 * The embedding table size is automatically set to codec_codebook_size + number_of_special_tokens (currently 2016+8=2024).
 
-There is also no risk of accidentally stepping on codec tokens since the table sizes gets automatically sized with enough room for the special tokens.
+There is no risk of accidentally stepping on codec tokens since the table sizes gets automatically sized with enough room for the special tokens.
 
 # How to load an old checkpoint
 For checkpoints created before the change you can force legacy codebook layout in one of these ways:
