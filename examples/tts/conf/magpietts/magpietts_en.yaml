@@ -35,18 +35,6 @@ model:
   sample_rate: ${sample_rate}
   cfg_unconditional_prob: 0.1
 
-  # Backward compatibility for old models
-  # forced_num_all_tokens_per_codebook: 2048
-  # forced_audio_bos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -2}           # 2046
-  # forced_audio_eos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -1}           # 2047
-  # # Depending on the old model type, the context_audio_bos_id and context_audio_eos_id will be different (choose one of the pairs below)
-  # # For `multi_encoder_context_tts`, `single_encoder_sv_tts`):
-  # #forced_context_audio_bos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -2}  # 2046
-  # #forced_context_audio_eos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -1}  # 2047
-  # # For `decoder_context_tts` models:
-  # forced_context_audio_bos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -4}   # 2044
-  # forced_context_audio_eos_id: ${sum:${model.forced_num_all_tokens_per_codebook}, -3}   # 2045
-
   # Alignment encoder parameters, to binarize the prior
   # This is used for attention-constrained training and inference
   use_alignment_encoder: false
