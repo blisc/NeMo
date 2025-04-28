@@ -26,21 +26,21 @@ With the most common codec configuration (2016 codes), the layout used to look l
 ## New Layout```
 The new layout for the same codec configuration is:
 ```
-| Index   | Token Description    | Comments                                                                                                  |
-|---------|----------------------|-----------------------------------------------------------------------------------------------------------|
-| [0]     | Codec Token 0        |                                                                                                           |
-| [1]     | Codec Token 1        |                                                                                                           |
-| [2]     | Codec Token 2        |                                                                                                           |
-| ...     | ...                  |                                                                                                           |
-| [2015]  | Codec Token 2015     |                                                                                                           |
-| [2016]  | Audio BOS            |                                                                                                           |
-| [2017]  | Audio EOS            |                                                                                                           |
-| [2018]  | Context Audio BOS    |                                                                                                           |
-| [2019]  | Context Audio EOS    |                                                                                                           |
-| [2020]  | MASK token (MaskGit) |                                                                                                           |
-| [2021]  | RESERVED_1           |                                                                                                           |
-| [2022]  | RESERVED_2           |                                                                                                           |
-| [2023]  | RESERVED_3           |                                                                                                           |
+| Index   | Token Description    | Comments  |
+---------------------------------------------|
+| [0]     | Codec Token 0        |           |
+| [1]     | Codec Token 1        |           |
+| [2]     | Codec Token 2        |           |
+| ...     | ...                  |           |
+| [2015]  | Codec Token 2015     |           |
+| [2016]  | Audio BOS            |           |
+| [2017]  | Audio EOS            |           |
+| [2018]  | Context Audio BOS    |           |
+| [2019]  | Context Audio EOS    |           |
+| [2020]  | MASK token (MaskGit) |           |
+| [2021]  | RESERVED_1           |           |
+| [2022]  | RESERVED_2           |           |
+| [2023]  | RESERVED_3           |           |
 ```
 
 # How to Train and Load a New Checkpoint
