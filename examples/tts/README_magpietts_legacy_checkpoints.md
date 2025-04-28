@@ -4,38 +4,43 @@ Magpie-TTS uses special tokens like AUDIO_BOS and AUDIO_EOS for its operation. T
 In April 2025 we changed the layout of the embedding table in a non-backwards compatible way:
 
 ## Old Layout
-With the most common codec setup (2016 codes), the layout used to look like this:
+With the most common codec configuration (2016 codes), the layout used to look like this:
 ```
-[0]     Codec Token 0 
-[0]     Codec Token 1
-[2]     Codec Token 2 
-...
-[2015]  Codec Token 2015 
-[2016]  unused
-[2017]  unused
-[2018]  unused
-...
-[2044]  Context Audio BOS  # if model_type == `decoder_context_tts`
-[2045]  Context Audio EOS  # if model_type == `decoder_context_tts`
-[2046]  Audio BOS          # also used for context audio BOS if model_type == `multi_encoder_context_tts` or `single_encoder_sv_tts`
-[2047]  Audio EOS          # also used for context audio EOS if model_type == `multi_encoder_context_tts` or `single_encoder_sv_tts`
+| Index   | Token Description    | Comments                                                                                                  |
+|---------|----------------------|-----------------------------------------------------------------------------------------------------------|
+| [0]     | Codec Token 0        |                                                                                                           |
+| [1]     | Codec Token 1        |                                                                                                           |
+| [2]     | Codec Token 2        |                                                                                                           |
+| ...     | ...                  |                                                                                                           |
+| [2015]  | Codec Token 2015     |                                                                                                           |
+| [2016]  | <Unused>             |                                                                                                           |
+| [2017]  | <Unused>             |                                                                                                           |
+| [2018]  | <Unused>             |                                                                                                           |
+| ...     |                      |                                                                                                           |
+| [2044]  | Context Audio BOS    | if model_type == `decoder_context_tts`                                                                    |
+| [2045]  | Context Audio EOS    | if model_type == `decoder_context_tts`                                                                    |
+| [2046]  | Audio BOS            | also used for Context Audio BOS if model_type == `multi_encoder_context_tts` or `single_encoder_sv_tts`   |
+| [2047]  | Audio EOS            | also used for Context Audio EOS if model_type == `multi_encoder_context_tts` or `single_encoder_sv_tts`   |
 ```
 
-## New Layout
+## New Layout```
+The new layout for the same codec configuration is:
 ```
-[0]     Codec Token 0 
-[0]     Codec Token 1
-[2]     Codec Token 2 
-...
-[2015]  Codec Token 2015 
-[2016]  Audio BOS
-[2017]  Audio EOS
-[2018]  Context Audio BOS
-[2019]  Context Audio EOS
-[2020]  MASK token (MaskGit)
-[2021]  RESERVED_1
-[2022]  RESERVED_2
-[2023]  RESERVED_3
+| Index   | Token Description    | Comments                                                                                                  |
+|---------|----------------------|-----------------------------------------------------------------------------------------------------------|
+| [0]     | Codec Token 0        |                                                                                                           |
+| [1]     | Codec Token 1        |                                                                                                           |
+| [2]     | Codec Token 2        |                                                                                                           |
+| ...     | ...                  |                                                                                                           |
+| [2015]  | Codec Token 2015     |                                                                                                           |
+| [2016]  | Audio BOS            |                                                                                                           |
+| [2017]  | Audio EOS            |                                                                                                           |
+| [2018]  | Context Audio BOS    |                                                                                                           |
+| [2019]  | Context Audio EOS    |                                                                                                           |
+| [2020]  | MASK token (MaskGit) |                                                                                                           |
+| [2021]  | RESERVED_1           |                                                                                                           |
+| [2022]  | RESERVED_2           |                                                                                                           |
+| [2023]  | RESERVED_3           |                                                                                                           |
 ```
 
 # How to Train and Load a New Checkpoint
