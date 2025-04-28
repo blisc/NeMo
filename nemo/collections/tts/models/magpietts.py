@@ -119,7 +119,7 @@ class MagpieTTSModel(ModelPT):
 
         # Set up codebook configuration
         self.num_audio_codebooks = codec_model.num_codebooks
-        self.codec_model_downsample_factor = codec_model.samples_per_frame
+        self.codec_model_samples_per_frame = codec_model.samples_per_frame
         # Our codebooks start with actual audio codec tokens, followed by special tokens. 
         # The `forced_*` options are for backward compatibility for models trained with older code.
         num_audio_tokens = codec_model.codebook_size
@@ -1509,7 +1509,7 @@ class MagpieTTSModel(ModelPT):
             context_audio_bos_id=self.context_audio_bos_id,
             context_audio_eos_id=self.context_audio_eos_id,
             num_audio_codebooks=self.num_audio_codebooks,
-            codec_model_downsample_factor=self.codec_model_downsample_factor,
+            codec_model_samples_per_frame=self.codec_model_samples_per_frame,
             prior_scaling_factor=self.cfg.prior_scaling_factor,
             load_cached_codes_if_available=self.cfg.load_cached_codes_if_available,
             dataset_type=dataset_type,  # train or test used for setting phone prob to 1.0 in test dataset (worker_init_fn)
@@ -1530,7 +1530,7 @@ class MagpieTTSModel(ModelPT):
         dataset = MagpieTTSLhotseDataset(
             sample_rate=self.cfg.sample_rate,
             volume_norm=dataset_cfg.volume_norm,
-            codec_model_downsample_factor=self.codec_model_downsample_factor,
+            codec_model_samples_per_frame=self.codec_model_samples_per_framed,
             codec_model_name=self.cfg.codec_model_name,
             audio_bos_id=self.audio_bos_id,
             audio_eos_id=self.audio_eos_id,
