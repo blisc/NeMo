@@ -593,18 +593,14 @@ class Transformer(torch.nn.Module):
 
         super().__init__()
         self.dropout = torch.nn.Dropout(p_dropout)
-        self.p_dropout_out = p_dropout_out
 
-        if self.p_dropout_out > 0.0:
-            self.dropout_out = torch.nn.Dropout(self.p_dropout_out)
-        else:
-            self.dropout_out = None
+        self.dropout_out = torch.nn.Identity()
+        if p_dropout_out > 0.0:
+            self.dropout_out = torch.nn.Dropout(p_dropout_out)
 
-        self.apply_norm_out = apply_norm_out
-        if self.apply_norm_out:
+        self.norm_out = torch.nn.Identity()
+        if apply_norm_out:
             self.norm_out = torch.nn.LayerNorm(d_model, bias=False)
-        else:
-            self.norm_out = None
 
         self.layers = torch.nn.ModuleList()
         for _ in range(n_layers):
@@ -728,10 +724,7 @@ class Transformer(torch.nn.Module):
             if max_layer_idx is not None and idx == max_layer_idx:
                 break
 
-        if self.norm_out is not None:
-            x = self.norm_out(x)
-
-        if self.dropout_out is not None:
-            x = self.dropout_out(x)
+        x = self.norm_out(x)
+        x = self.dropout_out(x)
 
         return {'output': x, 'attn_probabilities': attn_probabilities}
