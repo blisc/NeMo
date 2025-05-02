@@ -964,10 +964,16 @@ class MagpieTTSModel(ModelPT):
                 additional_decoder_input, additional_decoder_mask
             )
             additional_decoder_input = perceiver_output['output']
-            additional_decoder_mask = torch.ones(64, dtype=torch.bool, device=x.device)  # TODO: fix hardcode 64 = num_latents
+            additional_decoder_mask = torch.ones(
+                (additional_decoder_input.shape[0], additional_decoder_input.shape[1]),
+                dtype=torch.bool,
+                device=additional_decoder_input.device
+            )# TODO: fix hardcode 64 = num_latents
 
         if context_tensors['additional_decoder_input'] is not None:
             dec_input_embedded = torch.cat([additional_decoder_input, audio_codes_embedded], dim=1)
+            print(additional_decoder_mask.shape)
+            print(audio_codes_mask.shape)
             dec_input_mask = torch.cat([additional_decoder_mask, audio_codes_mask], dim=1)
         else:
             dec_input_embedded = audio_codes_embedded

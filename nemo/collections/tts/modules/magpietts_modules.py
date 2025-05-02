@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -63,13 +64,11 @@ class PerceiverLayer(torch.nn.Module):
             d_model, d_ffn, p_dropout, kernel_size=kernel_size, non_linearity=conv_non_linearity, is_causal=False
         )
 
-        self.latents = torch.nn.Parameter(torch.randn(num_latents, d_model))
-        torch.nn.init.normal_(self.latents, std=0.02)
-
     def forward(
         self,
-        x: torch.Tensor,
-        x_mask: torch.Tensor,
+        latents: torch.Tensor,
+        cond: torch.Tensor,
+        cond_mask: torch.Tensor,
     ) -> Dict:
         """
         Args:
@@ -81,11 +80,11 @@ class PerceiverLayer(torch.nn.Module):
             output <torch tensor> (B, T1, C): Output tensor
             attn_probabilities <dict>: Attention probabilities
         """
-        x = x * x_mask.unsqueeze(-1)
-        x_normed = self.norm_xattn_memory(x)
+        cond = cond * cond_mask.unsqueeze(-1)
+        cond_normed = self.norm_xattn_memory(cond)
 
         latents_res, latents_attn_prob = self.cross_attention(
-            query=latents, query_mask=None, memory=x_normed, memory_mask=x_mask
+            query=latents, query_mask=None, memory=cond_normed, memory_mask=cond_mask
         )
         latents = latents + latents_res
         latents = latents + self.pos_ff(self.norm_pos_ff(latents))
@@ -109,6 +108,7 @@ class Perceiver(torch.nn.Module):
         xa_n_heads: int,
         p_dropout_out: float = 0.0,
         apply_norm_to_cond: bool = True,
+        apply_norm_out: bool = True,
         conv_non_linearity: Callable = torch.nn.GELU(approximate="tanh"),
     ):
         super().__init__()
@@ -138,6 +138,8 @@ class Perceiver(torch.nn.Module):
                 )
             )
 
+        self.latents = torch.nn.Parameter(torch.randn(num_latents, d_model))
+        torch.nn.init.normal_(self.latents, std=0.02)
         self.apply(Transformer._init_weights_gpt2)
         for name, param in self.named_parameters():
             if 'o_net' in name and name.endswith('weight'):
@@ -167,12 +169,13 @@ class Perceiver(torch.nn.Module):
 
         attn_probabilities = []
         x = self.dropout(x)
-        for idx, layer in enumerate(self.layers):
-            out_dict = layer(x, x_mask)
-            x = out_dict['output']
+        latents = torch.repeat_interleave(self.latents.unsqueeze(0), x.shape[0], dim=0)
+        for layer in self.layers:
+            out_dict = layer(latents=latents, cond=x, cond_mask=x_mask)
+            latents = out_dict['output']
             attn_probabilities.append(out_dict['attn_probabilities'])
 
-        x = self.norm_out(x)
-        x = self.dropout_out(x)
+        latents = self.norm_out(latents)
+        latents = self.dropout_out(latents)
 
-        return {'output': x, 'attn_probabilities': attn_probabilities}
+        return {'output': latents, 'attn_probabilities': attn_probabilities}
