@@ -95,7 +95,18 @@ class MagpieTTSModel(ModelPT):
             self.world_size = trainer.num_nodes * trainer.num_devices
 
         # load codec
-        codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False)
+        if "SpectralCodecFps43" in cfg.get('codecmodel_path'):  # TODO: remove hack
+            # load config and change the vector quantization params
+            # test that param changes work on audio reconstruction
+            # test on the fly with lhotse
+            logging.error("USING SPECTRAL CODEC")
+            ac_cfg = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), return_config=True)
+            with open_dict(ac_cfg):
+                ac_cfg.vector_quantizer.num_groups=6
+                ac_cfg.vector_quantizer.num_levels_per_group=[5, 5, 5, 5]
+            codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False, override_config_path=ac_cfg)
+        else:
+            codec_model = AudioCodecModel.restore_from(cfg.get('codecmodel_path'), strict=False)
         # del codec discriminator to free memory
         del codec_model.discriminator
 
@@ -972,8 +983,6 @@ class MagpieTTSModel(ModelPT):
 
         if context_tensors['additional_decoder_input'] is not None:
             dec_input_embedded = torch.cat([additional_decoder_input, audio_codes_embedded], dim=1)
-            print(additional_decoder_mask.shape)
-            print(audio_codes_mask.shape)
             dec_input_mask = torch.cat([additional_decoder_mask, audio_codes_mask], dim=1)
         else:
             dec_input_embedded = audio_codes_embedded

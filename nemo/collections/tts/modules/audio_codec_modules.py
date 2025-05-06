@@ -1198,12 +1198,12 @@ class FiniteScalarQuantizer(VectorQuantizerBase):
         # this is used to convert between per-dimension indices and a codebook token index
         dim_base_index = torch.cumprod(torch.tensor([1] + num_levels[:-1]), dim=0, dtype=torch.int32)
         dim_base_index = rearrange(dim_base_index, 'D -> 1 D 1')
-        self.register_buffer('dim_base_index', dim_base_index)
+        self.register_buffer('dim_base_index', dim_base_index, persistent=False)
 
         # Register the number of levels for each dimension
         num_levels = torch.tensor(num_levels, dtype=torch.int32)
         num_levels = rearrange(num_levels, 'D -> 1 D 1')
-        self.register_buffer('num_levels', num_levels)
+        self.register_buffer('num_levels', num_levels, persistent=False)
 
         # Regularization
         self.eps = eps
