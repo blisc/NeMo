@@ -681,7 +681,7 @@ class Conv1dNorm(NeuralModule):
         if activation is not None:
             self.activation = CodecActivation(activation=activation, channels=out_channels)
         else:
-            self.activation = None
+            self.activation = torch.nn.Identity()
 
 
     @property
@@ -703,8 +703,7 @@ class Conv1dNorm(NeuralModule):
     @typecheck()
     def forward(self, inputs, input_len):
         out = self.conv(inputs)
-        if self.activation is not None:
-            out = self.activation(out)
+        out = self.activation(out)
         out = mask_sequence_tensor(out, input_len)
         return out
 
@@ -1610,8 +1609,7 @@ class ResidualBlockV2(NeuralModule):
         channels: Input dimension.
         filters: Number of channels in the residual convolutions.
         kernel_size: Kernel size of the residual convolutions.
-        dilation: Dilation of the residual convolutions.
-        activation: Activation to apply in between residual convolutions.
+        activation: Name of activation function.
     """
 
     def __init__(
@@ -2325,7 +2323,18 @@ class MelSpectrogramProcessor(NeuralModule):
         spec, spec_len = self.preprocessor(input_signal=audio, length=audio_len)
         return spec, spec_len
 
+
 class STFTProcessor(NeuralModule):
+    """
+    Interface for computing log magnitude STFT features.
+
+    Args:
+        n_fft: Size of Fourier transform
+        win_length: The size of the sliding window frames for windowing and STFT.
+        hop_length: The distance between neighboring sliding window frames
+        log_guard: Value to add to magnitude STFT before taking log.
+    """
+
     def __init__(self, n_fft, win_length, hop_length, log_guard=1.0):
         super(STFTProcessor, self).__init__()
 
@@ -2368,6 +2377,7 @@ class STFTProcessor(NeuralModule):
         fft_mag_log = torch.log(fft_mag + self.log_guard)
         fft_mag_log = mask_sequence_tensor(fft_mag_log, spec_len)
         return fft_mag_log, spec_len
+
 
 class ResNetEncoder(NeuralModule):
     """
@@ -2551,28 +2561,29 @@ class MultiBandMelEncoder(NeuralModule):
         encoded = torch.cat(outputs, dim=1)
         return encoded, spec_len
 
+
 class STFTResidualBlock(NeuralModule):
     """
     Block in multi-resolution STFT encoder which adds an STFT resolution to the encoder latent space, after down
     sampling the input to match the time resoluton of the STFT features.
 
     Args:
-        channels: Input dimension.
+        resolution: STFT resolution, formatted as a 3-tuple (n_fft, hop_length, window_size)
+        input_dim: Dimension if input latenct features.
         filters: Number of channels in the residual convolutions.
         kernel_size: Kernel size of the residual convolutions.
-        dilation: Dilation of the residual convolutions.
-        dropout_rate: Dropout to apply to residuals.
-        activation: Activation to apply in between residual convolutions.
+        activation: Name of activation function.
+        down_sample_rate: Down sample factor to reduce input by before adding STFT encoding.
     """
 
     def __init__(
         self,
-        resolution,
-        input_dim,
-        filters,
-        kernel_size,
-        activation,
-        down_sample_rate,
+        resolution: Tuple[int],
+        input_dim: int,
+        filters: int,
+        kernel_size: int,
+        activation: str,
+        down_sample_rate: int,
     ):
         super(STFTResidualBlock, self).__init__()
         down_sample_kernel_size = down_sample_rate * 2 + 1
@@ -2638,9 +2649,8 @@ class DownSampleResidualBlock(NeuralModule):
         channels: Input dimension.
         filters: Number of channels in the residual convolutions.
         kernel_size: Kernel size of the residual convolutions.
-        dilation: Dilation of the residual convolutions.
-        dropout_rate: Dropout to apply to residuals.
         activation: Activation to apply in between residual convolutions.
+        down_sample_rate: Factor to down sample time dimension by.
     """
 
     def __init__(
@@ -2693,15 +2703,30 @@ class DownSampleResidualBlock(NeuralModule):
 
 
 class MultiResolutionSTFTEncoder(NeuralModule):
+    """
+    Interface for computing log magnitude STFT features.
+
+    Args:
+        out_dim: Dimension of encoder output embedding.
+        resolutions: List of STFT resolutions, formatted as 3-tuples (n_fft, hop_length, window_size)
+        resolution_filter_list: List the same size as 'resolutions', specifying the number of filters in the residual
+            block for each STFT resolution.
+        down_sample_filter_list: List of filters to use for each down sampling block after initial STFT encoding.
+        down_sample_rate_list: List of rates to use for each down sampling block after initial STFT encoding.
+            The total down sample rate of the encoder will be 2**(len(resolutions)) * product(down_sample_rate_list)
+        kernel_size: Kernel size to use in all convolutions.
+        activation: Name of activation function.
+    """
+
     def __init__(
         self,
-        out_dim,
-        resolutions,
-        resolution_filter_list,
-        down_sample_filter_list=(),
-        down_sample_rate_list=(),
-        kernel_size=3,
-        activation="lrelu",
+        out_dim: int,
+        resolutions: List[Tuple[int]],
+        resolution_filter_list: List[int],
+        down_sample_filter_list: Tuple[int] = (),
+        down_sample_rate_list: Tuple[int] = (),
+        kernel_size: int = 3,
+        activation: str = "lrelu",
     ):
         super(MultiResolutionSTFTEncoder, self).__init__()
         assert len(resolutions) >= 1
