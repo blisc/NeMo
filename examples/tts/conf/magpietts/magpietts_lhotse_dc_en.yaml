@@ -7,7 +7,7 @@ model:
   use_lhotse: true
   model_type: "decoder_context_tts" # single_encoder_sv_tts, multi_encoder_context_tts, decoder_context_tts or decoder_pretrain_synthesizer
   use_text_conditioning_encoder: false # If true, distilbert will be used to encode context_text if provided.
-  context_duration_min: 3.0
+  context_duration_min: 5.0
   context_duration_max: 5.0
   codec_model_name: "21fpsCausalDecoder"
   load_cached_codes_if_available: true
@@ -66,6 +66,7 @@ model:
 
     dataset:
       min_duration: 0.2
+      max_duration: 40.
       sample_rate: ${sample_rate}  # need to override the default sample rate of 16000
       batch_duration : ???  # in seconds. Adjust based on your GPU memory.
       quadratic_duration: ${quadratic_duration}
@@ -93,6 +94,7 @@ model:
 
     dataset:
       min_duration: 0.2
+      max_duration: 40.
       sample_rate: ${sample_rate}
       batch_duration: ???   # recommend to use smaller batch_duration for validation dataset than training dataset.
       quadratic_duration: ${quadratic_duration}
