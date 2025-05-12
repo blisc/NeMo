@@ -652,7 +652,7 @@ class MagpieTTSModel(ModelPT):
         )
         return alignment_loss
 
-    def prepare_context_tensors(self, batch):
+    def prepare_context_tensors(self, batch, mode="train"):
         dec_context_size = 0
         additional_decoder_input = None
         addtional_decoder_mask = None
@@ -754,7 +754,7 @@ class MagpieTTSModel(ModelPT):
                 additional_decoder_input = context_embeddings
                 addtional_decoder_mask = context_mask
         elif self.model_type in ['decoder_context_perceiver_tts', 'decoder_context_perceiver_tts_nocontextaudio']:
-            if self.model_type == 'decoder_context_perceiver_tts':
+            if mode == "eval" or self.model_type == 'decoder_context_perceiver_tts':
                 if 'context_audio_codes' in batch:
                     context_audio_codes = batch['context_audio_codes']
                     context_audio_codes_lens = batch['context_audio_codes_lens']
@@ -1361,7 +1361,7 @@ class MagpieTTSModel(ModelPT):
             start_time = time.time()
             self.decoder.reset_cache(use_cache=self.use_kv_cache_for_inference)
 
-            context_tensors = self.prepare_context_tensors(batch)  # TODO(jasoli): Infer/Test does not work for perceiver models yet
+            context_tensors = self.prepare_context_tensors(batch, mode="eval")
             text = context_tensors['text']
             audio_codes_bos = torch.full(
                 (text.size(0), self.num_audio_codebooks, 1), self.audio_bos_id, device=text.device
@@ -1383,6 +1383,30 @@ class MagpieTTSModel(ModelPT):
                     )
                 )
 
+            additional_decoder_input = context_tensors['additional_decoder_input']
+            additional_decoder_mask = context_tensors['addtional_decoder_mask']
+
+            if self.model_type in ['decoder_context_perceiver_tts', 'decoder_context_perceiver_tts_nocontextaudio']:
+                perceiver_output = self.perceiver(
+                    context_tensors['additional_decoder_input'], context_tensors['addtional_decoder_mask']
+                )
+                additional_decoder_input = perceiver_output['output']
+                additional_decoder_mask = torch.ones(
+                    (additional_decoder_input.shape[0], additional_decoder_input.shape[1]),
+                    dtype=torch.bool,
+                    device=additional_decoder_input.device
+                )# TODO: fix hardcode 64 = num_latents
+
+                if use_cfg:
+                    _, _, dummy_additional_decoder_input, dummy_addition_dec_mask, _ = (
+                        self.prepare_dummy_cond_for_cfg(
+                            context_tensors['cond'],
+                            context_tensors['cond_mask'],
+                            additional_decoder_input,
+                            additional_decoder_mask,
+                        )
+                    )
+
             cross_attention_scores_all_timesteps = []
             all_heads_cross_attn_scores_all_timesteps = []
             _attn_prior = None
@@ -1399,9 +1423,9 @@ class MagpieTTSModel(ModelPT):
                 audio_codes_embedded = self.embed_audio_tokens(audio_codes_input)
                 if context_tensors['additional_decoder_input'] is not None:
                     _audio_codes_embedded = torch.cat(
-                        [context_tensors['additional_decoder_input'], audio_codes_embedded], dim=1
+                        [additional_decoder_input, audio_codes_embedded], dim=1
                     )
-                    _audio_codes_mask = torch.cat([context_tensors['addtional_decoder_mask'], audio_codes_mask], dim=1)
+                    _audio_codes_mask = torch.cat([additional_decoder_mask, audio_codes_mask], dim=1)
                 else:
                     _audio_codes_embedded = audio_codes_embedded
                     _audio_codes_mask = audio_codes_mask
