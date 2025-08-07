@@ -200,6 +200,8 @@ def run_inference(
         model_cfg = OmegaConf.load(hparams_file)
         if "cfg" in model_cfg:
             model_cfg = model_cfg.cfg
+            if "value" in model_cfg:
+                model_cfg = model_cfg.value
 
         if hparams_file_from_wandb:
             model_cfg = model_cfg.value
@@ -232,6 +234,7 @@ def run_inference(
     print("Loaded weights.")
     model.cuda()
     model.eval()
+    import ipdb; ipdb.set_trace()
 
     if log_exp_name:
         # the experiment name is the name of the directory two above the checkpoint path,
@@ -240,7 +243,6 @@ def run_inference(
     else:
         exp_name = ""
 
-    checkpoint_name = checkpoint_file.split("/")[-1].split(".ckpt")[0]
     checkpoint_name = "{}{}_Temp{}_Topk{}_Cfg_{}_{}_Prior_{}_LT_{}_MGsteps_{}_ST_{}_sched_{}".format(
         exp_name,
         checkpoint_name,

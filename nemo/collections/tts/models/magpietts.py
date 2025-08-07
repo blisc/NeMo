@@ -173,7 +173,7 @@ class MagpieTTSModel(ModelPT):
             self.encoder = transformer_2501.Transformer(**dict(cfg.encoder))
 
         self.decoder = transformer_2501.Transformer(**dict(cfg.decoder))
-        
+
         self.final_proj = nn.Linear(cfg.decoder.d_model, self.num_audio_codebooks * self.num_all_tokens_per_codebook)
 
         self.local_transformer_type = LocalTransformerType(cfg.get('local_transformer_type', 'none').lower())
@@ -313,7 +313,7 @@ class MagpieTTSModel(ModelPT):
             else:
                 new_state_dict[key] = state_dict[key]
         return new_state_dict
-    
+
     def load_state_dict(self, state_dict, strict=True):
         """
         Modify load_state_dict so that we don't restore weights to _speaker_verification_model and _codec_model when
@@ -325,8 +325,8 @@ class MagpieTTSModel(ModelPT):
         if strict == False:
             super().load_state_dict(state_dict, strict=False)
         for name, child in self.named_children():
-            if name in ['_speaker_verification_model', '_codec_model', '_reference_model', 
-                        'eval_asr_model', 'eval_speaker_verification_model', 
+            if name in ['_speaker_verification_model', '_codec_model', '_reference_model',
+                        'eval_asr_model', 'eval_speaker_verification_model',
                         'whisper_model', 'squim_objective_model'
                         ]:
                 continue
@@ -1483,11 +1483,21 @@ class MagpieTTSModel(ModelPT):
                     # Very short sentences, No Prior
                     _attn_prior[bidx, 0, :] = 1.0
                 else:
-                    # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-2)] = 0.1 # Slight exposure to history for better pronounciation. Not very important.
-                    _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 0.2 # Slight exposure to history for better pronounciation. Not very important.
-                    _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 0.8 # Slightly bias to continue moving forward. Not very important.
+                    # ### Soft prior
+                    # # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-2)] = 0.1 # Slight exposure to history for better pronounciation. Not very important.
+                    # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 0.2 # Slight exposure to history for better pronounciation. Not very important.
+                    # _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 0.8 # Slightly bias to continue moving forward. Not very important.
+                    # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
+                    # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 0.8
+
+                    ### Hard prior
+                    _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 1.0 # Slight exposure to history for better pronounciation. Not very important.
+                    _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 1.0 # Slightly bias to continue moving forward. Not very important.
                     _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 0.8
+                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 1.0
+                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+3, _text_len - 1) ] = 1.0
+                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+4, _text_len - 1) ] = 1.0
+                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+5, _text_len - 1) ] = 1.0
 
                 # Penalize timesteps that have been attended to more than 10 times
                 for _timestep in attended_timestep_counter[bidx]:
