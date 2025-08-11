@@ -234,7 +234,6 @@ def run_inference(
     print("Loaded weights.")
     model.cuda()
     model.eval()
-    import ipdb; ipdb.set_trace()
 
     if log_exp_name:
         # the experiment name is the name of the directory two above the checkpoint path,

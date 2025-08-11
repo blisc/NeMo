@@ -719,6 +719,10 @@ class MagpieTTSModel(ModelPT):
 
 
     def sample_codes_from_logits(self, all_code_logits_t, temperature=0.7, topk=80, unfinished_items={}, finished_items={}):
+        """
+        unfinished_items disables EOS prediction
+        finished_items forces EOS prediction
+        """
         # all_code_logits_t: (B, num_codebooks * num_tokens_per_codebook), logits at a given timestep
         all_preds = []
         for idx in range(self.num_audio_codebooks):
@@ -1459,13 +1463,15 @@ class MagpieTTSModel(ModelPT):
                 # This is probably an attention sink! Move to the next timestep
                 last_attended_timestep += 1
             window_size = lookahead_window_size
-            window_end = min(last_attended_timestep + window_size, text_lens[bidx] - 3) # Ignore the last 3 timesteps
+            window_end = min(last_attended_timestep + window_size, text_lens[bidx]) # Ignore the last 3 timesteps
             item_attention_scores = alignment_attention_scores[bidx,last_attended_timestep:window_end]
             if item_attention_scores.size(0) == 0:
                 # This means the sentence has ended
-                attended_timestep = text_lens[bidx] - 1
+                attended_timestep = text_lens[bidx].item() - 1
             else:
                 attended_timestep = item_attention_scores.argmax().item() + last_attended_timestep
+            if isinstance(attended_timestep, torch.Tensor):
+                attended_timestep = attended_timestep.item()
             text_time_step_attended.append(attended_timestep)
             attended_timestep_counter[bidx][attended_timestep] = attended_timestep_counter[bidx].get(attended_timestep, 0) + 1
         return text_time_step_attended, attended_timestep_counter
@@ -1479,25 +1485,21 @@ class MagpieTTSModel(ModelPT):
         for bidx in range(cross_attention_scores.shape[0]):
             if bidx < batch_size:
                 _text_len = text_lens[bidx]
-                if text_lens[bidx] <= 5:
-                    # Very short sentences, No Prior
-                    _attn_prior[bidx, 0, :] = 1.0
-                else:
-                    # ### Soft prior
-                    # # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-2)] = 0.1 # Slight exposure to history for better pronounciation. Not very important.
-                    # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 0.2 # Slight exposure to history for better pronounciation. Not very important.
-                    # _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 0.8 # Slightly bias to continue moving forward. Not very important.
-                    # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
-                    # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 0.8
+                # ### Soft prior
+                # # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-2)] = 0.1 # Slight exposure to history for better pronounciation. Not very important.
+                # _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 0.2 # Slight exposure to history for better pronounciation. Not very important.
+                # _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 0.8 # Slightly bias to continue moving forward. Not very important.
+                # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
+                # _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 0.8
 
-                    ### Hard prior
-                    _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 1.0 # Slight exposure to history for better pronounciation. Not very important.
-                    _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 1.0 # Slightly bias to continue moving forward. Not very important.
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 1.0
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+3, _text_len - 1) ] = 1.0
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+4, _text_len - 1) ] = 1.0
-                    _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+5, _text_len - 1) ] = 1.0
+                ### Hard prior
+                _attn_prior[bidx, 0, max(1, text_time_step_attended[bidx]-1)] = 1.0 # Slight exposure to history for better pronounciation. Not very important.
+                _attn_prior[bidx, 0, text_time_step_attended[bidx]] = 1.0 # Slightly bias to continue moving forward. Not very important.
+                _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+1, _text_len - 1) ] = 1.0
+                _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+2, _text_len - 1) ] = 1.0
+                _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+3, _text_len - 1) ] = 1.0
+                _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+4, _text_len - 1) ] = 1.0
+                _attn_prior[bidx, 0, min(text_time_step_attended[bidx]+5, _text_len - 1) ] = 1.0
 
                 # Penalize timesteps that have been attended to more than 10 times
                 for _timestep in attended_timestep_counter[bidx]:
@@ -1511,7 +1513,7 @@ class MagpieTTSModel(ModelPT):
                     if bidx not in end_indices:
                         unfinished_texts[bidx] = True
 
-                if text_time_step_attended[bidx] >= text_lens[bidx] - 5 or bidx in end_indices:
+                if text_time_step_attended[bidx] >= text_lens[bidx] - 3 or bidx in end_indices:
                     if bidx not in finished_texts_counter:
                         finished_texts_counter[bidx] = 0
 
@@ -1524,7 +1526,9 @@ class MagpieTTSModel(ModelPT):
 
         return _attn_prior, unfinished_texts, finished_texts_counter
 
-    def get_inference_attention_plots(self, cross_attention_scores_all_timesteps, all_heads_cross_attn_scores_all_timesteps, text_lens, predicted_codes_lens, batch_size, compute_all_heads_attn_maps):
+    def get_inference_attention_plots(self, cross_attention_scores_all_timesteps, all_heads_cross_attn_scores_all_timesteps, text_lens, predicted_codes_lens, batch_size, compute_all_heads_attn_maps, last_attended_timestep):
+        import numpy as np
+        last_attended_timestep = np.array(last_attended_timestep).T
         cross_attention_scores_all_timesteps = torch.stack(cross_attention_scores_all_timesteps, dim=2) # B, text_timesteps, T'
         headwise_cross_attention_scores_all_timesteps = []
         for hidx in range(len(all_heads_cross_attn_scores_all_timesteps[0])):
@@ -1535,13 +1539,13 @@ class MagpieTTSModel(ModelPT):
         headwise_cross_attention_maps = []
         for bidx in range(batch_size):
             item_cross_attention_scores = cross_attention_scores_all_timesteps[bidx,:text_lens[bidx],:predicted_codes_lens[bidx]]
-            cross_attn_np = plot_alignment_to_numpy(item_cross_attention_scores.cpu().numpy())
+            cross_attn_np = plot_alignment_to_numpy(item_cross_attention_scores.cpu().numpy(), attended=last_attended_timestep[bidx,:predicted_codes_lens[bidx]])
             cross_attention_maps.append(cross_attn_np)
             item_all_head_cross_attn_maps = []
             if compute_all_heads_attn_maps:
                 for hidx in range(len(all_heads_cross_attn_scores_all_timesteps[0])):
                     item_headwise_cross_attention_scores = headwise_cross_attention_scores_all_timesteps[hidx][bidx,:text_lens[bidx],:predicted_codes_lens[bidx]]
-                    headwise_cross_attn_np = plot_alignment_to_numpy(item_headwise_cross_attention_scores.cpu().numpy())
+                    headwise_cross_attn_np = plot_alignment_to_numpy(item_headwise_cross_attention_scores.cpu().numpy(), attended=last_attended_timestep[bidx,:predicted_codes_lens[bidx]])
                     item_all_head_cross_attn_maps.append(headwise_cross_attn_np)
                 headwise_cross_attention_maps.append(item_all_head_cross_attn_maps)
 
@@ -1564,7 +1568,8 @@ class MagpieTTSModel(ModelPT):
             start_prior_after_n_audio_steps=10,
             compute_all_heads_attn_maps=False,
             use_local_transformer_for_inference=False,
-            maskgit_n_steps=3
+            maskgit_n_steps=3,
+            verbose_logging=False,
         ):
         with torch.no_grad():
             start_time = time.time()
@@ -1713,6 +1718,12 @@ class MagpieTTSModel(ModelPT):
                 finished_items = {k: v for k, v in finished_texts_counter.items() if v >= 20} # Items that have been close to the end for atleast 20 timesteps
                 unfinished_items = {k: v for k, v in unfinished_texts.items() if v}
 
+                if verbose_logging:
+                    print(f"{idx}: {text_time_step_attended}")
+                    print(f"|{attended_timestep_counter}|")
+                    print(f"|{unfinished_texts}|")
+                    print(f"|{finished_texts_counter}|")
+
                 all_code_logits_t = all_code_logits[:, -1, :] # (B, num_codebooks * num_tokens_per_codebook)
                 if use_local_transformer_for_inference:
                     if self.local_transformer_type == LocalTransformerType.AR :
@@ -1787,7 +1798,8 @@ class MagpieTTSModel(ModelPT):
             if return_cross_attn_probs:
                 cross_attention_maps, headwise_cross_attention_maps = self.get_inference_attention_plots(
                     cross_attention_scores_all_timesteps, all_heads_cross_attn_scores_all_timesteps,
-                    context_tensors['text_lens'], predicted_codes_lens, text.size(0), compute_all_heads_attn_maps
+                    context_tensors['text_lens'], predicted_codes_lens, text.size(0), compute_all_heads_attn_maps,
+                    last_attended_timesteps
                 )
                 return predicted_audio, predicted_audio_lens, predicted_codes, predicted_codes_lens, rtf_metrics, cross_attention_maps, headwise_cross_attention_maps
             else:

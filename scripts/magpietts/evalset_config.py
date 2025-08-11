@@ -344,4 +344,9 @@ dataset_meta_info = {
         'audio_dir' : '/',
         'feature_dir' : None,
     },
+    'test-clean': {
+        'manifest_path' : '/home/jasoli/data_prime/manifests/libritts-test-clean_context_v1.jsonl',
+        'audio_dir' : '/home/jasoli/data_prime/',
+        'feature_dir' : None,
+    },
 }
