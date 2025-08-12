@@ -1470,8 +1470,6 @@ class MagpieTTSModel(ModelPT):
                 attended_timestep = text_lens[bidx].item() - 1
             else:
                 attended_timestep = item_attention_scores.argmax().item() + last_attended_timestep
-            if isinstance(attended_timestep, torch.Tensor):
-                attended_timestep = attended_timestep.item()
             text_time_step_attended.append(attended_timestep)
             attended_timestep_counter[bidx][attended_timestep] = attended_timestep_counter[bidx].get(attended_timestep, 0) + 1
         return text_time_step_attended, attended_timestep_counter

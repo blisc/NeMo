@@ -349,4 +349,14 @@ dataset_meta_info = {
         'audio_dir' : '/home/jasoli/data_prime/',
         'feature_dir' : None,
     },
+    'lindy_human_eval': {
+        'manifest_path' : '/home/jasoli/data_prime/manifests/lindy_human_eval.json',
+        'audio_dir' : '/',
+        'feature_dir' : None,
+    },
+    'emma_human_eval': {
+        'manifest_path' : '/home/jasoli/data_prime/manifests/emma_human_eval.json',
+        'audio_dir' : '/',
+        'feature_dir' : None,
+    },
 }
