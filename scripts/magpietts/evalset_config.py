@@ -54,36 +54,3 @@ dataset_meta_info = {
         'feature_dir' : None,
     },
 }
-=======
-    'zeroshot_ref': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/eval/zeroshot_human_eval.jsonl',
-        'audio_dir' : '/',
-        'feature_dir' : None,
-    },
-        'j_riva_digits': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/hard-digits-RivaEnContext.ndjson',
-        'audio_dir' : '/',
-        'feature_dir' : None,
-    },
-    'j_riva_letters': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/hard-letters-RivaEnContext.ndjson',
-        'audio_dir' : '/',
-        'feature_dir' : None,
-    },
-    'j_riva_money': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/hard-money-RivaEnContext.ndjson',
-        'audio_dir' : '/',
-        'feature_dir' : None,
-    },
-    'j_riva_short': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/hard-short-punc-RivaEnContext.ndjson',
-        'audio_dir' : '/',
-        'feature_dir' : None,
-    },
-    'test-clean': {
-        'manifest_path' : '/home/jasoli/data_prime/manifests/libritts-test-clean_context_v1.jsonl',
-        'audio_dir' : '/home/jasoli/data_prime/',
-        'feature_dir' : None,
-    },
-}
->>>>>>> Stashed changes
