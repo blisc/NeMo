@@ -57,9 +57,10 @@ def setup_tokenizers(all_tokenizers_config, use_text_conditioning_tokenizer, mod
     text_conditioning_tokenizer = None
 
     if use_text_conditioning_tokenizer:
-        # TODO: make this configurable
-        # Conditioning text tokenizer
-        text_conditioning_tokenizer = T5Tokenizer.from_pretrained("google-t5/t5-small")
+    #     # TODO: make this configurable
+    #     # Conditioning text tokenizer
+    #     text_conditioning_tokenizer = T5Tokenizer.from_pretrained("google-t5/t5-small")
+        text_conditioning_tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
 
     return aggregated_tokenizer, text_conditioning_tokenizer
 

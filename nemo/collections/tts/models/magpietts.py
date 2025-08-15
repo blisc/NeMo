@@ -1463,7 +1463,7 @@ class MagpieTTSModel(ModelPT):
                 # This is probably an attention sink! Move to the next timestep
                 last_attended_timestep += 1
             window_size = lookahead_window_size
-            window_end = min(last_attended_timestep + window_size, text_lens[bidx]) # Ignore the last 3 timesteps
+            window_end = min(last_attended_timestep + window_size, text_lens[bidx] - 3) # Ignore the last 3 timesteps
             item_attention_scores = alignment_attention_scores[bidx,last_attended_timestep:window_end]
             if item_attention_scores.size(0) == 0:
                 # This means the sentence has ended
@@ -1511,7 +1511,7 @@ class MagpieTTSModel(ModelPT):
                     if bidx not in end_indices:
                         unfinished_texts[bidx] = True
 
-                if text_time_step_attended[bidx] >= text_lens[bidx] - 3 or bidx in end_indices:
+                if text_time_step_attended[bidx] >= text_lens[bidx] - 2 or bidx in end_indices:
                     if bidx not in finished_texts_counter:
                         finished_texts_counter[bidx] = 0
 
