@@ -173,7 +173,7 @@ class MagpieTTSModel(ModelPT):
             self.encoder = transformer_2501.Transformer(**dict(cfg.encoder))
 
         self.decoder = transformer_2501.Transformer(**dict(cfg.decoder))
-        
+
         self.final_proj = nn.Linear(cfg.decoder.d_model, self.num_audio_codebooks * self.num_all_tokens_per_codebook)
 
         self.local_transformer_type = LocalTransformerType(cfg.get('local_transformer_type', 'none').lower())
@@ -313,7 +313,7 @@ class MagpieTTSModel(ModelPT):
             else:
                 new_state_dict[key] = state_dict[key]
         return new_state_dict
-    
+
     def load_state_dict(self, state_dict, strict=True):
         """
         Modify load_state_dict so that we don't restore weights to _speaker_verification_model and _codec_model when
@@ -325,8 +325,8 @@ class MagpieTTSModel(ModelPT):
         if strict == False:
             super().load_state_dict(state_dict, strict=False)
         for name, child in self.named_children():
-            if name in ['_speaker_verification_model', '_codec_model', '_reference_model', 
-                        'eval_asr_model', 'eval_speaker_verification_model', 
+            if name in ['_speaker_verification_model', '_codec_model', '_reference_model',
+                        'eval_asr_model', 'eval_speaker_verification_model',
                         'whisper_model', 'squim_objective_model'
                         ]:
                 continue
@@ -1740,6 +1740,10 @@ class MagpieTTSModel(ModelPT):
 
                 for item_idx in range(all_codes_next_argmax.size(0)):
                     if item_idx not in end_indices:
+                        if (all_codes_next_argmax[item_idx] >= 2018).any().item():
+                            logging.error(f"At step {idx}, argmax codebook {item_idx} predicted token value {all_codes_next_argmax[item_idx]} above num_codebooks of {self._codec_model.codebook_size}.")
+                        if (all_codes_next_argmax[item_idx] >= 2018).any().item():
+                            logging.error(f"At step {idx}, multinomial codebook {item_idx} predicted token value {all_codes_next_argmax[item_idx]} above num_codebooks of {self._codec_model.codebook_size}.")
                         eos_in_pred_tokens_argmax = (all_codes_next_argmax[item_idx] == self.audio_eos_id).any().item()
                         eos_in_pred_tokens_multinomial = (audio_codes_next[item_idx] == self.audio_eos_id).any().item()
                         if eos_in_pred_tokens_argmax or eos_in_pred_tokens_multinomial:
