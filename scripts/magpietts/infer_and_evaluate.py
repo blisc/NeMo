@@ -53,7 +53,7 @@ def compute_mean_and_confidence_interval(metrics_list, metric_keys, confidence=0
         metrics[key] = "{:.4f} +/- {:.4f}".format(mean, confidence_interval)
     return metrics
 
-def update_config(model_cfg, codecmodel_path, legacy_codebooks=False):
+def update_config(model_cfg, codecmodel_path, legacy_codebooks=False, legacy_text_conditioning=False):
     ''' helper function to rename older yamls from t5 to magpie '''
     model_cfg.codecmodel_path = codecmodel_path
     if hasattr(model_cfg, 'text_tokenizer'):
@@ -63,6 +63,7 @@ def update_config(model_cfg, codecmodel_path, legacy_codebooks=False):
         model_cfg.text_tokenizer.g2p.phoneme_probability = 1.0
     model_cfg.train_ds = None
     model_cfg.validation_ds = None
+    model_cfg.legacy_text_conditioning = legacy_text_conditioning
     if "t5_encoder" in model_cfg:
         model_cfg.encoder = model_cfg.t5_encoder
         del model_cfg.t5_encoder
@@ -76,7 +77,10 @@ def update_config(model_cfg, codecmodel_path, legacy_codebooks=False):
         # For older checkpoints trained with a different parameter name
         model_cfg.local_transformer_type = "autoregressive"
         del model_cfg.use_local_transformer
-
+    if hasattr(model_cfg, 'downsample_factor'):
+        # Backward compatibility for models trained with the config option`downsample_factor` which was later renamed to `frame_stacking_factor`
+        model_cfg.frame_stacking_factor = model_cfg.downsample_factor
+        del model_cfg.downsample_factor
     if legacy_codebooks:
         # Added to address backward compatibility arising from
         #  https://github.com/blisc/NeMo/pull/64
@@ -272,7 +276,11 @@ def run_inference(
         confidence_level=0.95,
         use_local_transformer=False,
         maskgit_n_steps=3,
+        maskgit_noise_scale=0.0,
+        maskgit_fixed_schedule=None,
+        maskgit_sampling_type=None,
         legacy_codebooks=False,
+        legacy_text_conditioning=False,
         clean_up_disk=False,
         hparams_file_from_wandb=False,
         log_exp_name=False,
@@ -289,7 +297,7 @@ def run_inference(
             model_cfg = model_cfg.value
 
         with open_dict(model_cfg):
-            model_cfg, cfg_sample_rate = update_config(model_cfg, codecmodel_path, legacy_codebooks)
+            model_cfg, cfg_sample_rate = update_config(model_cfg, codecmodel_path, legacy_codebooks, legacy_text_conditioning)
 
         model = MagpieTTSModel(cfg=model_cfg)
         model.use_kv_cache_for_inference = True
@@ -303,7 +311,7 @@ def run_inference(
     elif nemo_file is not None:
         model_cfg = MagpieTTSModel.restore_from(nemo_file, return_config=True)
         with open_dict(model_cfg):
-            model_cfg, cfg_sample_rate = update_config(model_cfg, codecmodel_path, legacy_codebooks)
+            model_cfg, cfg_sample_rate = update_config(model_cfg, codecmodel_path, legacy_codebooks, legacy_text_conditioning)
         model = MagpieTTSModel.restore_from(nemo_file, override_config_path=model_cfg)
         model.use_kv_cache_for_inference = True
         checkpoint_name = nemo_file.split("/")[-1].split(".nemo")[0]
@@ -324,22 +332,22 @@ def run_inference(
     else:
         exp_name = ""
 
-    checkpoint_name = "{}{}_Temp{}_Topk{}_Cfg_{}_{}_Prior_{}_LT_{}_MGsteps_{}_ST_{}_sched_{}".format(
-        exp_name,
-        checkpoint_name,
-        temperature,
-        topk,
-        use_cfg,
-        cfg_scale,
-        apply_attention_prior,
-        attention_prior_epsilon,
-        attention_prior_lookahead_window,
-        start_prior_after_n_audio_steps,
-        "".join([str(l) for l in estimate_alignment_from_layers]) if estimate_alignment_from_layers is not None else "None",
-        "".join([str(l) for l in apply_prior_to_layers]) if apply_prior_to_layers is not None else "None",
-        use_local_transformer,
-        maskgit_n_steps,
-        sv_model
+    # Build checkpoint name
+    checkpoint_name = (
+        f"{exp_name}{checkpoint_name}_Temp{temperature}_Topk{topk}_Cfg_{use_cfg}_{cfg_scale}_"
+        f"Prior_{apply_attention_prior}_"
+    )
+    if apply_attention_prior:
+        # Only add prior config details if prior is enabled (to avoid super long checkpoint names)
+        checkpoint_name += (
+            f"{attention_prior_epsilon}_{attention_prior_lookahead_window}_{start_prior_after_n_audio_steps}_"
+            f"{''.join([str(l) for l in estimate_alignment_from_layers]) if estimate_alignment_from_layers is not None else 'None'}_"
+            f"{''.join([str(l) for l in apply_prior_to_layers]) if apply_prior_to_layers is not None else 'None'}_"
+    )
+    checkpoint_name += (
+        f"LT_{use_local_transformer}_"
+        f"MaskGit_{maskgit_n_steps}_{maskgit_sampling_type}_{''.join([str(l) for l in maskgit_fixed_schedule]) if maskgit_fixed_schedule is not None else 'None'}_"
+        f"SV_{sv_model}"
     )
 
     dataset_meta_info = evalset_config.dataset_meta_info
@@ -402,6 +410,7 @@ def run_inference(
                 tokenizer_config=None,
                 load_16khz_audio=model.model_type == 'single_encoder_sv_tts',
                 use_text_conditioning_tokenizer=model.use_text_conditioning_encoder,
+                text_conditioning_tokenizer_name=model.text_conditioning_tokenizer_name,
                 pad_context_text_to_max_duration=model.pad_context_text_to_max_duration,
                 context_duration_min=context_duration_min,
                 context_duration_max=context_duration_max,
@@ -417,7 +426,7 @@ def run_inference(
                 g2p = model.tokenizer.g2p
             if g2p is not None:
                 g2p.phoneme_probability = 1.0
-            test_dataset.text_conditioning_tokenizer = model.text_conditioning_tokenizer
+            
 
             test_data_loader = torch.utils.data.DataLoader(
                 test_dataset,
@@ -456,6 +465,9 @@ def run_inference(
                     start_prior_after_n_audio_steps=start_prior_after_n_audio_steps,
                     use_local_transformer_for_inference=use_local_transformer,
                     maskgit_n_steps=maskgit_n_steps,
+                    maskgit_noise_scale=maskgit_noise_scale,
+                    maskgit_fixed_schedule=maskgit_fixed_schedule,
+                    maskgit_sampling_type=maskgit_sampling_type
                 )
 
                 all_rtf_metrics.append(rtf_metrics)
@@ -588,6 +600,9 @@ def main():
     parser.add_argument('--use_cfg', action='store_true')
     parser.add_argument('--use_local_transformer', action='store_true', help="Enables use of local transformer for inference; applies to both Autoregressive and MaskGit sampling.")
     parser.add_argument('--maskgit_n_steps', type=int, default=3)
+    parser.add_argument('--maskgit_noise_scale', type=float, default=0.0)
+    parser.add_argument('--maskgit_fixed_schedule', type=int, nargs='+', default=None)
+    parser.add_argument('--maskgit_sampling_type', default=None, choices=["default", "causal", "purity_causal", "purity_default"])    
     parser.add_argument('--cfg_scale', type=float, default=2.5)
     parser.add_argument('--apply_attention_prior', action='store_true')
     parser.add_argument('--attention_prior_epsilon', type=float, default=0.1)
@@ -603,6 +618,7 @@ def main():
     parser.add_argument('--num_repeats', type=int, default=1)
     parser.add_argument('--confidence_level', type=float, default=0.95)
     parser.add_argument('--legacy_codebooks', action='store_true')
+    parser.add_argument('--legacy_text_conditioning', action='store_true')
     parser.add_argument('--clean_up_disk', action='store_true')
     parser.add_argument('--cer_target', type=float, default=None)
     parser.add_argument('--ssim_target', type=float, default=None)
@@ -646,7 +662,11 @@ def main():
         confidence_level=args.confidence_level,
         use_local_transformer=args.use_local_transformer,
         maskgit_n_steps=args.maskgit_n_steps,
+        maskgit_noise_scale=args.maskgit_noise_scale,
+        maskgit_fixed_schedule=args.maskgit_fixed_schedule,
+        maskgit_sampling_type=args.maskgit_sampling_type,
         legacy_codebooks=args.legacy_codebooks,
+        legacy_text_conditioning=args.legacy_text_conditioning,
         clean_up_disk=args.clean_up_disk,
         hparams_file_from_wandb=args.hparams_file_from_wandb,
         log_exp_name=args.log_exp_name,
