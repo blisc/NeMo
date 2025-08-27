@@ -10,7 +10,7 @@ from nemo_text_processing.text_normalization.normalize import Normalizer
 from hydra.utils import instantiate
 
 HPARAMS_FILE = "/datap/misc/experiment_checkpoints/tts_arena_finalized/noncausal_encoder/opensource_300m_hparams.yaml"
-CHECKPOINT_FILE = "/datap/misc/experiment_checkpoints/tts_arena_finalized/noncausal_encoder/grpo_opensource_300m_epoch_416_cer0474.ckpt"
+CHECKPOINT_FILE = "/datap/misc/experiment_checkpoints/tts_arena_finalized/noncausal_encoder/grpo_opensource_300m_epoch_416_cer0474_latest.ckpt"
 CODECMODEL_PATH = "/datap/misc/checkpoints/21fps_causal_codecmodel.nemo"
 NORMALIZER_CONFIG_PATH = "/home/pneekhara/2023/SimpleT5NeMo/NeMo/examples/tts/conf/text/normalizer_en.yaml" # Path to the normalizer config file (it's within NeMo repo)
 OUT_DIR = "/datap/misc/podcast_audios"
@@ -22,18 +22,18 @@ TURN_PADDING_DURATION_MS = 50 # 50ms silence in between turns
 LEGACY_TEXT_CONDITIONING = True
 
 PODCAST_SCRIPT = [
-    ["Megan", "Welcome back to the show everyone! Today we're diving into the exciting breakthroughs in AI over the past year."],
+    ["Emma", "Welcome back to the show everyone! Today we're diving into the exciting breakthroughs in AI over the past year."],
     ["Sean", "Yeah, it feels like every week there's a new paper or demo that blows people's minds."],
     ["Megan", "Absolutely. One of the biggest shifts has been the move toward multimodal AI systems that can understand text, images, and even audio together."],
     ["Sean", "Right, like models that can take a photo and not only describe it but also answer reasoning questions about what's happening in the scene."],
-    ["Megan", "And it's not just perception. Generative models are evolving fast too, with image and video generation becoming incredibly realistic."],
-    ["Sean", "I was really impressed by the new text-to-audio systems. They're starting to generate speech with emotion and nuance, almost indistinguishable from a real person."],
-    ["Megan", "That's true, and the advances in efficiency are just as important. Training and running these models on smaller hardware footprints is opening up access for more people."],
+    ["Tom", "And it's not just perception. Generative models are evolving fast too, with image and video generation becoming incredibly realistic."],
+    ["Emma", "I was really impressed by the new text-to-audio systems. They're starting to generate speech with emotion and nuance, almost indistinguishable from a real person."],
+    ["Tom", "That's true, and the advances in efficiency are just as important. Training and running these models on smaller hardware footprints is opening up access for more people."],
     ["Sean", "Yeah, and on the ethical side, there's been more focus on alignment and safety research to make sure these powerful systems behave responsibly."],
-    ["Megan", "I think one of the most encouraging signs is how quickly the research community is collaborating—open-sourcing models, sharing benchmarks, and building tools."],
-    ["Sean", "Exactly. It feels like we're entering an era where AI isn't just a research curiosity, but a core part of how we work, create, and communicate."],
-    ["Megan", "And with breakthroughs in reasoning and planning, it won't be long before AI agents can assist in much more complex tasks."],
-    ["Sean", "Which makes the next few years both exciting and critical. We'll need to balance innovation with thoughtful deployment."]
+    ["Tom", "I think one of the most encouraging signs is how quickly the research community is collaborating—open-sourcing models, sharing benchmarks, and building tools."],
+    ["Emma", "Exactly. It feels like we're entering an era where AI isn't just a research curiosity, but a core part of how we work, create, and communicate."],
+    ["Sean", "And with breakthroughs in reasoning and planning, it won't be long before AI agents can assist in much more complex tasks."],
+    ["Tom", "Which makes the next few years both exciting and critical. We'll need to balance innovation with thoughtful deployment."]
 ]
 
 
