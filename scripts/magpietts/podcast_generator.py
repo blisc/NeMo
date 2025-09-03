@@ -100,9 +100,9 @@ if __name__ == "__main__":
         PODCAST_SCRIPT.append([turn["speaker"], turn["text"]])
 
     SPEAKER_NAME_TO_TEXTCONTEXT = {
-        "speaker-2": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Emma_Conversational |",
+        "Emma": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Emma_Conversational |",
         "Megan": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Megan_Conversational |",
-        "speaker-1": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Sean_Conversational |",
+        "Sean": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Sean_Conversational |",
         "Tom": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Tom_Conversational |",
     }
 
