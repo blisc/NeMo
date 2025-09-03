@@ -937,6 +937,7 @@ class MagpieTTSModel(ModelPT):
         use_cfg=False,
         cfg_scale=1.0,
         use_kv_cache=True,
+        # dummy_additional_decoder_input,
     ):
         # dec_output: (B, E)
         self.local_transformer.reset_cache(use_cache=use_kv_cache)
@@ -2112,6 +2113,7 @@ class MagpieTTSModel(ModelPT):
                         context_tensors['additional_decoder_mask'],
                     )
                 )
+                # dummy_additional_decoder_input = None
 
             cross_attention_scores_all_timesteps = []
             all_heads_cross_attn_scores_all_timesteps = []
