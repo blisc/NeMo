@@ -222,8 +222,8 @@ if __name__ == "__main__":
                     temperature=0.7,
                     topk=80,
                     use_cfg=True,
-                    cfg_scale=2.5,
-                    # cfg_scale=1.5,
+                    # cfg_scale=2.5,
+                    cfg_scale=1.3,
                     prior_epsilon=0.2,
                     lookahead_window_size=5,
                     return_cross_attn_probs=True,
@@ -233,8 +233,8 @@ if __name__ == "__main__":
                     compute_all_heads_attn_maps=False,  # always off
                     start_prior_after_n_audio_steps=0,
                     use_local_transformer_for_inference=True,
-                    ignore_finished_sentence_tracking=True,
-                    eos_detection_method="argmax_or_multinomial_all"
+                    ignore_finished_sentence_tracking=False,
+                    eos_detection_method="argmax_or_multinomial_any"
                 )
 
             for idx in range(predicted_audio.size(0)):

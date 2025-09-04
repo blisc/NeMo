@@ -2141,7 +2141,8 @@ class MagpieTTSModel(ModelPT):
                     ]
                 else:
                     cfg_cond = torch.cat([context_tensors['cond'], dummy_cond], dim=0)
-                    cfg_cond_mask = torch.cat([context_tensors['cond_mask'], dummy_cond_mask], dim=0)
+                    cfg_cond_mask = torch.cat([context_tensors['cond_mask'], context_tensors['cond_mask']], dim=0)
+                    # cfg_cond_mask = torch.cat([context_tensors['cond_mask'], dummy_cond_mask], dim=0)
                 cfg_audio_codes_embedded = torch.cat([_audio_codes_embedded, _audio_codes_embedded], dim=0)
                 cfg_audio_codes_mask = torch.cat([_audio_codes_mask, _audio_codes_mask], dim=0)
                 # if dummy_additional_decoder_input is not None:
