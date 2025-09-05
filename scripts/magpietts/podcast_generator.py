@@ -99,12 +99,20 @@ if __name__ == "__main__":
     for turn in data["dialogue"]:
         PODCAST_SCRIPT.append([turn["speaker"], turn["text"]])
 
+    # SPEAKER_NAME_TO_TEXTCONTEXT = {
+    #     "Emma": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Emma_Conversational |",
+    #     "Megan": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Megan_Conversational |",
+    #     "Sean": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Sean_Conversational |",
+    #     "Tom": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Tom_Conversational |",
+    # }
     SPEAKER_NAME_TO_TEXTCONTEXT = {
-        "Emma": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Emma_Conversational |",
-        "Megan": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Megan_Conversational |",
-        "Sean": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Sean_Conversational |",
-        "Tom": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Tom_Conversational |",
+        "Emma": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Emma_Additional |",
+        "Megan": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Megan_Additional |",
+        "Tom": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Tom_Additional |",
+        "Sean": "Speaker and Emotion: | Language:en Dataset:rivaEmmaMeganSeanTom Speaker:Sean_Additional |",
     }
+
+
 
     if not os.path.exists(OUT_DIR):
         os.makedirs(OUT_DIR)
@@ -219,12 +227,12 @@ if __name__ == "__main__":
                 predicted_audio, predicted_audio_lens, _, _, rtf_metrics, cross_attn_np, _ = model.infer_batch(
                     batch_cuda,
                     max_decoder_steps=430,
-                    temperature=0.7,
+                    temperature=0.6,
                     topk=80,
                     use_cfg=True,
-                    # cfg_scale=2.5,
-                    cfg_scale=1.3,
-                    prior_epsilon=0.2,
+                    cfg_scale=2.5,
+                    # cfg_scale=1.3,
+                    prior_epsilon=0.3,
                     lookahead_window_size=5,
                     return_cross_attn_probs=True,
                     estimate_alignment_from_layers=[6,7,8],
@@ -233,8 +241,8 @@ if __name__ == "__main__":
                     compute_all_heads_attn_maps=False,  # always off
                     start_prior_after_n_audio_steps=0,
                     use_local_transformer_for_inference=True,
-                    ignore_finished_sentence_tracking=False,
-                    eos_detection_method="argmax_or_multinomial_any"
+                    ignore_finished_sentence_tracking=True,
+                    eos_detection_method="argmax_all"
                 )
 
             for idx in range(predicted_audio.size(0)):
