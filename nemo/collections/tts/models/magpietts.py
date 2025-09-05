@@ -937,7 +937,6 @@ class MagpieTTSModel(ModelPT):
         use_cfg=False,
         cfg_scale=1.0,
         use_kv_cache=True,
-        # dummy_additional_decoder_input,
     ):
         # dec_output: (B, E)
         self.local_transformer.reset_cache(use_cache=use_kv_cache)
@@ -956,8 +955,8 @@ class MagpieTTSModel(ModelPT):
                 actual_batch_size = codebook_logits.size(0) // 2
                 conditional_logits = codebook_logits[:actual_batch_size]
                 unconditional_logits = codebook_logits[actual_batch_size:]
-                cfg_logits = cfg_scale * conditional_logits[:,:self.num_audio_codebooks] + (1.0 - cfg_scale) * unconditional_logits[:,:self.num_audio_codebooks]
-                codebook_logits[:actual_batch_size, :self.num_audio_codebooks] = cfg_logits
+                cfg_logits = cfg_scale * conditional_logits + (1.0 - cfg_scale) * unconditional_logits
+                codebook_logits[:actual_batch_size] = cfg_logits
                 # print(cfg_logits.shape)
 
             for item_idx in unfinished_items:
@@ -2142,16 +2141,15 @@ class MagpieTTSModel(ModelPT):
                 else:
                     cfg_cond = torch.cat([context_tensors['cond'], dummy_cond], dim=0)
                     cfg_cond_mask = torch.cat([context_tensors['cond_mask'], context_tensors['cond_mask']], dim=0)
-                    # cfg_cond_mask = torch.cat([context_tensors['cond_mask'], dummy_cond_mask], dim=0)
                 cfg_audio_codes_embedded = torch.cat([_audio_codes_embedded, _audio_codes_embedded], dim=0)
                 cfg_audio_codes_mask = torch.cat([_audio_codes_mask, _audio_codes_mask], dim=0)
-                # if dummy_additional_decoder_input is not None:
-                #     cfg_audio_codes_embedded[batch_size:, : dummy_additional_decoder_input.size(1)] = (
-                #         dummy_additional_decoder_input
-                #     )
-                #     cfg_audio_codes_mask[batch_size:, : dummy_additional_decoder_input.size(1)] = (
-                #         dummy_addition_dec_mask
-                #     )
+                if dummy_additional_decoder_input is not None:
+                    cfg_audio_codes_embedded[batch_size:, : dummy_additional_decoder_input.size(1)] = (
+                        dummy_additional_decoder_input
+                    )
+                    cfg_audio_codes_mask[batch_size:, : dummy_additional_decoder_input.size(1)] = (
+                        dummy_addition_dec_mask
+                    )
 
             cross_attention_scores_all_timesteps = []
             all_heads_cross_attn_scores_all_timesteps = []
