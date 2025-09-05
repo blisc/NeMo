@@ -960,7 +960,6 @@ class MagpieTTSModel(ModelPT):
                 unconditional_logits = codebook_logits[actual_batch_size:]
                 cfg_logits = cfg_scale * conditional_logits + (1.0 - cfg_scale) * unconditional_logits
                 codebook_logits[:actual_batch_size] = cfg_logits
-                # print(cfg_logits.shape)
 
             for item_idx in unfinished_items:
                 codebook_logits[item_idx, self.audio_eos_id] = float('-inf')
@@ -2146,13 +2145,13 @@ class MagpieTTSModel(ModelPT):
                     cfg_cond_mask = torch.cat([context_tensors['cond_mask'], context_tensors['cond_mask']], dim=0)
                 cfg_audio_codes_embedded = torch.cat([_audio_codes_embedded, _audio_codes_embedded], dim=0)
                 cfg_audio_codes_mask = torch.cat([_audio_codes_mask, _audio_codes_mask], dim=0)
-                if dummy_additional_decoder_input is not None:
-                    cfg_audio_codes_embedded[batch_size:, : dummy_additional_decoder_input.size(1)] = (
-                        dummy_additional_decoder_input
-                    )
-                    cfg_audio_codes_mask[batch_size:, : dummy_additional_decoder_input.size(1)] = (
-                        dummy_addition_dec_mask
-                    )
+                # if dummy_additional_decoder_input is not None:
+                #     cfg_audio_codes_embedded[batch_size:, : dummy_additional_decoder_input.size(1)] = (
+                #         dummy_additional_decoder_input
+                #     )
+                #     cfg_audio_codes_mask[batch_size:, : dummy_additional_decoder_input.size(1)] = (
+                #         dummy_addition_dec_mask
+                #     )
 
             cross_attention_scores_all_timesteps = []
             all_heads_cross_attn_scores_all_timesteps = []
