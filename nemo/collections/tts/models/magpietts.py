@@ -2783,13 +2783,10 @@ class MagpieTTSModel(ModelPT):
                 _audio_codes_embedded = torch.cat(
                     [context_tensors.additional_decoder_input, audio_codes_embedded], dim=1
                 )
-                _audio_codes_mask = torch.cat(
-                    [context_tensors.additional_decoder_mask, audio_codes_mask], dim=1
-                )
+                _audio_codes_mask = torch.cat([context_tensors.additional_decoder_mask, audio_codes_mask], dim=1)
             else:
                 _audio_codes_embedded = audio_codes_embedded
                 _audio_codes_mask = audio_codes_mask
-
 
             if use_cfg:
                 dummy_cond, dummy_cond_mask, dummy_additional_decoder_input, dummy_addition_dec_mask, _ = (
@@ -2808,9 +2805,7 @@ class MagpieTTSModel(ModelPT):
                     ]
                     cfg_cond_mask = [
                         torch.cat([cond_mask_item, dummy_cond_mask_item], dim=0)
-                        for cond_mask_item, dummy_cond_mask_item in zip(
-                            context_tensors.cond_mask, dummy_cond_mask
-                        )
+                        for cond_mask_item, dummy_cond_mask_item in zip(context_tensors.cond_mask, dummy_cond_mask)
                     ]
                 else:
                     cfg_cond = torch.cat([context_tensors.cond, dummy_cond], dim=0)
@@ -3001,13 +2996,13 @@ class MagpieTTSModel(ModelPT):
                 # If not all inputs have ended, embed for the next step and append it to the relevant tensors:
                 # _audio_codes_embedded, _audio_codes_mask
                 # and their CFG counterparts: cfg_audio_codes_embedded, cfg_audio_codes_mask
-                audio_codes_embedded = self.embed_audio_tokens(audio_codes_input[:,:,-1].unsqueeze(-1))
+                audio_codes_embedded = self.embed_audio_tokens(audio_codes_input[:, :, -1].unsqueeze(-1))
                 _audio_codes_embedded = torch.cat((_audio_codes_embedded, audio_codes_embedded), dim=1)
-                _audio_codes_mask = torch.cat((_audio_codes_mask, audio_codes_mask[:,-1].unsqueeze(-1)), dim=1)
+                _audio_codes_mask = torch.cat((_audio_codes_mask, audio_codes_mask[:, -1].unsqueeze(-1)), dim=1)
                 if use_cfg:
                     double_embeds = torch.cat([audio_codes_embedded, audio_codes_embedded], dim=0)
                     cfg_audio_codes_embedded = torch.cat((cfg_audio_codes_embedded, double_embeds), dim=1)
-                    double_mask = torch.cat([_audio_codes_mask[:,-1], _audio_codes_mask[:,-1]], dim=0)
+                    double_mask = torch.cat([_audio_codes_mask[:, -1], _audio_codes_mask[:, -1]], dim=0)
                     cfg_audio_codes_mask = torch.cat((cfg_audio_codes_mask, double_mask.unsqueeze(-1)), dim=1)
             tts_generation_time = time.time() - start_time
             tts_generation_time_per_frame = tts_generation_time / (len(all_predictions) * self.frame_stacking_factor)
