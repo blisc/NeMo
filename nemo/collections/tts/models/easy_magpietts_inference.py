@@ -321,7 +321,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
         self.default_inference_mode = self.training_modes[0].name
 
         self.frame_stacking_factor = cfg.get('frame_stacking_factor', 1)
-
+        logging.info(f"d100: {cfg.text_tokenizers}")
         self.tokenizer = setup_tokenizers(
             all_tokenizers_config=cfg.text_tokenizers,
             mode='train',
@@ -2135,6 +2135,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             )
 
         text_tokens = self.tokenizer.encode(transcript, tokenizer_name=main_tokenizer_name) + [self.eos_id]
+        logging.info(f"d101: text_tokens: {text_tokens}")
         text = torch.tensor([text_tokens], dtype=torch.long, device=device)
         text_lens = torch.tensor([len(text_tokens)], dtype=torch.long, device=device)
 
