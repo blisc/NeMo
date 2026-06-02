@@ -40,10 +40,18 @@ try:
 
     MAMBA_SSM_AVAILABLE = True
 except ImportError:
-    selective_state_update = None
-    mamba_chunk_scan_combined = None
-    mamba_split_conv1d_scan_combined = None
-    MAMBA_SSM_AVAILABLE = False
+    try:
+        from kernels import get_kernel
+        kernel_module = get_kernel("kernels-community/mamba-ssm")
+        selective_state_update = kernel_module.selective_state_update
+        mamba_chunk_scan_combined = kernel_module.mamba_chunk_scan_combined
+        mamba_split_conv1d_scan_combined = kernel_module.mamba_split_conv1d_scan_combined
+        MAMBA_SSM_AVAILABLE = True
+    except ImportError:
+        selective_state_update = None
+        mamba_chunk_scan_combined = None
+        mamba_split_conv1d_scan_combined = None
+        MAMBA_SSM_AVAILABLE = False
 
 try:
     from mamba_ssm.ops.triton.layernorm_gated import rmsnorm_fn
@@ -58,9 +66,17 @@ try:
 
     CAUSAL_CONV1D_AVAILABLE = True
 except ImportError:
-    causal_conv1d_fn = None
-    causal_conv1d_update = None
-    CAUSAL_CONV1D_AVAILABLE = False
+    try:
+        from kernels import get_kernel
+        kernel_module = get_kernel("kernels-community/causal-conv1d")
+
+        causal_conv1d_fn = kernel_module.causal_conv1d_fn
+        causal_conv1d_update = kernel_module.causal_conv1d_update
+        CAUSAL_CONV1D_AVAILABLE = True
+    except ImportError:
+        causal_conv1d_fn = None
+        causal_conv1d_update = None
+        CAUSAL_CONV1D_AVAILABLE = False
 
 try:
     from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal_2_10
