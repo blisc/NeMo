@@ -35,19 +35,25 @@ from nemo.utils import logging
 
 # Try to import optimized kernels, fall back to pure PyTorch if unavailable
 try:
+    logging.info(f"m1: trying to import mamba")
+
     from mamba_ssm.ops.triton.selective_state_update import selective_state_update
     from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined, mamba_split_conv1d_scan_combined
 
     MAMBA_SSM_AVAILABLE = True
+    logging.info(f"m2: success mamba import")
 except ImportError:
     try:
+        logging.info(f"m3: rying to import kernels mamba")
         from kernels import get_kernel
         kernel_module = get_kernel("kernels-community/mamba-ssm")
         selective_state_update = kernel_module.selective_state_update
         mamba_chunk_scan_combined = kernel_module.mamba_chunk_scan_combined
         mamba_split_conv1d_scan_combined = kernel_module.mamba_split_conv1d_scan_combined
         MAMBA_SSM_AVAILABLE = True
+        logging.info(f"m4: success kernels mamba import")
     except ImportError:
+        logging.info(f"m5: failed")
         selective_state_update = None
         mamba_chunk_scan_combined = None
         mamba_split_conv1d_scan_combined = None
@@ -57,42 +63,53 @@ try:
     from mamba_ssm.ops.triton.layernorm_gated import rmsnorm_fn
 
     RMSNORM_FN_AVAILABLE = True
+    logging.info(f"m6: success rnsnorm import")
 except ImportError:
     rmsnorm_fn = None
     RMSNORM_FN_AVAILABLE = False
+    logging.info(f"m7: failed rnsnorm import")
 
 try:
+    logging.info(f"m11: trying to import causal_conv1d")
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
 
     CAUSAL_CONV1D_AVAILABLE = True
+    logging.info(f"m12: success causal_conv1d import")
 except ImportError:
     try:
+        logging.info(f"m13: trying to import get_kernel causal_conv1d")
         from kernels import get_kernel
         kernel_module = get_kernel("kernels-community/causal-conv1d")
 
         causal_conv1d_fn = kernel_module.causal_conv1d_fn
         causal_conv1d_update = kernel_module.causal_conv1d_update
         CAUSAL_CONV1D_AVAILABLE = True
+        logging.info(f"m14: success import get_kernel causal_conv1d")
     except ImportError:
         causal_conv1d_fn = None
         causal_conv1d_update = None
         CAUSAL_CONV1D_AVAILABLE = False
+        logging.info(f"m15: failed")
 
 try:
+    logging.info(f"m20: try to import FA2")
     from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal_2_10
 
     if is_flash_attn_2_available():
         from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
         FLASH_ATTN_AVAILABLE = True
+        logging.info(f"m21: sucess  import FA2")
     else:
         _flash_attention_forward = None
         FLASH_ATTN_AVAILABLE = False
+        logging.info(f"m22: failed  import FA2")
 except ImportError:
     is_flash_attn_2_available = None
     is_flash_attn_greater_or_equal_2_10 = None
     _flash_attention_forward = None
     FLASH_ATTN_AVAILABLE = False
+    logging.info(f"m23: failed  import FA2")
 
 
 # Check if fast path is available (all optimized kernels present)
@@ -104,6 +121,14 @@ IS_FAST_PATH_AVAILABLE = all(
         mamba_chunk_scan_combined is not None,
         causal_conv1d_fn is not None,
     ]
+)
+logging.info(
+    f"m30: IS_FAST_PATH_AVAILABLE: {IS_FAST_PATH_AVAILABLE}\n"
+    f"m30: MAMBA_SSM_AVAILABLE: {MAMBA_SSM_AVAILABLE}\n"
+    f"m30: CAUSAL_CONV1D_AVAILABLE: {CAUSAL_CONV1D_AVAILABLE}\n"
+    f"m30: selective_state_update: {selective_state_update is not None}\n"
+    f"m30: mamba_chunk_scan_combined: {mamba_chunk_scan_combined is not None}\n"
+    f"m30: causal_conv1d_fn: {causal_conv1d_fn is not None}\n"
 )
 
 
