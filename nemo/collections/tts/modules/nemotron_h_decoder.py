@@ -71,6 +71,7 @@ except ImportError:
         from kernels import get_kernel
         kernel_module = get_kernel("kernels-community/mamba-ssm")
         rmsnorm_fn = kernel_module.ops.triton.layernorm_gated.rmsnorm_fn
+        RMSNORM_FN_AVAILABLE = True
         logging.info(f"m6.3: success kernels mamba import for rnsnorm_fn")
     except ImportError:
         rmsnorm_fn = None
