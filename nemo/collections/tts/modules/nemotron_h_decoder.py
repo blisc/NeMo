@@ -60,14 +60,22 @@ except ImportError:
         MAMBA_SSM_AVAILABLE = False
 
 try:
+    logging.info(f"m6: trying to import mamba for rnsnorm_fn")
     from mamba_ssm.ops.triton.layernorm_gated import rmsnorm_fn
 
     RMSNORM_FN_AVAILABLE = True
-    logging.info(f"m6: success rnsnorm import")
+    logging.info(f"m6.1: success rnsnorm import")
 except ImportError:
-    rmsnorm_fn = None
-    RMSNORM_FN_AVAILABLE = False
-    logging.info(f"m7: failed rnsnorm import")
+    try:
+        logging.info(f"m6.2: rying to import kernels mamba for rnsnorm_fn")
+        from kernels import get_kernel
+        kernel_module = get_kernel("kernels-community/mamba-ssm")
+        rmsnorm_fn = kernel_module.ops.triton.layernorm_gated.rmsnorm_fn
+        logging.info(f"m6.3: success kernels mamba import for rnsnorm_fn")
+    except ImportError:
+        rmsnorm_fn = None
+        RMSNORM_FN_AVAILABLE = False
+        logging.info(f"m6.4: failed rnsnorm import")
 
 try:
     logging.info(f"m11: trying to import causal_conv1d")
