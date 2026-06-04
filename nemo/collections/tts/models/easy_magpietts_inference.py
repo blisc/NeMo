@@ -13,7 +13,7 @@
 # limitations under the License.
 import random
 import time
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, is_dataclass, replace
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -22,7 +22,7 @@ import soundfile as sf
 import torch
 from hydra.utils import instantiate
 from lightning.pytorch import Trainer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -209,6 +209,33 @@ class EasyMagpieTTSInferenceModel(ModelPT):
 
     EasyMagpieTTSModel subclasses this to add training, validation, and data loading.
     """
+
+    @staticmethod
+    def _to_container(cfg_value):
+        if cfg_value is None:
+            return {}
+        if isinstance(cfg_value, DictConfig):
+            return OmegaConf.to_container(cfg_value, resolve=True)
+        return dict(cfg_value)
+
+    @classmethod
+    def _get_nemotron_h_config_dict(cls, cfg: DictConfig) -> Dict[str, Any]:
+        nemotron_h_config_dict = cls._to_container(cfg.get('nemotron_h_config', {}))
+        # Ensure hidden_size matches embedding_dim for compatibility.
+        if 'hidden_size' not in nemotron_h_config_dict:
+            nemotron_h_config_dict['hidden_size'] = cfg.embedding_dim
+        return nemotron_h_config_dict
+
+    @staticmethod
+    def _replace_config_values(config, values: Dict[str, Any]):
+        if is_dataclass(config):
+            return replace(config, **values)
+        if hasattr(config, "update"):
+            config.update(values)
+            return config
+        for key, value in values.items():
+            setattr(config, key, value)
+        return config
 
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         self.world_size = 1
@@ -431,7 +458,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             self.phoneme_embeddings = nn.ModuleList(phoneme_embeddings)
             self.phoneme_final_proj = nn.Linear(cfg.hidden_dim, self.phoneme_vocab_size * self.phoneme_stacking_factor)
 
-        # Decoder backend selection - supports HuggingFace models or NemotronH
+        # Decoder backend selection - supports HuggingFace models, local NemotronH, or NeMo AutoModel.
         self.decoder_type = cfg.get('decoder_type', 'huggingface')  # backward compatible default
         logging.info(f"Using decoder type: {self.decoder_type}")
 
@@ -463,11 +490,8 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             # NemotronH hybrid Mamba2/Attention backend
             from nemo.collections.tts.modules.nemotron_h_decoder import NemotronHConfig, NemotronHForCausalLM
 
-            # Build config from YAML parameters
-            nemotron_h_config_dict = dict(cfg.get('nemotron_h_config', {}))
-            # Ensure hidden_size matches embedding_dim for compatibility
-            if 'hidden_size' not in nemotron_h_config_dict:
-                nemotron_h_config_dict['hidden_size'] = cfg.embedding_dim
+            # Build config from YAML parameters.
+            nemotron_h_config_dict = self._get_nemotron_h_config_dict(cfg)
             nemotron_config = NemotronHConfig(**nemotron_h_config_dict)
             nemotron_model = NemotronHForCausalLM(nemotron_config)
             if self.disable_lm_text_head:
@@ -478,8 +502,45 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 f"NemotronH config: {nemotron_config.num_hidden_layers} layers, pattern={nemotron_config.hybrid_override_pattern[:20]}..."
             )
 
+        elif self.decoder_type in ('nemo_automodel', 'automodel'):
+            try:
+                from nemo_automodel import NeMoAutoModelForCausalLM
+            except ImportError as e:
+                raise ImportError(
+                    "`decoder_type='nemo_automodel'`/`'automodel'` requires `nemo_automodel`. "
+                    "Install NeMo with the `all` extra or add `nemo_automodel` to the environment."
+                ) from e
+
+            automodel_config_source = cfg.get('automodel_config_source', 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16')
+            self.transformer_backend_config = AutoConfig.from_pretrained(
+                automodel_config_source,
+                trust_remote_code=True,
+            )
+            self.transformer_backend_config = self._replace_config_values(
+                self.transformer_backend_config,
+                self._get_nemotron_h_config_dict(cfg),
+            )
+            automodel_kwargs = self._to_container(cfg.get('automodel_kwargs', {}))
+            automodel_model = NeMoAutoModelForCausalLM.from_config(self.transformer_backend_config, **automodel_kwargs)
+            if self.disable_lm_text_head:
+                automodel_model.lm_head = None
+            self.decoder = getattr(automodel_model, 'backbone', None)
+            if self.decoder is None:
+                self.decoder = getattr(automodel_model, 'model', None)
+            if self.decoder is None:
+                raise AttributeError("NeMo AutoModel causal LM did not expose a `backbone` or `model` decoder.")
+            self.lm_text_head = None if self.disable_lm_text_head else getattr(automodel_model, 'lm_head', None)
+            logging.info(
+                f"NeMo AutoModel config: source={automodel_config_source}, "
+                f"hidden_size={self.transformer_backend_config.hidden_size}, "
+                f"num_hidden_layers={self.transformer_backend_config.num_hidden_layers}"
+            )
+
         else:
-            raise ValueError(f"Unknown decoder_type: {self.decoder_type}. Supported: 'huggingface', 'nemotron_h'")
+            raise ValueError(
+                f"Unknown decoder_type: {self.decoder_type}. "
+                "Supported: 'huggingface', 'nemotron_h', 'nemo_automodel', 'automodel'"
+            )
 
         if self.disable_lm_text_head and hasattr(self.decoder, 'lm_head'):
             self.decoder.lm_head = None
@@ -717,8 +778,8 @@ class EasyMagpieTTSInferenceModel(ModelPT):
         return phoneme_embedding
 
     def forward(self, inputs_embeds, attention_mask, use_cache=False, past_key_values=None, cache_position=None):
-        # Only pass cache_position for NemotronH (HF transformers may not accept it)
-        if self.decoder_type == 'nemotron_h':
+        # Only pass cache_position for NemotronH-style backends (HF transformers may not accept it).
+        if self.decoder_type in ('nemotron_h', 'nemo_automodel', 'automodel'):
             backend_out = self.decoder(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
