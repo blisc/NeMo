@@ -237,6 +237,31 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             setattr(config, key, value)
         return config
 
+    @staticmethod
+    @torch.no_grad()
+    def _initialize_automodel_scratch_parameters(module: nn.Module):
+        """Reset NemotronV3 tensors that some Automodel scratch-init paths leave uninitialized."""
+        for submodule in module.modules():
+            if all(hasattr(submodule, name) for name in ('A_log', 'D', 'in_proj', 'conv1d', 'norm', 'out_proj')):
+                submodule.in_proj.reset_parameters()
+                submodule.conv1d.reset_parameters()
+                submodule.out_proj.reset_parameters()
+                if hasattr(submodule.norm, 'weight'):
+                    submodule.norm.weight.fill_(1.0)
+
+                a_log = submodule.A_log
+                a_values = torch.arange(1, a_log.numel() + 1, device=a_log.device, dtype=torch.float32).log()
+                a_log.copy_(a_values.to(dtype=a_log.dtype).reshape_as(a_log))
+                submodule.D.fill_(1.0)
+                submodule.A_log._no_weight_decay = True
+                submodule.D._no_weight_decay = True
+
+            if all(hasattr(submodule, name) for name in ('q_proj', 'k_proj', 'v_proj', 'o_proj')):
+                submodule.q_proj.reset_parameters()
+                submodule.k_proj.reset_parameters()
+                submodule.v_proj.reset_parameters()
+                submodule.o_proj.reset_parameters()
+
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         self.world_size = 1
         if trainer is not None:
@@ -521,14 +546,35 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 self._get_nemotron_h_config_dict(cfg),
             )
             automodel_kwargs = self._to_container(cfg.get('automodel_kwargs', {}))
-            automodel_model = NeMoAutoModelForCausalLM.from_config(self.transformer_backend_config, **automodel_kwargs)
+            # Some Automodel NemotronV3 builds leave mixer tensors from scratch init uninitialized after
+            # from_config(); reset those tensors before running Automodel's regular init/rescaling path.
+            with torch.device('cpu'):
+                automodel_model = NeMoAutoModelForCausalLM.from_config(
+                    self.transformer_backend_config, **automodel_kwargs
+                )
+            self._initialize_automodel_scratch_parameters(automodel_model)
+            buffer_device = (
+                torch.device(f'cuda:{torch.cuda.current_device()}')
+                if torch.cuda.is_available()
+                else torch.device('cpu')
+            )
+            automodel_dtype = next(
+                (
+                    param.dtype
+                    for param in automodel_model.parameters()
+                    if param.is_floating_point() and not param.is_meta
+                ),
+                torch.bfloat16,
+            )
+            if hasattr(automodel_model, 'initialize_weights'):
+                automodel_model.initialize_weights(buffer_device=buffer_device, dtype=automodel_dtype)
+            elif hasattr(getattr(automodel_model, 'model', None), 'initialize_weights'):
+                automodel_model.model.initialize_weights(buffer_device=buffer_device)
             if self.disable_lm_text_head:
                 automodel_model.lm_head = None
-            self.decoder = getattr(automodel_model, 'backbone', None)
+            self.decoder = automodel_model
             if self.decoder is None:
-                self.decoder = getattr(automodel_model, 'model', None)
-            if self.decoder is None:
-                raise AttributeError("NeMo AutoModel causal LM did not expose a `backbone` or `model` decoder.")
+                raise AttributeError("NeMo AutoModel causal LM did not expose a `model` decoder.")
             self.lm_text_head = None if self.disable_lm_text_head else getattr(automodel_model, 'lm_head', None)
             logging.info(
                 f"NeMo AutoModel config: source={automodel_config_source}, "
@@ -780,7 +826,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
     def forward(self, inputs_embeds, attention_mask, use_cache=False, past_key_values=None, cache_position=None):
         # Only pass cache_position for NemotronH-style backends (HF transformers may not accept it).
         if self.decoder_type in ('nemotron_h', 'nemo_automodel', 'automodel'):
-            backend_out = self.decoder(
+            backend_out = self.decoder.model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 use_cache=use_cache,
