@@ -841,13 +841,12 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
 
         full_embedding = context_embedding_padded + combined_channel_embedding
 
-        attention_mask = get_mask_from_lengths(combined_channel_lens)
-
         # 8. Forward pass through transformer
-        transformer_hidden_states = self.forward(
+        transformer_out = self.forward(
             inputs_embeds=full_embedding,
-            attention_mask=attention_mask,
+            attention_mask=get_mask_from_lengths(combined_channel_lens),
         )
+        transformer_hidden_states = self._get_last_hidden_state(transformer_out)  # (B, T_total, E)
 
         # 9. Extract prediction embeddings and compute losses
         # Audio predictions start at audio_delay

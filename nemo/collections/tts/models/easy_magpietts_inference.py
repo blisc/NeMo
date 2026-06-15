@@ -262,6 +262,21 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 submodule.v_proj.reset_parameters()
                 submodule.o_proj.reset_parameters()
 
+    @staticmethod
+    def _get_last_hidden_state(transformer_out):
+        last_hidden_state = getattr(transformer_out, 'last_hidden_state', None)
+        if last_hidden_state is not None:
+            return last_hidden_state
+
+        hidden_states = getattr(transformer_out, 'hidden_states', None)
+        if hidden_states is not None and len(hidden_states) > 0 and hidden_states[-1] is not None:
+            return hidden_states[-1]
+
+        raise AttributeError(
+            "Decoder output must expose `last_hidden_state` or a non-empty `hidden_states` tuple. "
+            "For causal-LM style decoders, call forward with `output_hidden_states=True`."
+        )
+
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         self.world_size = 1
         if trainer is not None:
@@ -824,22 +839,21 @@ class EasyMagpieTTSInferenceModel(ModelPT):
         return phoneme_embedding
 
     def forward(self, inputs_embeds, attention_mask, use_cache=False, past_key_values=None, cache_position=None):
+        decoder_kwargs = {
+            'inputs_embeds': inputs_embeds,
+            'attention_mask': attention_mask,
+            'use_cache': use_cache,
+            'past_key_values': past_key_values,
+        }
+        if self.decoder_type in ('nemo_automodel', 'automodel'):
+            decoder_kwargs['output_hidden_states'] = True
+
         # Only pass cache_position for NemotronH-style backends (HF transformers may not accept it).
         if self.decoder_type in ('nemotron_h', 'nemo_automodel', 'automodel'):
-            backend_out = self.decoder.model(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                use_cache=use_cache,
-                past_key_values=past_key_values,
-                cache_position=cache_position,
-            )
+            decoder_kwargs['cache_position'] = cache_position
+            backend_out = self.decoder(**decoder_kwargs)
         else:
-            backend_out = self.decoder(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                use_cache=use_cache,
-                past_key_values=past_key_values,
-            )
+            backend_out = self.decoder(**decoder_kwargs)
         return backend_out
 
     def logits_to_audio_codes(self, all_code_logits, audio_codes_lens):
@@ -1380,7 +1394,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 cache_position=cache_position,
             )
 
-            last_hidden = transformer_out.last_hidden_state
+            last_hidden = self._get_last_hidden_state(transformer_out)
             past_kv = transformer_out.past_key_values
             current_cache_seq_len = min_context_len
 
@@ -1504,7 +1518,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 cache_position=cache_position,
             )
 
-            state.last_hidden = transformer_out.last_hidden_state
+            state.last_hidden = self._get_last_hidden_state(transformer_out)
             state.past_key_values = transformer_out.past_key_values
             state.cache_seq_len += 1
 
