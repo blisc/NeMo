@@ -27,6 +27,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import wandb
+from hydra.utils import instantiate
 from lhotse.serialization import load_yaml
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
@@ -69,7 +70,7 @@ from nemo.collections.tts.parts.utils.tts_dataset_utils import (
     stack_tensors,
 )
 from nemo.core.classes import ModelPT
-from nemo.core.classes.common import PretrainedModelInfo, safe_instantiate
+from nemo.core.classes.common import PretrainedModelInfo
 from nemo.utils import logging
 from nemo.utils.exceptions import NeMoBaseException
 
@@ -203,16 +204,16 @@ class ChunkedInferenceConfig:
         near_end_threshold: Positions from text end to consider "near end".
     """
 
-    history_len_heuristic: int = 20
-    prior_weights_init: Tuple[float, ...] = (0.5, 1.0, 0.8, 0.2, 0.2)
-    prior_weights: Tuple[float, ...] = (0.2, 1.0, 0.6, 0.4, 0.2, 0.2)
-    finished_limit_with_eot: int = 5
+    history_len_heuristic: int = 1
+    prior_weights_init: Tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0) # (0.1, 0.1, 0.2, 0.8, 0.8)
+    prior_weights: Tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2) # (0.2, 1.0, 0.6, 0.4, 0.2, 0.2)
+    finished_limit_with_eot: int = 1
     finished_limit_without_eot: int = 1
-    finished_limit_first_chunk: int = 20
-    forceful_chunk_end_threshold: int = 3
+    finished_limit_first_chunk: int = 1
+    forceful_chunk_end_threshold: int = 1
     argmax_temperature: float = 0.01
     short_sentence_threshold: int = 35
-    attention_sink_threshold: int = 10
+    attention_sink_threshold: int = 3
     near_end_threshold: int = 3
 
 
@@ -284,7 +285,7 @@ class ModelInferenceParameters:
     cfg_scale: float = 2.5
     apply_attention_prior: bool = True
     attention_prior_epsilon: float = 0.1
-    attention_prior_lookahead_window: int = 5
+    attention_prior_lookahead_window: int = 6
     estimate_alignment_from_layers: Optional[List[int]] = None
     apply_prior_to_layers: Optional[List[int]] = None
     start_prior_after_n_audio_steps: int = 0
@@ -362,7 +363,7 @@ class MagpieTTSModel(ModelPT):
         # that is different than in the audio codec checkpoint.
         vector_quantizer = cfg.get('vector_quantizer')
         if vector_quantizer is not None:
-            vector_quantizer = safe_instantiate(vector_quantizer)
+            vector_quantizer = instantiate(vector_quantizer)
             num_audio_codebooks = vector_quantizer.num_codebooks
             codebook_size = vector_quantizer.codebook_size
             codec_converter = VectorQuantizerIndexConverter(
@@ -2677,9 +2678,10 @@ class MagpieTTSModel(ModelPT):
         text_time_step_attended = []
         for bidx in range(batch_size):
             last_attended_timestep = last_attended_timesteps[-1][bidx]
-            if attended_timestep_counter[bidx].get(last_attended_timestep, 0) >= 8:
+            if attended_timestep_counter[bidx].get(last_attended_timestep, 0) >= 4:
                 # This is probably an attention sink! Move to the next timestep
                 last_attended_timestep += 1
+            last_attended_timestep = max(last_attended_timestep, left_offset[bidx]) 
             last_attended_timestep_in_this_window = last_attended_timestep - left_offset[bidx]
             window_size = lookahead_window_size
             window_end = min(
@@ -2729,9 +2731,9 @@ class MagpieTTSModel(ModelPT):
                     for ind in range(1, lookahead_window_size + 1):
                         _attn_prior[bidx, 0, min(text_time_step_attended[bidx] + ind, _text_len - 1)] = 1.0
 
-                # Penalize timesteps that have been attended to more than 10 times
+                # Penalize timesteps attended to more than 4 frames worth of steps.
                 for _timestep in attended_timestep_counter[bidx]:
-                    if attended_timestep_counter[bidx][_timestep] >= 10:
+                    if attended_timestep_counter[bidx][_timestep] >= 4:
                         # This means the timestep has been attended to more than 10 times (To avoid getting stuck)
                         _attn_prior[bidx, 0, : _timestep + 1] = prior_epsilon
 
@@ -3440,7 +3442,7 @@ class MagpieTTSModel(ModelPT):
                 f"Got keys: {list(dataset_cfg.keys())}"
             )
 
-        dataset = safe_instantiate(
+        dataset = instantiate(
             dataset_cfg.datasets,
             sample_rate=self.sample_rate,
             bos_id=self.bos_id,
@@ -4267,7 +4269,7 @@ class MagpieTTSModel(ModelPT):
             current_starting_point = batch_text_lens[_idx] - current_chunk_len[_idx]
             prior_weights = self.chunked_inference_config.prior_weights_init
             _attn_prior[_idx, :, :current_starting_point] = prior_epsilon * prior_epsilon
-            for offset, weight in enumerate(prior_weights[:5]):
+            for offset, weight in enumerate(prior_weights[:]):
                 current_offset_idx = current_starting_point + offset
                 if current_offset_idx < max_text_len:
                     _attn_prior[_idx, :, current_offset_idx] = weight
@@ -4307,7 +4309,7 @@ class MagpieTTSModel(ModelPT):
                 pad_len_idx = max_text_len - batch_text_lens[_idx]
                 context_tensors.cond[_idx, : -current_chunk_len[_idx] - pad_len_idx] = (
                     chunk_state.history_context_tensor[
-                        _idx, -(context_tensors.cond[_idx].shape[0] - current_chunk_len[_idx] - pad_len_idx) :
+                        _idx, -(context_tensors.cond[_idx].shape[0] - current_chunk_len[_idx] - pad_len_idx)-1 : -1
                     ]
                 )
         chunk_state.history_context_tensor = context_tensors.cond
@@ -4350,7 +4352,7 @@ class MagpieTTSModel(ModelPT):
             if chunk_state.history_text is not None:
                 current_text = torch.cat(
                     [
-                        chunk_state.history_text[_idx][: chunk_state.history_text_lens[_idx]],
+                        chunk_state.history_text[_idx][: chunk_state.history_text_lens[_idx]-1],
                         batch["text"][_idx][: current_chunk_len[_idx]],
                     ]
                 )
@@ -4549,7 +4551,7 @@ class MagpieTTSModel(ModelPT):
                     dummy_additional_decoder_input=dummy_additional_decoder_input,
                     dummy_addition_dec_mask=dummy_addition_dec_mask,
                     batch_size=batch_size,
-                )
+                ) # (B, T, num_codebooks * num_tokens_per_codebook), (B, T, d_model)
 
                 if self.inference_parameters.apply_attention_prior:
                     # Get cross-attention scores (optionally from specific layers for alignment)
@@ -4678,7 +4680,7 @@ class MagpieTTSModel(ModelPT):
                         unfinished_items=unfinished_items,
                         finished_items=finished_items,
                         forbid_audio_eos=forbid_audio_eos,
-                    )  # (B, num_codebooks)
+                    )  # (B, num_codebooks, frame_stacking_factor)
                 all_codes_next_argmax = self.sample_codes_from_logits(
                     all_code_logits_t,
                     temperature=self.chunked_inference_config.argmax_temperature,
@@ -4686,7 +4688,7 @@ class MagpieTTSModel(ModelPT):
                     unfinished_items=unfinished_items,
                     finished_items=finished_items,
                     forbid_audio_eos=forbid_audio_eos,
-                )  # (B, num_codebooks)
+                )  # (B, num_codebooks, frame_stacking_factor)
 
                 # Check for EOS and update state
                 self._check_eos_and_update_state(
