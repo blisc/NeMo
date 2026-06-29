@@ -381,7 +381,7 @@ class Logger(metaclass=Singleton):
         logger.debug("Houston, we have a %s", "thorny problem", exc_info=1)
         """
         if self._logger is not None and self._logger.isEnabledFor(Logger.DEBUG) and not self._logged_once(msg, mode):
-            self._logger._log(Logger.DEBUG, msg, args, **kwargs, stacklevel=2)
+            self._logger._log(Logger.DEBUG, msg, args, **kwargs)
 
     def info(self, msg, *args, mode=LogMode.EACH, **kwargs):
         """
@@ -393,7 +393,7 @@ class Logger(metaclass=Singleton):
         logger.info("Houston, we have a %s", "interesting problem", exc_info=1)
         """
         if self._logger is not None and self._logger.isEnabledFor(Logger.INFO) and not self._logged_once(msg, mode):
-            self._logger._log(Logger.INFO, msg, args, **kwargs, stacklevel=2)
+            self._logger._log(Logger.INFO, msg, args, **kwargs)
 
     def warning(self, msg, *args, mode=LogMode.EACH, **kwargs):
         """

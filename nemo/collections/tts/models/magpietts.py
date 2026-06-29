@@ -2707,7 +2707,7 @@ class MagpieTTSModel(ModelPT):
             if attended_timestep_counter[bidx].get(last_attended_timestep, 0) >= 4:
                 # This is probably an attention sink! Move to the next timestep
                 last_attended_timestep += 1
-            last_attended_timestep = max(last_attended_timestep, left_offset[bidx]) 
+            last_attended_timestep = max(last_attended_timestep, left_offset[bidx])
             last_attended_timestep_in_this_window = last_attended_timestep - left_offset[bidx]
             window_size = lookahead_window_size
             window_end = min(
@@ -3803,6 +3803,7 @@ class MagpieTTSModel(ModelPT):
 
         # Determine tokenizer name based on language using centralized mapping
         available_tokenizers = list(self.tokenizer.tokenizers.keys())
+        available_mapping = (self.cfg.get("language_to_tokenizer_mapping", None))
         tokenizer_name = get_tokenizer_for_language(language, available_tokenizers)
         logging.info(f"Using tokenizer '{tokenizer_name}' for language '{language}'")
 
