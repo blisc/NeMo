@@ -3803,8 +3803,9 @@ class MagpieTTSModel(ModelPT):
 
         # Determine tokenizer name based on language using centralized mapping
         available_tokenizers = list(self.tokenizer.tokenizers.keys())
-        available_mapping = (self.cfg.get("language_to_tokenizer_mapping", None))
-        tokenizer_name = get_tokenizer_for_language(language, available_tokenizers)
+        available_mapping = self.cfg.get("language_to_tokenizer_mapping", None)
+        logging.debug(f"available_tokenizers: '{available_tokenizers}' \n available_mapping: '{available_mapping}'")
+        tokenizer_name = get_tokenizer_for_language(language, available_tokenizers, language_tokenizer_map=available_mapping)
         logging.info(f"Using tokenizer '{tokenizer_name}' for language '{language}'")
 
         # Unified inference path: chunk_text_for_inference automatically decides
