@@ -759,7 +759,34 @@ class MagpieTTSModel(ModelPT):
                     if hasattr(g2p_cfg, 'get')
                     else getattr(g2p_cfg, 'phoneme_dict', None)
                 )
-                if phoneme_dict_path and isinstance(phoneme_dict_path, str) and phoneme_dict_path.strip():
+                if phoneme_dict_path and isinstance(phoneme_dict_path, (list, ListConfig)):
+                    # Handle list of phoneme dicts (e.g. Hindi code-switching: hi_prondict + ipa_cmudict)
+                    registered = []
+                    for i, path_item in enumerate(phoneme_dict_path):
+                        if isinstance(path_item, str) and path_item.strip():
+                            try:
+                                # Use a list-index path (phoneme_dict.{i}, dot) so the connector's
+                                # OmegaConf.update writes the element back into the list. With an
+                                # underscore (phoneme_dict_{i}) the saved config gets sibling keys
+                                # phoneme_dict_0/_1 (and phoneme_dict null), which IpaG2p rejects on
+                                # restore ("unexpected keyword argument 'phoneme_dict_0'").
+                                artifact_path = self.register_artifact(
+                                    f'text_tokenizers.{tokenizer_name}.g2p.phoneme_dict.{i}',
+                                    path_item,
+                                    verify_src_exists=True,
+                                )
+                                registered.append(artifact_path if artifact_path else path_item)
+                            except FileNotFoundError:
+                                logging.warning(
+                                    f"phoneme_dict[{i}] file not found for tokenizer '{tokenizer_name}': "
+                                    f"{path_item}. Artifact will not be packaged in .nemo file."
+                                )
+                                registered.append(path_item)
+                        else:
+                            registered.append(path_item)
+                    with open_dict(cfg):
+                        cfg.text_tokenizers[tokenizer_name].g2p.phoneme_dict = registered
+                elif phoneme_dict_path and isinstance(phoneme_dict_path, str) and phoneme_dict_path.strip():
                     try:
                         # register_artifact handles both:
                         # - Local paths: registers for .nemo packaging, returns absolute path
