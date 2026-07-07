@@ -36,7 +36,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import ListConfig, OmegaConf
 
 from nemo.collections.tts.models.magpietts import MagpieTTSModel
 from nemo.core.classes import ModelPT
