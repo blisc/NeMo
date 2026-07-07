@@ -261,7 +261,7 @@ class ModelInferenceParameters:
     cfg_scale: float = 2.5
     apply_attention_prior: bool = True
     attention_prior_epsilon: float = 0.1
-    attention_prior_lookahead_window: int = 6
+    attention_prior_lookahead_window: int = 5
     estimate_alignment_from_layers: Optional[List[int]] = None
     apply_prior_to_layers: Optional[List[int]] = None
     start_prior_after_n_audio_steps: int = 0
@@ -269,17 +269,17 @@ class ModelInferenceParameters:
     ignore_finished_sentence_tracking: bool = True
     eos_detection_method: str = "argmax_or_multinomial_any"
     min_generated_frames: int = 4
-    attention_sink_threshold: int = 4
-    history_len_heuristic: int = 1
-    prior_weights_init: Tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
-    prior_weights: Tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2)
-    finished_limit_with_eot: int = 1
+    attention_sink_threshold: int = 8
+    history_len_heuristic: int = 20
+    prior_weights_init: Tuple[float, ...] = (0.5, 1.0, 0.8, 0.2, 0.2)
+    prior_weights: Tuple[float, ...] = (0.2, 1.0, 0.6, 0.4, 0.2, 0.2)
+    finished_limit_with_eot: int = 5
     finished_limit_without_eot: int = 1
-    finished_limit_first_chunk: int = 1
-    forceful_chunk_end_threshold: int = 1
+    finished_limit_first_chunk: int = 20
+    forceful_chunk_end_threshold: int = 3
     argmax_temperature: float = 0.01
     short_sentence_threshold: int = 35
-    chunked_attention_sink_threshold: int = 3
+    chunked_attention_sink_threshold: int = 10
     near_end_threshold: int = 3
 
     @classmethod
@@ -2674,7 +2674,7 @@ class MagpieTTSModel(ModelPT):
             text_lens (torch.Tensor): Length of text sequence for each batch item. Shape: (batch_size,).
             lookahead_window_size (int): Size of the forward-looking window to search for the next attended
                 timestep. Determines how far ahead from the last attended timestep to look.
-            attended_timestep_counter (list): List of dictionaries (one per batch item) tracking how many
+            attended_timestep_counter (Optional[list]): List of dictionaries (one per batch item) tracking how many
                 times each timestep has been attended. Used to detect attention sinks.
             batch_size (int): Number of items in the batch.
             left_offset (list, optional): List of offsets to adjust timestep indices for each batch item,
