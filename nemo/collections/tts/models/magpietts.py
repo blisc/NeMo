@@ -4122,8 +4122,7 @@ class MagpieTTSModel(ModelPT):
                     logging.info(f"Chunk end detected for item {item_idx} at local timestep {current_step}")
             elif (
                 not end_of_text[item_idx]
-                and finished_texts_counter.get(item_idx, -1)
-                >= self.inference_parameters.forceful_chunk_end_threshold
+                and finished_texts_counter.get(item_idx, -1) >= self.inference_parameters.forceful_chunk_end_threshold
             ):
                 chunk_end_dict[item_idx] = current_step
                 chunk_end_frame_lens[item_idx] = (current_step + 1) * self.frame_stacking_factor
