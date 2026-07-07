@@ -21,7 +21,7 @@ import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import librosa
 import numpy as np
@@ -739,22 +739,30 @@ def get_tokenizer_for_language(
     language: str,
     available_tokenizers: List[str],
     default_tokenizer: str = "english_phoneme",
+    language_tokenizer_map: Optional[Mapping[str, Union[str, Sequence[str]]]] = None,
 ) -> str:
     """Get the appropriate tokenizer name for a language.
 
-    Searches LANGUAGE_TOKENIZER_MAP for candidate tokenizers and returns
+    Searches language_tokenizer_map for candidate tokenizers and returns
     the first one available. Falls back to default if no match found.
 
     Args:
         language: Language code (e.g., "en", "de", "zh").
         available_tokenizers: List of tokenizer names available in the model.
         default_tokenizer: Fallback tokenizer if no match found.
+        language_tokenizer_map: Mapping of languages to a tokenizer or ordered tokenizer candidates.
+            Defaults to ``LANGUAGE_TOKENIZER_MAP``.
 
     Returns:
         Tokenizer name to use.
     """
-    if language in LANGUAGE_TOKENIZER_MAP:
-        for candidate in LANGUAGE_TOKENIZER_MAP[language]:
+    if language_tokenizer_map is None:
+        language_tokenizer_map = LANGUAGE_TOKENIZER_MAP
+    if language in language_tokenizer_map:
+        candidates = language_tokenizer_map[language]
+        if isinstance(candidates, str):
+            candidates = [candidates]
+        for candidate in candidates:
             if candidate in available_tokenizers:
                 return candidate
 
