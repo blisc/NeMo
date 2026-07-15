@@ -10,7 +10,7 @@ model:
   use_lhotse: true
   
   # Decoder backend selection
-  # Options: "huggingface" (default), "nemotron_h"
+  # Options: "huggingface" (default), "nemotron_h", "nemo_automodel"
   decoder_type: "huggingface"
   disable_lm_text_head: false
   disable_subword_embedding: false
@@ -18,8 +18,11 @@ model:
   
   # HuggingFace backend config (used when decoder_type: "huggingface")
   transformer_hf_backend: "Qwen/Qwen2.5-1.5B"
+
+  # NeMo AutoModel config source (used when decoder_type: "nemo_automodel")
+  automodel_config_source: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
   
-  # NemotronH config (used when decoder_type: "nemotron_h")
+  # NemotronH config (used when decoder_type: "nemotron_h" or "nemo_automodel")
   # Hybrid Mamba2/MoE/Attention model (~3B total, ~600-800M active). Layer types via hybrid_override_pattern:
   # 'M' = Mamba2 layer, '*' = Attention layer, '-' = MLP layer, 'E' = MoE layer
   nemotron_h_config:
