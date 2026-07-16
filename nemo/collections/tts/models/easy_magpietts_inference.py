@@ -277,6 +277,39 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             "For causal-LM style decoders, call forward with `output_hidden_states=True`."
         )
 
+    @staticmethod
+    def _get_automodel_cache_class():
+        from nemo_automodel.components.models.nemotron_v3.cache import NemotronHybridCache
+
+        return NemotronHybridCache
+
+    def _create_automodel_cache(self, inputs_embeds: torch.Tensor):
+        cache_cls = self._get_automodel_cache_class()
+        decoder_dtype = getattr(self.decoder, "dtype", None)
+        if decoder_dtype is None:
+            decoder_dtype = next(self.decoder.parameters()).dtype
+        return cache_cls(
+            self.decoder.config,
+            inputs_embeds.shape[0],
+            decoder_dtype,
+            inputs_embeds.device,
+        )
+
+    @staticmethod
+    def _clear_automodel_cache(cache) -> None:
+        for collection_name in ("conv_states", "ssm_states", "key_cache", "value_cache"):
+            collection = getattr(cache, collection_name, None)
+            if collection is not None:
+                collection.clear()
+        if hasattr(cache, "has_previous_state"):
+            cache.has_previous_state = False
+
+    def _release_streaming_cache(self, state: StreamingState) -> None:
+        if self.decoder_type in ("nemo_automodel", "automodel") and state.past_key_values is not None:
+            self._clear_automodel_cache(state.past_key_values)
+            state.past_key_values = None
+            state.cache_seq_len = 0
+
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         self.world_size = 1
         if trainer is not None:
@@ -848,6 +881,9 @@ class EasyMagpieTTSInferenceModel(ModelPT):
         return phoneme_embedding
 
     def forward(self, inputs_embeds, attention_mask, use_cache=False, past_key_values=None, cache_position=None):
+        if self.decoder_type in ('nemo_automodel', 'automodel') and use_cache and past_key_values is None:
+            past_key_values = self._create_automodel_cache(inputs_embeds)
+
         decoder_kwargs = {
             'inputs_embeds': inputs_embeds,
             'attention_mask': attention_mask,
@@ -1395,11 +1431,14 @@ class EasyMagpieTTSInferenceModel(ModelPT):
 
             # First forward pass to process context - only up to min_context_len
             cache_position = torch.arange(min_context_len, device=device)
+            past_kv = None
+            if self.decoder_type in ("nemo_automodel", "automodel"):
+                past_kv = self._create_automodel_cache(context_embedding[:, :min_context_len, :])
             transformer_out = self.forward(
                 inputs_embeds=context_embedding[:, :min_context_len, :],
                 attention_mask=None,
                 use_cache=True,
-                past_key_values=None,
+                past_key_values=past_kv,
                 cache_position=cache_position,
             )
 
@@ -1508,6 +1547,11 @@ class EasyMagpieTTSInferenceModel(ModelPT):
         if state.finished.all():
             return state, None, None
 
+        if self.decoder_type in ("nemo_automodel", "automodel") and state.past_key_values is None:
+            raise RuntimeError(
+                "Automodel streaming cache is unavailable; call streaming_init() before streaming_step()."
+            )
+
         grad_ctx = torch.inference_mode if use_inference_mode else torch.no_grad
         with grad_ctx():
             device = state.config.device
@@ -1528,7 +1572,10 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             )
 
             state.last_hidden = self._get_last_hidden_state(transformer_out)
-            state.past_key_values = transformer_out.past_key_values
+            next_cache = transformer_out.past_key_values
+            if self.decoder_type in ("nemo_automodel", "automodel") and next_cache is None:
+                raise RuntimeError("Automodel decoder did not return the streaming cache.")
+            state.past_key_values = next_cache
             state.cache_seq_len += 1
 
             # Phase 3: Update counters and extract predictions
@@ -1927,6 +1974,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             phoneme_text_list = ["" for _ in range(batch_size)]
 
         if len(state.all_predictions) == 0:
+            self._release_streaming_cache(state)
             return StreamingFinalizeOutput(
                 audio=torch.zeros(batch_size, 0, device=device),
                 audio_len=torch.zeros(batch_size, dtype=torch.long, device=device),
@@ -1959,6 +2007,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
 
             # Handle case where all items have zero-length predictions
             if max_len == 0:
+                self._release_streaming_cache(state)
                 return StreamingFinalizeOutput(
                     audio=torch.zeros(batch_size, 0, device=device),
                     audio_len=torch.zeros(batch_size, dtype=torch.long, device=device),
@@ -1987,6 +2036,7 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 predicted_codes_lens,
             )
 
+            self._release_streaming_cache(state)
             return StreamingFinalizeOutput(
                 audio=audio,
                 audio_len=audio_len,
