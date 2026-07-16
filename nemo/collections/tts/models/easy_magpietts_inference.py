@@ -560,7 +560,9 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 self.transformer_backend_config,
                 self._get_nemotron_h_config_dict(cfg),
             )
+
             automodel_kwargs = self._to_container(cfg.get('automodel_kwargs', {}))
+            logging.info("NeMo AutoModel kwargs: %s", automodel_kwargs)
             # Some Automodel NemotronV3 builds leave mixer tensors from scratch init uninitialized after
             # from_config(); reset those tensors before running Automodel's regular init/rescaling path.
             with torch.device('cpu'):
@@ -586,7 +588,10 @@ class EasyMagpieTTSInferenceModel(ModelPT):
             elif hasattr(getattr(automodel_model, 'model', None), 'initialize_weights'):
                 automodel_model.model.initialize_weights(buffer_device=buffer_device)
             if self.disable_lm_text_head:
-                automodel_model.lm_head = None
+                # The custom AutoModel CausalLM wrapper always calls lm_head, even
+                # when only hidden states are requested. Keep that wrapper contract
+                # without allocating or evaluating the vocabulary projection.
+                automodel_model.lm_head = nn.Identity()
             self.decoder = automodel_model
             if self.decoder is None:
                 raise AttributeError("NeMo AutoModel causal LM did not expose a `model` decoder.")
@@ -603,7 +608,11 @@ class EasyMagpieTTSInferenceModel(ModelPT):
                 "Supported: 'huggingface', 'nemotron_h', 'nemo_automodel', 'automodel'"
             )
 
-        if self.disable_lm_text_head and hasattr(self.decoder, 'lm_head'):
+        if (
+            self.disable_lm_text_head
+            and self.decoder_type not in ('nemo_automodel', 'automodel')
+            and hasattr(self.decoder, 'lm_head')
+        ):
             self.decoder.lm_head = None
 
         if self.disable_subword_embedding:
