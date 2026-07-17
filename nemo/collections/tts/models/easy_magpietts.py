@@ -126,6 +126,7 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
 
         # Validation inference with metrics (optional)
         self.run_val_inference = cfg.get('run_val_inference', False)
+        self.offload_validation_models = cfg.get('offload_validation_models', True)
         self.use_multilingual_asr = cfg.get('use_multilingual_asr', False)
         if self.run_val_inference:
             logging.info("Loading eval models for validation inference (ASR and speaker verification)...")
@@ -158,6 +159,84 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
             )
             self._utmos_calculator = UTMOSv2Calculator(device='cpu')
             logging.info("UTMOSv2 calculator initialized for validation naturalness scoring")
+
+        self._mark_validation_models_ddp_ignored()
+
+    def _mark_validation_models_ddp_ignored(self) -> None:
+        """Exclude frozen offloadable modules from DDP's device and synchronization checks."""
+
+        prefixes = ('_codec_model', '_eval_asr_model', '_eval_speaker_verification_model', 'whisper_model')
+        ignored_names = []
+        for name, _ in self.named_parameters():
+            if any(name == prefix or name.startswith(f'{prefix}.') for prefix in prefixes):
+                ignored_names.append(name)
+        for name, _ in self.named_buffers():
+            if any(name == prefix or name.startswith(f'{prefix}.') for prefix in prefixes):
+                ignored_names.append(name)
+        if ignored_names:
+            torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(
+                self, ignored_names
+            )
+
+    def _uses_validation_models_during_training(self) -> bool:
+        """Whether validation/generation models are part of the training objective."""
+
+        return False
+
+    def _should_offload_validation_models(self) -> bool:
+        return self.offload_validation_models and not self._uses_validation_models_during_training()
+
+    def _move_codec_waveform_modules(self, device: torch.device | str) -> list[str]:
+        """Move codec components not needed for cached-code conversion.
+
+        The original vector quantizer must remain with the training model because
+        the codec converter uses it on every cached-code batch. The waveform
+        encoder/decoder and the codec's training-only auxiliaries can move independently.
+        """
+
+        moved = []
+        codec_model = getattr(self, '_codec_model', None)
+        if codec_model is None:
+            return moved
+        for name, module in codec_model.named_children():
+            if name == 'vector_quantizer':
+                continue
+            module.to(device)
+            moved.append(f'_codec_model.{name}')
+        return moved
+
+    def _move_validation_models(self, device: torch.device | str) -> None:
+        """Move validation scorers and waveform codec components to the requested device."""
+
+        moved = self._move_codec_waveform_modules(device)
+        seen = set()
+        for name in ('_eval_asr_model', '_eval_speaker_verification_model', 'whisper_model'):
+            module = getattr(self, name, None)
+            if not isinstance(module, nn.Module) or id(module) in seen:
+                continue
+            module.to(device)
+            seen.add(id(module))
+            moved.append(name)
+
+        # UTMOSv2 is deliberately constructed on CPU and scores saved waveforms
+        # there, so moving it to the validation GPU would only increase GPU usage.
+        if moved:
+            logging.info("Moved validation-only modules to %s: %s", device, ", ".join(moved))
+
+    def _offload_validation_models(self) -> None:
+        if not self._should_offload_validation_models():
+            return
+        self._move_validation_models(torch.device('cpu'))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def on_train_start(self):
+        super().on_train_start()
+        self._offload_validation_models()
+
+    def on_validation_epoch_start(self):
+        if self._should_offload_validation_models():
+            self._move_validation_models(self.device)
 
     def _get_state_dict_keys_to_exclude(self):
         return super()._get_state_dict_keys_to_exclude() + [
@@ -1001,6 +1080,11 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
         return batch
 
     def training_step(self, batch, batch_idx):
+        uses_uncached_audio = 'context_audio_codes' not in batch or 'audio_codes' not in batch
+        if uses_uncached_audio and self._should_offload_validation_models():
+            audio = batch.get('context_audio', batch.get('audio'))
+            self._move_codec_waveform_modules(audio.device)
+
         if 'context_audio_codes' in batch:
             context_audio_codes = batch['context_audio_codes']
             context_audio_codes_lens = batch['context_audio_codes_lens']
@@ -1018,6 +1102,9 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
             audio = batch['audio']
             audio_lens = batch['audio_lens']
             audio_codes, audio_codes_lens = self._codec_helper.audio_to_codes(audio, audio_lens)
+
+        if uses_uncached_audio and self._should_offload_validation_models():
+            self._move_codec_waveform_modules(torch.device('cpu'))
 
         batch_output = self.process_batch(
             text=batch['text'],
@@ -1438,6 +1525,7 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
                     )
 
         self.validation_step_outputs.clear()  # free memory
+        self._offload_validation_models()
 
     def get_dataset(self, dataset_cfg, dataset_type):
         dataset = instantiate(

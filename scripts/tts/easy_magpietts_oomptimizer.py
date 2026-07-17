@@ -343,6 +343,7 @@ def main(
     model.maybe_init_from_pretrained_checkpoint(cfg=cfg)
     model = model.to(torch_device)
     model.train()
+    model._offload_validation_models()
     model.log = lambda *args, **kwargs: None
     model.log_dict = lambda *args, **kwargs: None
 
