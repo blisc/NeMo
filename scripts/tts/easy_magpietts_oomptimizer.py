@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import click
+from hydra import compose, initialize_config_dir
 import lightning.pytorch as pl
 import torch
 import torch.nn.functional as F
@@ -234,11 +235,12 @@ def _validate_assumptions(cfg: DictConfig) -> None:
 
 
 def _load_config(config_path: Path, input_cfg: Path, overrides: Sequence[str]) -> DictConfig:
-    """Load model settings and replace the placeholder training input configuration."""
+    """Compose a model config with Hydra overrides, then enforce the profiling input config."""
 
-    cfg = OmegaConf.load(config_path)
-    if overrides:
-        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(list(overrides)))
+    config_path = config_path.resolve()
+    with initialize_config_dir(version_base=None, config_dir=str(config_path.parent)):
+        cfg = compose(config_name=config_path.stem, overrides=list(overrides))
+
     with open_dict(cfg.model.train_ds.dataset):
         cfg.model.train_ds.dataset.input_cfg = str(input_cfg)
     return cfg
@@ -287,7 +289,13 @@ def _profile_step(model, optimizer, template, batch_size: int, device: torch.dev
     help="CUDA allocator limit; leaves headroom for DDP and non-training allocations.",
 )
 @click.option("--device", default="cuda:0")
-@click.option("--override", "overrides", multiple=True, help="OmegaConf dot-list override; may be repeated.")
+@click.option(
+    "--override",
+    "overrides",
+    multiple=True,
+    help="Legacy Hydra override flag; may be repeated. Prefer trailing KEY=VALUE arguments.",
+)
+@click.argument("hydra_overrides", nargs=-1, type=click.UNPROCESSED)
 def main(
     config_path: Path,
     input_cfg: Path,
@@ -298,10 +306,17 @@ def main(
     memory_fraction: float,
     device: str,
     overrides: tuple[str, ...],
+    hydra_overrides: tuple[str, ...],
 ) -> None:
-    """Profile fixed bucket batch sizes for an EasyMagpie Lhotse training config."""
+    """Profile fixed bucket batch sizes for an EasyMagpie Lhotse training config.
 
-    cfg = _load_config(config_path, input_cfg, overrides)
+    HYDRA_OVERRIDES use the same trailing KEY=VALUE syntax as EasyMagpie training, for example:
+
+    \b
+      model.automodel_kwargs.backend.attn=sdpa model.context_duration_max=8.0
+    """
+
+    cfg = _load_config(config_path, input_cfg, (*overrides, *hydra_overrides))
     _validate_assumptions(cfg)
 
     if buckets is None:
@@ -377,6 +392,15 @@ def main(
     click.echo("bucket_batch_size: [" + ", ".join(str(item) for item in profile) + "]")
     click.echo("batch_duration: null")
     click.echo("quadratic_duration: null")
+
+    # Lhotse's iterable keeps open shard streams on the dataloader, while the
+    # model keeps the dataloader alive through ``_train_dl``. Release those
+    # references before interpreter shutdown so CUDA/Inductor and Hugging Face
+    # background workers can shut down normally.
+    model._train_dl = None
+    del dataloader, examples, templates, optimizer, model, trainer
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
