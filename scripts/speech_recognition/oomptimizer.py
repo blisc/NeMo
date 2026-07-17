@@ -80,6 +80,11 @@ class ProfilingBatchGenerator:
     batch schemas. However, if the model expects a specific, e.g., dataclass, you can tell ``ProfilingBatchGenerator``
     to use it. The mini-batch object will be constructed using the items in ``inputs``.
 
+    Models with more complex batch structures may instead provide a ``batch_factory`` callable in the schema.
+    It receives ``batch_size``, ``input_seq_length``, ``output_seq_length``, and ``device`` keyword arguments and
+    returns the complete batch. A schema using ``batch_factory`` should also provide an explicit ``modalities`` pair
+    so OOMptimizer knows how to convert duration bucket boundaries into input/output sequence lengths.
+
     Each element of ``inputs`` specifies a NeMo NeuralType which needs to have a defined ``elements_type``.
     The supported types are ``AudioSignal``, ``LengthsType`` and ``LabelsType``.
     If "type" is not a NeuralType, we interpret that as a placeholder tensor that's not relevant but expected
@@ -119,6 +124,14 @@ class ProfilingBatchGenerator:
 
     def __call__(self, input_seq_length: int, output_seq_length: int):
         B = self._current
+        if batch_factory := self.schema.get("batch_factory"):
+            return batch_factory(
+                batch_size=B,
+                input_seq_length=input_seq_length,
+                output_seq_length=output_seq_length,
+                device=self.device,
+            )
+
         select_seq_length = {"input": input_seq_length, "output": output_seq_length}
         batch = []
         names = []
@@ -405,21 +418,30 @@ def oomptimizer(
         isinstance(item, (list, tuple)) and len(item) == 2 and all(isinstance(v, Number) for v in item)
         for item in buckets
     )
-    # Determine modality for input and output.
-    modalities = [
-        (
-            "text"
-            if any(
-                isinstance(item["type"], NeuralType)
-                and isinstance(item["type"].elements_type, LabelsType)
-                and item["seq_length"] == direction
-                for item in schema["inputs"]
-                if item["type"] != "dummy"
-            )
-            else "audio"
+    # Determine modality for input and output. Complex model schemas may declare these explicitly.
+    modalities = schema.get("modalities")
+    if modalities is not None:
+        assert tuple(modalities) in (
+            ("audio", "audio"),
+            ("audio", "text"),
+            ("text", "audio"),
+            ("text", "text"),
         )
-        for direction in ("input", "output")
-    ]
+    else:
+        modalities = [
+            (
+                "text"
+                if any(
+                    isinstance(item["type"], NeuralType)
+                    and isinstance(item["type"].elements_type, LabelsType)
+                    and item["seq_length"] == direction
+                    for item in schema["inputs"]
+                    if item["type"] != "dummy"
+                )
+                else "audio"
+            )
+            for direction in ("input", "output")
+        ]
 
     def get_max_seq_lens(buckets):
 
@@ -454,7 +476,9 @@ def oomptimizer(
 
     click.echo("Starting profiling.")
     max_seq_lens = get_max_seq_lens(buckets)
-    gen = ProfilingBatchGenerator(schema=schema, start_batch_size=start_batch_size, rel_gap_thresh=threshold)
+    gen = ProfilingBatchGenerator(
+        schema=schema, start_batch_size=start_batch_size, rel_gap_thresh=threshold, device=device
+    )
     profile = {}
 
     # Iterate buckets from the largest to the smallest sequences. This usually ends up creating
@@ -475,7 +499,10 @@ def oomptimizer(
                     click.echo(f"\tCurrent gap: {gen.current_rel_gap}... ", nl=False)
                     optimizer.zero_grad()
                     out = model.training_step(batch, batch_idx)
-                    out['loss'].sum().backward()
+                    loss = out['loss'] if isinstance(out, dict) else out
+                    if not isinstance(loss, torch.Tensor):
+                        raise TypeError(f"Expected training_step() to return a loss tensor or dict, got {type(out)}")
+                    loss.sum().backward()
                     optimizer.step()
                 except torch.cuda.OutOfMemoryError as e:
                     click.secho(f"OOM!", fg="yellow")

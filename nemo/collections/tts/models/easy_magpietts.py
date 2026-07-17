@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import math
 import os
 import random
 from dataclasses import dataclass
@@ -920,6 +921,84 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
             context_audio_codes_lens=context_audio_codes_lens_processed,
             selected_training_mode=selected_training_mode.name if selected_training_mode is not None else None,
         )
+
+    @property
+    def oomptimizer_schema(self) -> dict:
+        """Return the synthetic cached-code batch contract used by OOMptimizer.
+
+        Duration bucket boundaries describe target audio, while ``--ratio`` controls the synthetic number of text
+        and phoneme tokens per target-audio second. Context audio uses the configured maximum context duration.
+        """
+
+        return {
+            "batch_factory": self._oomptimizer_batch_factory,
+            "modalities": ("audio", "text"),
+        }
+
+    def _oomptimizer_batch_factory(
+        self,
+        *,
+        batch_size: int,
+        input_seq_length: int,
+        output_seq_length: int,
+        device: str,
+    ) -> dict[str, torch.Tensor]:
+        """Create an EasyMagpie training batch without loading audio or cached-code manifests."""
+
+        target_frames = max(1, math.ceil(input_seq_length / self.codec_model_samples_per_frame))
+        target_duration = input_seq_length / self.sample_rate
+        text_length = max(2, output_seq_length)
+        tokens_per_second = output_seq_length / max(target_duration, 1.0 / self.sample_rate)
+        context_duration = float(self.cfg.get("context_duration_max", 10.0))
+        context_frames = max(
+            1,
+            math.ceil(context_duration * self.sample_rate / self.codec_model_samples_per_frame),
+        )
+        context_text_length = max(2, math.ceil(context_duration * tokens_per_second))
+
+        def lengths(value: int) -> torch.Tensor:
+            return torch.full((batch_size,), value, dtype=torch.long, device=device)
+
+        batch = {
+            "audio_codes": torch.zeros(
+                batch_size,
+                self.data_num_audio_codebooks,
+                target_frames,
+                dtype=torch.long,
+                device=device,
+            ),
+            "audio_codes_lens": lengths(target_frames),
+            "context_audio_codes": torch.zeros(
+                batch_size,
+                self.data_num_audio_codebooks,
+                context_frames,
+                dtype=torch.long,
+                device=device,
+            ),
+            "context_audio_codes_lens": lengths(context_frames),
+            "text": torch.zeros(batch_size, text_length, dtype=torch.long, device=device),
+            "text_lens": lengths(text_length),
+            "context_text_tokens": torch.zeros(
+                batch_size,
+                context_text_length,
+                dtype=torch.long,
+                device=device,
+            ),
+            "context_text_tokens_lens": lengths(context_text_length),
+        }
+        if self.phoneme_tokenizer is not None:
+            batch.update(
+                {
+                    "phoneme_tokens": torch.zeros(
+                        batch_size,
+                        text_length,
+                        dtype=torch.long,
+                        device=device,
+                    ),
+                    "phoneme_tokens_lens": lengths(text_length),
+                }
+            )
+        return batch
 
     def training_step(self, batch, batch_idx):
         if 'context_audio_codes' in batch:
