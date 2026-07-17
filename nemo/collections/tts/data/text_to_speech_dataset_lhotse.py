@@ -161,6 +161,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
             are not set externally. Defaults to None.
         text_context_remapping: Dict defining mapping of multiple text contexts to a single text context.
         text_context_remapping_prob: Probability of remapping the original text context to a remapped text context.
+        load_normalized_percent: Probability of loading the normalized transcript. Defaults to 1.
     """
 
     def __init__(
@@ -186,6 +187,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
         phoneme_as_text_prob: float = 0.0,
         pronunciation_control_g2p: Optional[DictConfig] = None,
         add_language_to_context_text: bool = False,
+        load_normalized_percent: float = 1.0,
     ):
         super().__init__()
         self.sample_rate = sample_rate
@@ -215,6 +217,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
         self.phoneme_as_text_prob = phoneme_as_text_prob
         self.pronunciation_control_g2p_config = pronunciation_control_g2p
         self.add_language_to_context_text = add_language_to_context_text
+        self.load_normalized_percent = load_normalized_percent
 
     def get_num_audio_samples_to_slice(self, duration, sample_rate):
         num_codec_frames = int(duration * sample_rate / self.codec_model_samples_per_frame)
@@ -459,7 +462,7 @@ class MagpieTTSLhotseDataset(torch.utils.data.Dataset):
 
             # tokenize transcript
             # there may exist "normalized_text" in the suprvisionsegement. Prioritize it over "text" if available.
-            if cut.supervisions[0].has_custom("normalized_text"):
+            if cut.supervisions[0].has_custom("normalized_text") and random.random() < self.load_normalized_percent:
                 text_str = cut.supervisions[0].normalized_text
             else:
                 text_str = cut.supervisions[0].text
