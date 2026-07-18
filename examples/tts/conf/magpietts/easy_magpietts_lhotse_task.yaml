@@ -105,9 +105,8 @@ model:
       streaming_phonemes_delay: 3
       streaming_speech_delay: 5
 
-  ignore_phoneme_languages: [vi,zh,ja,ko-KR,hi]
   add_language_to_context_text: true
-  use_multilingual_asr:true
+  use_multilingual_asr: true
   frame_stacking_factor: 2
   phoneme_stacking_factor: 1
   phoneme_confidence_unk_threshold: 0.0 # If max phoneme probability is below this threshold at inference-time, replace the predicted timestep with UNK to reduce error propagation.
@@ -117,8 +116,7 @@ model:
   phoneme_corruption_unk_mode_prob: 0.5
   phoneme_corruption_type: "repeat_skip_unk" # "repeat_skip_unk" or "complete_channel"
   phoneme_as_text_prob: 0.0 # Probability of replacing training text with pronunciation-control G2P output.
-  ignore_phoneme_languages: [] # Languages for which missing IPA phoneme fields are allowed during training.
-  add_language_to_context_text: false # Prefix context text with language metadata for multilingual conditioning.
+  ignore_phoneme_languages: [vi,zh,ja,ko-KR,hi] # Languages for which missing IPA phoneme fields are allowed during training.
 
   pronunciation_control_g2p:
     en:
@@ -161,6 +159,8 @@ model:
       shuffle: true
       num_workers: 6
       pin_memory: true
+      bucket_duration_bins: [4.4,5.48,6.32,7.1,7.84,8.6,9.36,10.1,10.84,11.61,12.42,13.28,14.16,15.12,16.12,17.2,18.33,19.44,20.0]
+
 
       input_cfg:
       - type: lhotse_shar

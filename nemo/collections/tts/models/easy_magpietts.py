@@ -163,20 +163,52 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
         self._mark_validation_models_ddp_ignored()
 
     def _mark_validation_models_ddp_ignored(self) -> None:
-        """Exclude frozen offloadable modules from DDP's device and synchronization checks."""
+        """Exclude exactly the tensors belonging to modules that will move to CPU."""
 
-        prefixes = ('_codec_model', '_eval_asr_model', '_eval_speaker_verification_model', 'whisper_model')
-        ignored_names = []
-        for name, _ in self.named_parameters():
-            if any(name == prefix or name.startswith(f'{prefix}.') for prefix in prefixes):
-                ignored_names.append(name)
-        for name, _ in self.named_buffers():
-            if any(name == prefix or name.startswith(f'{prefix}.') for prefix in prefixes):
-                ignored_names.append(name)
+        ignored_names = self._validation_model_ddp_ignored_names()
         if ignored_names:
-            torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(
-                self, ignored_names
+            torch.nn.parallel.DistributedDataParallel._set_params_and_buffers_to_ignore_for_model(self, ignored_names)
+
+    def _validation_modules_for_offload(self) -> list[tuple[str, nn.Module]]:
+        """Return the unique module objects moved between CPU and GPU for validation."""
+
+        modules = []
+        codec_model = getattr(self, '_codec_model', None)
+        if isinstance(codec_model, nn.Module):
+            modules.extend(
+                (f'_codec_model.{name}', module)
+                for name, module in codec_model.named_children()
+                if name != 'vector_quantizer'
             )
+        modules.extend(
+            (name, module)
+            for name in ('_eval_asr_model', '_eval_speaker_verification_model', 'whisper_model')
+            if isinstance(module := getattr(self, name, None), nn.Module)
+        )
+
+        unique_modules = []
+        seen = set()
+        for name, module in modules:
+            if id(module) not in seen:
+                unique_modules.append((name, module))
+                seen.add(id(module))
+        return unique_modules
+
+    def _validation_model_ddp_ignored_names(self) -> list[str]:
+        """Find every parameter/buffer alias that resolves to an offloaded module tensor."""
+
+        if not self._should_offload_validation_models():
+            return []
+        modules = self._validation_modules_for_offload()
+        parameter_ids = {id(parameter) for _, module in modules for parameter in module.parameters()}
+        buffer_ids = {id(buffer) for _, module in modules for buffer in module.buffers()}
+        ignored_names = {
+            name for name, parameter in self.named_parameters(remove_duplicate=False) if id(parameter) in parameter_ids
+        }
+        ignored_names.update(
+            name for name, buffer in self.named_buffers(remove_duplicate=False) if id(buffer) in buffer_ids
+        )
+        return sorted(ignored_names)
 
     def _uses_validation_models_during_training(self) -> bool:
         """Whether validation/generation models are part of the training objective."""
@@ -195,27 +227,21 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
         """
 
         moved = []
-        codec_model = getattr(self, '_codec_model', None)
-        if codec_model is None:
-            return moved
-        for name, module in codec_model.named_children():
-            if name == 'vector_quantizer':
+        for name, module in self._validation_modules_for_offload():
+            if not name.startswith('_codec_model.'):
                 continue
             module.to(device)
-            moved.append(f'_codec_model.{name}')
+            moved.append(name)
         return moved
 
     def _move_validation_models(self, device: torch.device | str) -> None:
         """Move validation scorers and waveform codec components to the requested device."""
 
         moved = self._move_codec_waveform_modules(device)
-        seen = set()
-        for name in ('_eval_asr_model', '_eval_speaker_verification_model', 'whisper_model'):
-            module = getattr(self, name, None)
-            if not isinstance(module, nn.Module) or id(module) in seen:
+        for name, module in self._validation_modules_for_offload():
+            if name.startswith('_codec_model.'):
                 continue
             module.to(device)
-            seen.add(id(module))
             moved.append(name)
 
         # UTMOSv2 is deliberately constructed on CPU and scores saved waveforms
@@ -230,8 +256,37 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def _refresh_validation_model_ddp_ignores(self) -> None:
+        """Apply offloaded-tensor exclusions to the constructed DDP wrapper and verify them."""
+
+        if not self._should_offload_validation_models() or self.trainer is None:
+            return
+        ddp_model = getattr(getattr(self.trainer, 'strategy', None), 'model', None)
+        if not isinstance(ddp_model, torch.nn.parallel.DistributedDataParallel):
+            return
+
+        ignored_names = set(self._validation_model_ddp_ignored_names())
+        ddp_model.parameters_to_ignore.update(ignored_names)
+        ddp_model._assign_modules_buffers()
+        offloaded_buffer_ids = {
+            id(buffer) for _, module in self._validation_modules_for_offload() for buffer in module.buffers()
+        }
+        synchronized_offloaded_buffers = [
+            name for name, buffer in ddp_model.named_module_buffers.items() if id(buffer) in offloaded_buffer_ids
+        ]
+        if synchronized_offloaded_buffers:
+            raise RuntimeError(
+                "DDP still includes validation-only buffers that will be offloaded: "
+                + ", ".join(synchronized_offloaded_buffers)
+            )
+        logging.info(
+            "Excluded %d validation-only parameter/buffer names from DDP synchronization",
+            len(ignored_names),
+        )
+
     def on_train_start(self):
         super().on_train_start()
+        self._refresh_validation_model_ddp_ignores()
         self._offload_validation_models()
 
     def on_validation_epoch_start(self):
