@@ -250,9 +250,13 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
             logging.info("Moved validation-only modules to %s: %s", device, ", ".join(moved))
 
     def _offload_validation_models(self) -> None:
+        """Move validation modules to CPU after refreshing all DDP buffer exclusions."""
+
         if not self._should_offload_validation_models():
             return
+        self._refresh_validation_model_ddp_ignores()
         self._move_validation_models(torch.device('cpu'))
+        self._refresh_validation_model_ddp_ignores()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -286,7 +290,6 @@ class EasyMagpieTTSModel(EasyMagpieTTSInferenceModel):
 
     def on_train_start(self):
         super().on_train_start()
-        self._refresh_validation_model_ddp_ignores()
         self._offload_validation_models()
 
     def on_validation_epoch_start(self):
